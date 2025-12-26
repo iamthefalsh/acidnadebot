@@ -5,7 +5,7 @@ const cors = require('cors');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-const PORT = process.env.PORT || 3000; // Required for cloud platforms
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -13,8 +13,12 @@ app.use(bodyParser.json({ limit: '50mb' }));
 
 // Security middleware (optional but recommended)
 app.use((req, res, next) => {
-    // Skip auth for health check
-    if (req.method === 'GET' && req.path === '/') return next();
+    // Skip auth for health check and ping
+    if ((req.method === 'GET' && req.path === '/') || 
+        (req.method === 'GET' && req.path === '/health') ||
+        (req.method === 'GET' && req.path === '/ping')) {
+        return next();
+    }
     
     const clientKey = req.headers['x-acidnade-key'];
     const serverKey = process.env.ACIDNADE_API_KEY;
@@ -52,7 +56,20 @@ function formatCreatedScripts(scripts) {
     }).join('\n');
 }
 
-// --- HEALTH CHECK ---
+// --- PUBLIC HEALTH CHECK (for UptimeRobot) ---
+app.get('/health', (req, res) => {
+    res.status(200).json({ 
+        status: "OK", 
+        message: "Acidnade AI Server v6.0 - Ready for global requests" 
+    });
+});
+
+// --- OPTIONAL: Simple ping endpoint (for manual testing) ---
+app.get('/ping', (req, res) => {
+    res.send('PONG');
+});
+
+// --- MAIN HEALTH CHECK (root) ---
 app.get('/', (req, res) => {
     res.send('Acidnade AI Server v6.0 - Public Ready');
 });
@@ -205,23 +222,6 @@ app.post('/step', async (req, res) => {
         const historyContext = formatChatHistory(chatHistory);
         const scriptsContext = formatCreatedScripts(createdScripts);
 
-        const systemInstruction = `
-You are Lemonade — a senior Roblox Luau engineer.
-
-...
-[ALL EXISTING RULES FROM PREVIOUS /step PROMPT] ...
-...
-ADDITIONAL RULE:
-- ADD PROFESSIONAL DOCUMENTATION COMMENTS:
-  • Header comment explaining script purpose
-  • Inline comments for non-obvious logic
-  • Document parameters and return values
-
-...
-[KEEP ALL EXISTING NAMING/QUALITY RULES] ...
-`;
-
-        // Reconstruct full prompt with documentation requirement
         const fullPrompt = `
 You are Lemonade — a senior Roblox Luau engineer with elite standards.
 
@@ -353,15 +353,16 @@ Return the complete modified Lua code.
     }
 });
 
-// Start server on all interfaces (critical for cloud hosting)
+// Start server on all interfaces
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🚀 Acidnade AI Server v6.0 ready`);
     console.log(`🌍 Listening on http://0.0.0.0:${PORT}`);
     console.log(`\n✅ Endpoints:`);
+    console.log(`   GET  /health     - Public health check (for UptimeRobot)`);
     console.log(`   POST /chat      - Main intelligence`);
-    console.log(`   POST /plan      - Generate plans (complex requests)`);
+    console.log(`   POST /plan      - Generate plans`);
     console.log(`   POST /step      - Execute plan steps`);
     console.log(`   POST /improve   - Self-improve mode`);
-    console.log(`\n🔑 Security: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : 'Disabled (set ACIDNADE_API_KEY to enable)'}`);
-    console.log(`\n📡 Public deployment ready!\n`);
+    console.log(`\n🔑 Security: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : 'Disabled'}`);
+    console.log(`\n📡 Global deployment ready!\n`);
 });
