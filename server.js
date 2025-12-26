@@ -69,7 +69,7 @@ function formatCreatedScripts(scripts) {
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: "OK", 
-    message: "Acidnade AI Server v6.1 - Ready for global requests",
+    message: "Acidnade AI Server v1 - Ready for global requests",
     timestamp: new Date().toISOString()
   });
 });
