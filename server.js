@@ -1,3 +1,4 @@
+// server.js — Discloud Optimized v6.1
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -8,82 +9,89 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: '*' // Allow all origins for global access
+}));
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// Security middleware (optional but recommended)
+// Security middleware - API key validation
 app.use((req, res, next) => {
-    // Skip auth for health check and ping
-    if ((req.method === 'GET' && req.path === '/') || 
-        (req.method === 'GET' && req.path === '/health') ||
-        (req.method === 'GET' && req.path === '/ping')) {
-        return next();
-    }
-    
-    const clientKey = req.headers['x-acidnade-key'];
-    const serverKey = process.env.ACIDNADE_API_KEY;
-    
-    if (serverKey && clientKey !== serverKey) {
-        return res.status(403).json({ error: "Invalid API key" });
-    }
-    next();
+  // Skip auth for health checks
+  if ((req.method === 'GET' && req.path === '/') || 
+      (req.method === 'GET' && req.path === '/health') ||
+      (req.method === 'GET' && req.path === '/ping')) {
+    return next();
+  }
+  
+  const clientKey = req.headers['x-acidnade-key'];
+  const serverKey = process.env.ACIDNADE_API_KEY || process.env.API_KEY;
+  
+  // Allow requests without key in development
+  if (!serverKey) {
+    console.warn('⚠️ No API key set - allowing all requests (set ACIDNADE_API_KEY in production)');
+    return next();
+  }
+  
+  if (clientKey !== serverKey) {
+    return res.status(403).json({ error: "Invalid API key" });
+  }
+  next();
 });
 
 // Initialize Gemini
 if (!process.env.API_KEY) {
-    console.error("ERROR: Missing API_KEY in environment variables");
-    process.exit(1);
+  console.error("ERROR: Missing API_KEY in environment variables");
+  process.exit(1);
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" }); // Updated model
 
 // Helper functions
 function formatChatHistory(history) {
-    if (!history || history.length === 0) return "No previous conversation.";
-    const recentHistory = history.slice(-10);
-    return recentHistory.map(msg => {
-        const role = msg.role === "user" ? "User" : "Assistant";
-        const metadata = msg.metadata ? ` [${msg.metadata.action || ''}]` : '';
-        return `${role}: ${msg.content}${metadata}`;
-    }).join('\n');
+  if (!history || history.length === 0) return "No previous conversation.";
+  const recentHistory = history.slice(-10);
+  return recentHistory.map(msg => {
+    const role = msg.role === "user" ? "User" : "Assistant";
+    const metadata = msg.metadata ? ` [${msg.metadata.action || ''}]` : '';
+    return `${role}: ${msg.content}${metadata}`;
+  }).join('\n');
 }
 
 function formatCreatedScripts(scripts) {
-    if (!scripts || scripts.length === 0) return "No scripts created yet.";
-    return scripts.map(script => {
-        return `- ${script.name} (${script.type}): ${script.description}\n  Path: ${script.path}`;
-    }).join('\n');
+  if (!scripts || scripts.length === 0) return "No scripts created yet.";
+  return scripts.map(script => {
+    return `- ${script.name} (${script.type}): ${script.description}\n  Path: ${script.path}`;
+  }).join('\n');
 }
 
-// --- PUBLIC HEALTH CHECK (for UptimeRobot) ---
+// --- PUBLIC ENDPOINTS (no auth required) ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ 
-        status: "OK", 
-        message: "Acidnade AI Server v6.0 - Ready for global requests" 
-    });
+  res.status(200).json({ 
+    status: "OK", 
+    message: "Acidnade AI Server v6.1 - Ready for global requests",
+    timestamp: new Date().toISOString()
+  });
 });
 
-// --- OPTIONAL: Simple ping endpoint (for manual testing) ---
 app.get('/ping', (req, res) => {
-    res.send('PONG');
+  res.send('PONG');
 });
 
-// --- MAIN HEALTH CHECK (root) ---
 app.get('/', (req, res) => {
-    res.send('Acidnade AI Server v6.0 - Public Ready');
+  res.send('Acidnade AI Server v6.1 - Global Ready');
 });
 
-// --- MAIN INTELLIGENCE ENDPOINT ---
+// --- PROTECTED ENDPOINTS (require API key) ---
 app.post('/chat', async (req, res) => {
-    try {
-        console.log("💬 Request Received");
-        const { prompt, chatHistory, createdScripts } = req.body;
-        
-        const historyContext = formatChatHistory(chatHistory);
-        const scriptsContext = formatCreatedScripts(createdScripts);
-        
-        const systemInstruction = `
+  try {
+    console.log("💬 Request Received");
+    const { prompt, chatHistory, createdScripts } = req.body;
+    
+    const historyContext = formatChatHistory(chatHistory);
+    const scriptsContext = formatCreatedScripts(createdScripts);
+    
+    const systemInstruction = `
 You are Lemonade — a senior Roblox Luau engineer with elite standards.
 
 CORE PRINCIPLES:
@@ -124,46 +132,45 @@ ${prompt}
 Respond appropriately.
 `;
 
-        const result = await model.generateContent(systemInstruction);
-        let response = result.response.text().trim();
+    const result = await model.generateContent(systemInstruction);
+    let response = result.response.text().trim();
 
-        // Try to parse as JSON (for plan requests)
-        try {
-            const cleanJson = response.replace(/```json|```/g, '').trim();
-            const data = JSON.parse(cleanJson);
-            if (data.shouldPlan && Array.isArray(data.plan)) {
-                console.log(`✅ Complex request - Plan generated with ${data.plan.length} steps`);
-                return res.json({ shouldPlan: true, plan: data.plan });
-            }
-        } catch (e) {
-            // Not JSON → treat as direct response
-        }
-
-        // Direct response (code or text)
-        const cleanResponse = response
-            .replace(/```lua/g, '')
-            .replace(/```/g, '')
-            .trim();
-
-        console.log("✅ Direct response generated");
-        res.json({ response: cleanResponse });
-
-    } catch (error) {
-        console.error("Chat Error:", error);
-        res.status(500).json({ error: error.message });
+    // Try to parse as JSON (for plan requests)
+    try {
+      const cleanJson = response.replace(/```json|```/g, '').trim();
+      const data = JSON.parse(cleanJson);
+      if (data.shouldPlan && Array.isArray(data.plan)) {
+        console.log(`✅ Complex request - Plan generated with ${data.plan.length} steps`);
+        return res.json({ shouldPlan: true, plan: data.plan });
+      }
+    } catch (e) {
+      // Not JSON → treat as direct response
     }
+
+    // Direct response (code or text)
+    const cleanResponse = response
+      .replace(/```lua/g, '')
+      .replace(/```/g, '')
+      .trim();
+
+    console.log("✅ Direct response generated");
+    res.json({ response: cleanResponse });
+
+  } catch (error) {
+    console.error("Chat Error:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// --- PLAN GENERATION ---
 app.post('/plan', async (req, res) => {
-    try {
-        console.log("🧠 Generating Plan...");
-        const { prompt, chatHistory, createdScripts } = req.body;
+  try {
+    console.log("🧠 Generating Plan...");
+    const { prompt, chatHistory, createdScripts } = req.body;
 
-        const historyContext = formatChatHistory(chatHistory);
-        const scriptsContext = formatCreatedScripts(createdScripts);
+    const historyContext = formatChatHistory(chatHistory);
+    const scriptsContext = formatCreatedScripts(createdScripts);
 
-        const systemInstruction = `
+    const systemInstruction = `
 You are Lemonade — a senior Roblox Luau engineer.
 
 CONVERSATION HISTORY:
@@ -190,39 +197,38 @@ ${prompt}
 Respond ONLY with valid JSON, no markdown.
 `;
 
-        const result = await model.generateContent(systemInstruction);
-        let response = result.response.text().trim();
-        response = response.replace(/```json/g, '').replace(/```/g, '').trim();
-        const data = JSON.parse(response);
-        
-        if (!data.plan || !Array.isArray(data.plan)) {
-            throw new Error("Invalid plan format");
-        }
-
-        console.log(`✅ Plan generated with ${data.plan.length} steps`);
-        res.json({ success: true, plan: data.plan });
-
-    } catch (error) {
-        console.error("Plan Error:", error);
-        res.status(500).json({ 
-            success: false, 
-            error: error.message,
-            plan: [] 
-        });
+    const result = await model.generateContent(systemInstruction);
+    let response = result.response.text().trim();
+    response = response.replace(/```json/g, '').replace(/```/g, '').trim();
+    const data = JSON.parse(response);
+    
+    if (!data.plan || !Array.isArray(data.plan)) {
+      throw new Error("Invalid plan format");
     }
+
+    console.log(`✅ Plan generated with ${data.plan.length} steps`);
+    res.json({ success: true, plan: data.plan });
+
+  } catch (error) {
+    console.error("Plan Error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      plan: [] 
+    });
+  }
 });
 
-// --- STEP EXECUTION ---
 app.post('/step', async (req, res) => {
-    try {
-        console.log("⚙️ Executing Step...");
-        const { prompt, context } = req.body;
-        const { originalPrompt, stepDescription, stepIndex, chatHistory, createdScripts } = context || {};
+  try {
+    console.log("⚙️ Executing Step...");
+    const { prompt, context } = req.body;
+    const { originalPrompt, stepDescription, stepIndex, chatHistory, createdScripts } = context || {};
 
-        const historyContext = formatChatHistory(chatHistory);
-        const scriptsContext = formatCreatedScripts(createdScripts);
+    const historyContext = formatChatHistory(chatHistory);
+    const scriptsContext = formatCreatedScripts(createdScripts);
 
-        const fullPrompt = `
+    const fullPrompt = `
 You are Lemonade — a senior Roblox Luau engineer with elite standards.
 
 You fully understand:
@@ -280,40 +286,39 @@ ALL CODE MUST INCLUDE:
 ⛔ OUTPUT: ONLY raw Luau code with -- ScriptName: header. NO markdown.
 `;
 
-        const result = await model.generateContent(fullPrompt);
-        let code = result.response.text().trim();
-        code = code.replace(/```lua/g, '').replace(/```/g, '').trim();
+    const result = await model.generateContent(fullPrompt);
+    let code = result.response.text().trim();
+    code = code.replace(/```lua/g, '').replace(/```/g, '').trim();
 
-        const scriptNameMatch = code.match(/--[^\n]*ScriptName:[^\n]*([A-Za-z0-9_]+)/);
-        let scriptName = scriptNameMatch ? scriptNameMatch[1] : null;
+    const scriptNameMatch = code.match(/--[^\n]*ScriptName:[^\n]*([A-Za-z0-9_]+)/);
+    let scriptName = scriptNameMatch ? scriptNameMatch[1] : null;
 
-        if (!scriptName || scriptName.length <= 2 || /^[a-zA-Z]$/.test(scriptName)) {
-            scriptName = null;
-        }
-
-        console.log(`✅ Step ${stepIndex || '?'} executed: ${scriptName || 'Generated'}`);
-        res.json({ success: true, code, scriptName, response: code });
-
-    } catch (error) {
-        console.error("Step Error:", error);
-        res.status(500).json({ success: false, error: error.message });
+    if (!scriptName || scriptName.length <= 2 || /^[a-zA-Z]$/.test(scriptName)) {
+      scriptName = null;
     }
+
+    console.log(`✅ Step ${stepIndex || '?'} executed: ${scriptName || 'Generated'}`);
+    res.json({ success: true, code, scriptName, response: code });
+
+  } catch (error) {
+    console.error("Step Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-// --- SELF-IMPROVEMENT ---
 app.post('/improve', async (req, res) => {
-    try {
-        console.log("⚡ Self-Improvement Request");
-        const { currentSource, instruction, scriptName, chatHistory, createdScripts } = req.body;
+  try {
+    console.log("⚡ Self-Improvement Request");
+    const { currentSource, instruction, scriptName, chatHistory, createdScripts } = req.body;
 
-        if (!currentSource || !instruction) {
-            return res.status(400).json({ success: false, error: "Missing source or instruction" });
-        }
+    if (!currentSource || !instruction) {
+      return res.status(400).json({ success: false, error: "Missing source or instruction" });
+    }
 
-        const historyContext = formatChatHistory(chatHistory);
-        const scriptsContext = formatCreatedScripts(createdScripts);
+    const historyContext = formatChatHistory(chatHistory);
+    const scriptsContext = formatCreatedScripts(createdScripts);
 
-        const systemInstruction = `
+    const systemInstruction = `
 You are Lemonade — a senior Roblox engineer performing self-improvement.
 
 CONVERSATION HISTORY:
@@ -340,29 +345,29 @@ ${instruction}
 Return the complete modified Lua code.
 `;
 
-        const result = await model.generateContent(systemInstruction);
-        let cleanCode = result.response.text().trim();
-        cleanCode = cleanCode.replace(/```lua/g, '').replace(/```/g, '').trim();
+    const result = await model.generateContent(systemInstruction);
+    let cleanCode = result.response.text().trim();
+    cleanCode = cleanCode.replace(/```lua/g, '').replace(/```/g, '').trim();
 
-        console.log(`✅ Code improved for: ${scriptName || 'Script'}`);
-        res.json({ success: true, code: cleanCode, changes: `Applied: ${instruction}` });
+    console.log(`✅ Code improved for: ${scriptName || 'Script'}`);
+    res.json({ success: true, code: cleanCode, changes: `Applied: ${instruction}` });
 
-    } catch (error) {
-        console.error("Improvement Error:", error);
-        res.status(500).json({ success: false, error: error.message });
-    }
+  } catch (error) {
+    console.error("Improvement Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-// Start server on all interfaces
+// Start server on all interfaces (required for Discloud)
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 Acidnade AI Server v6.0 ready`);
-    console.log(`🌍 Listening on http://0.0.0.0:${PORT}`);
-    console.log(`\n✅ Endpoints:`);
-    console.log(`   GET  /health     - Public health check (for UptimeRobot)`);
-    console.log(`   POST /chat      - Main intelligence`);
-    console.log(`   POST /plan      - Generate plans`);
-    console.log(`   POST /step      - Execute plan steps`);
-    console.log(`   POST /improve   - Self-improve mode`);
-    console.log(`\n🔑 Security: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : 'Disabled'}`);
-    console.log(`\n📡 Global deployment ready!\n`);
+  console.log(`\n🚀 Acidnade AI Server v6.1 ready`);
+  console.log(`🌍 Listening on http://0.0.0.0:${PORT}`);
+  console.log(`\n✅ Endpoints:`);
+  console.log(`   GET  /health     - Public health check`);
+  console.log(`   POST /chat      - Main intelligence`);
+  console.log(`   POST /plan      - Generate plans`);
+  console.log(`   POST /step      - Execute plan steps`);
+  console.log(`   POST /improve   - Self-improve mode`);
+  console.log(`\n🔑 Security: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : 'Disabled (set ACIDNADE_API_KEY)'}`);
+  console.log(`\n📡 Global deployment ready!\n`);
 });
