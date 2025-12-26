@@ -92,7 +92,7 @@ app.post('/chat', async (req, res) => {
     const scriptsContext = formatCreatedScripts(createdScripts);
     
     const systemInstruction = `
-You are Lemonade — a senior Roblox Luau engineer with elite standards.
+You are Acidnade — a senior Roblox Luau engineer with elite standards.
 
 CORE PRINCIPLES:
 - You write production-ready, secure, and efficient Luau
@@ -171,7 +171,7 @@ app.post('/plan', async (req, res) => {
     const scriptsContext = formatCreatedScripts(createdScripts);
 
     const systemInstruction = `
-You are Lemonade — a senior Roblox Luau engineer.
+You are Acidnade — a senior Roblox Luau engineer.
 
 CONVERSATION HISTORY:
 ${historyContext}
@@ -229,7 +229,7 @@ app.post('/step', async (req, res) => {
     const scriptsContext = formatCreatedScripts(createdScripts);
 
     const fullPrompt = `
-You are Lemonade — a senior Roblox Luau engineer with elite standards.
+You are Acidnade — a senior Roblox Luau engineer with elite standards.
 
 You fully understand:
 - The existing architecture
@@ -319,7 +319,7 @@ app.post('/improve', async (req, res) => {
     const scriptsContext = formatCreatedScripts(createdScripts);
 
     const systemInstruction = `
-You are Lemonade — a senior Roblox engineer performing self-improvement.
+You are Acidnade — a senior Roblox engineer performing self-improvement.
 
 CONVERSATION HISTORY:
 ${historyContext}
