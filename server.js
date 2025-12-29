@@ -1,4 +1,4 @@
-// server.js — Discloud Optimized v6.1
+// server.js — Autonomous AI Server v7.0
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -9,14 +9,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors({
-  origin: '*' // Allow all origins for global access
-}));
+app.use(cors({ origin: '*' }));
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// Security middleware - API key validation
+// Security middleware
 app.use((req, res, next) => {
-  // Skip auth for health checks
   if ((req.method === 'GET' && req.path === '/') || 
       (req.method === 'GET' && req.path === '/health') ||
       (req.method === 'GET' && req.path === '/ping')) {
@@ -26,9 +23,8 @@ app.use((req, res, next) => {
   const clientKey = req.headers['x-acidnade-key'];
   const serverKey = process.env.ACIDNADE_API_KEY || process.env.API_KEY;
   
-  // Allow requests without key in development
   if (!serverKey) {
-    console.warn('⚠️ No API key set - allowing all requests (set ACIDNADE_API_KEY in production)');
+    console.warn('⚠️ No API key set - allowing all requests');
     return next();
   }
   
@@ -45,31 +41,51 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" }); // Updated model
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-// Helper functions
+// Helper: Format workspace data for AI
+function formatWorkspaceContext(workspace) {
+  if (!workspace || !workspace.scripts) return "No workspace data available.";
+  
+  let context = `WORKSPACE OVERVIEW:\n`;
+  context += `Total Scripts: ${workspace.scriptCount || 0}\n`;
+  context += `Total Folders: ${workspace.folderCount || 0}\n`;
+  context += `Total Remotes: ${workspace.remoteCount || 0}\n\n`;
+  
+  context += `AVAILABLE SCRIPTS:\n`;
+  for (const script of workspace.scripts) {
+    context += `\n📄 ${script.name} (${script.type})\n`;
+    context += `   Path: ${script.path}\n`;
+    context += `   Parent: ${script.parent}\n`;
+    context += `   Lines: ${script.lines}\n`;
+    if (script.source) {
+      // Include first 100 lines of each script for context
+      const lines = script.source.split('\n').slice(0, 100);
+      context += `   Source:\n${lines.map(l => '   ' + l).join('\n')}\n`;
+      if (script.lines > 100) {
+        context += `   ... (${script.lines - 100} more lines)\n`;
+      }
+    }
+  }
+  
+  return context;
+}
+
+// Helper: Format chat history
 function formatChatHistory(history) {
   if (!history || history.length === 0) return "No previous conversation.";
-  const recentHistory = history.slice(-10);
+  const recentHistory = history.slice(-8);
   return recentHistory.map(msg => {
     const role = msg.role === "user" ? "User" : "Assistant";
-    const metadata = msg.metadata ? ` [${msg.metadata.action || ''}]` : '';
-    return `${role}: ${msg.content}${metadata}`;
+    return `${role}: ${msg.content}`;
   }).join('\n');
 }
 
-function formatCreatedScripts(scripts) {
-  if (!scripts || scripts.length === 0) return "No scripts created yet.";
-  return scripts.map(script => {
-    return `- ${script.name} (${script.type}): ${script.description}\n  Path: ${script.path}`;
-  }).join('\n');
-}
-
-// --- PUBLIC ENDPOINTS (no auth required) ---
+// Public endpoints
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: "OK", 
-    message: "Acidnade AI Server v1 - Ready for global requests",
+    message: "Acidnade AI Server v7.0 - Autonomous Mode",
     timestamp: new Date().toISOString()
   });
 });
@@ -79,295 +95,194 @@ app.get('/ping', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.send('Acidnade AI Server v6.1 - Global Ready');
+  res.send('Acidnade AI Server v7.0 - Autonomous Intelligence');
 });
 
-// --- PROTECTED ENDPOINTS (require API key) ---
-app.post('/chat', async (req, res) => {
+// Main AI endpoint with full workspace access
+app.post('/ai', async (req, res) => {
   try {
-    console.log("💬 Request Received");
-    const { prompt, chatHistory, createdScripts } = req.body;
+    console.log("🧠 AI Request Received");
+    const { prompt, workspace, chatHistory } = req.body;
     
+    if (!workspace) {
+      return res.status(400).json({ error: "Workspace data required" });
+    }
+    
+    const workspaceContext = formatWorkspaceContext(workspace);
     const historyContext = formatChatHistory(chatHistory);
-    const scriptsContext = formatCreatedScripts(createdScripts);
     
-    const systemInstruction = `
-You are Acidnade — a senior Roblox Luau engineer with elite standards.
+    const systemPrompt = `You are Acidnade — an autonomous AI assistant with FULL access to the user's Roblox Studio workspace.
 
-CORE PRINCIPLES:
-- You write production-ready, secure, and efficient Luau
-- You NEVER use deprecated patterns (e.g., game.Workspace)
-- You ALWAYS use game:GetService("ServiceName")
-- You document key logic with clear comments (-- explain why, not what)
-- You name scripts professionally (e.g., "PetSpawnHandler", not "Script2")
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 YOUR CAPABILITIES (AUTONOMOUS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You have COMPLETE visibility into the workspace. You can:
+- Read ANY script's source code (all sources are provided)
+- Search through all scripts to find specific code or functionality
+- Understand the architecture and relationships between scripts
+- Create new instances (Script, LocalScript, ModuleScript, RemoteEvent, etc.)
+- Update existing scripts
+- Delete instances when needed
 
-PROJECT CONTEXT:
-${scriptsContext}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 WORKSPACE ACCESS (LIVE DATA)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${workspaceContext}
 
-CONVERSATION HISTORY:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💬 CONVERSATION HISTORY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${historyContext}
 
-YOUR BEHAVIOR:
-1. For SIMPLE requests (bug fixes, small tweaks, questions):
-   - Respond directly in natural language
-   - If code is needed, output ONLY raw Luau with documentation comments
-   
-2. For COMPLEX requests (multi-part systems requiring coordination):
-   - First, decide if a plan is truly needed (only if ≥2 scripts are required)
-   - If YES, return JSON with { "shouldPlan": true, "plan": [...] }
-   - If NO, output code/text directly
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 BEHAVIOR RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. AUTONOMOUS SEARCH: When user asks about a script (e.g., "Can you see the lemonade script?"):
+   - Search through the workspace data above
+   - Find the script by name (case-insensitive)
+   - Read its source code
+   - Explain what it does
+   - NO special syntax required from user
 
-PLAN RULES (only when essential):
-- Only for requests needing multiple coordinated scripts
-- Never for trivial tasks ("fix typo", "hello", "add print", simple bug fixes)
-- Each step must be a self-contained script with clear responsibility
+2. NATURAL INTERACTION: Respond conversationally:
+   - "I found the LemonadeScript in Workspace. It handles..."
+   - "Looking at your MainScript, I can see it..."
+   - "I don't see a script called 'xyz' in your workspace. Did you mean..."
 
-RESPONSE FORMAT:
-- Simple requests: Direct response (text or code)
-- Complex requests: { "shouldPlan": true, "plan": [...] }
+3. PROACTIVE EXPLORATION: If user asks about functionality:
+   - Search ALL scripts for relevant code
+   - Example: "How does player spawning work?" → Search for "spawn", "character", "respawn" in all sources
 
-USER REQUEST:
+4. CODE QUALITY: When creating scripts:
+   - Use game:GetService() (never game.Workspace)
+   - Professional naming (e.g., "PlayerDataManager", not "Script1")
+   - Include documentation comments
+   - Production-ready code
+
+5. RESPONSE FORMAT: Return JSON with:
+   {
+     "message": "Your natural language response explaining what you found/did",
+     "actions": [
+       {
+         "type": "create",
+         "instanceType": "Script|LocalScript|ModuleScript|RemoteEvent|etc",
+         "name": "ScriptName",
+         "parentPath": "game.ServerScriptService" or null,
+         "properties": {
+           "Source": "-- code here"
+         }
+       },
+       {
+         "type": "update",
+         "path": "game.ServerScriptService.ExistingScript",
+         "name": "ExistingScript",
+         "source": "-- updated code"
+       },
+       {
+         "type": "delete",
+         "path": "game.ServerScriptService.OldScript",
+         "name": "OldScript"
+       }
+     ]
+   }
+
+6. INSTANCE TYPES: You can create ANY of these:
+   - Script, LocalScript, ModuleScript
+   - RemoteEvent, RemoteFunction
+   - BindableEvent, BindableFunction
+   - Folder, Configuration
+   - StringValue, IntValue, BoolValue, NumberValue, ObjectValue
+
+7. PARENT PATHS: Common parent locations:
+   - Server scripts: "game.ServerScriptService"
+   - Client scripts: "game.StarterPlayer.StarterPlayerScripts"
+   - Shared modules: "game.ReplicatedStorage"
+   - UI scripts: "game.StarterGui"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 CRITICAL: NO SPECIAL SYNTAX NEEDED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The user does NOT need to use @ mentions or special commands.
+You automatically have access to everything.
+
+Examples:
+- "Can you see the lemonade script?" → Search workspace, find it, read it, explain
+- "What scripts handle player data?" → Search all scripts for data-related code
+- "Fix the bug in MainScript" → Read MainScript, identify issue, update it
+- "Create a shop system" → Build ModuleScript + RemoteEvent + UI script
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 USER REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${prompt}
 
-Respond appropriately.
-`;
+Think step-by-step:
+1. Do I need to search for existing scripts? If yes, search the workspace data
+2. Do I need to create new code? If yes, include in actions array
+3. Do I need to modify existing code? If yes, include update action
+4. Write a natural, helpful message explaining what I found/did
 
-    const result = await model.generateContent(systemInstruction);
+Respond with valid JSON (no markdown).`;
+
+    const result = await model.generateContent(systemPrompt);
     let response = result.response.text().trim();
-
-    // Try to parse as JSON (for plan requests)
+    
+    // Clean markdown formatting
+    response = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    
+    // Parse JSON response
+    let data;
     try {
-      const cleanJson = response.replace(/```json|```/g, '').trim();
-      const data = JSON.parse(cleanJson);
-      if (data.shouldPlan && Array.isArray(data.plan)) {
-        console.log(`✅ Complex request - Plan generated with ${data.plan.length} steps`);
-        return res.json({ shouldPlan: true, plan: data.plan });
-      }
-    } catch (e) {
-      // Not JSON → treat as direct response
+      data = JSON.parse(response);
+    } catch (parseError) {
+      console.error("Failed to parse AI response:", parseError);
+      // Fallback: treat as plain text message
+      data = {
+        message: response,
+        actions: []
+      };
     }
-
-    // Direct response (code or text)
-    const cleanResponse = response
-      .replace(/```lua/g, '')
-      .replace(/```/g, '')
-      .trim();
-
-    console.log("✅ Direct response generated");
-    res.json({ response: cleanResponse });
-
-  } catch (error) {
-    console.error("Chat Error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/plan', async (req, res) => {
-  try {
-    console.log("🧠 Generating Plan...");
-    const { prompt, chatHistory, createdScripts } = req.body;
-
-    const historyContext = formatChatHistory(chatHistory);
-    const scriptsContext = formatCreatedScripts(createdScripts);
-
-    const systemInstruction = `
-You are Acidnade — a senior Roblox Luau engineer.
-
-CONVERSATION HISTORY:
-${historyContext}
-
-PREVIOUSLY CREATED SCRIPTS:
-${scriptsContext}
-
-TASK: Break down the user's request into clear steps ONLY if it genuinely requires multiple coordinated scripts.
-
-RULES:
-1. Return JSON with "plan" array
-2. Each step needs:
-   - "description": Clear task description (becomes script name)
-   - "type": "server" or "client"
-3. Use professional naming (e.g., "RNGRewardSystem", not "script1")
-4. Order logically: server → client → UI
-5. Create as many steps as needed (no artificial limits)
-6. NEVER plan for trivial requests (bug fixes, small changes)
-
-USER REQUEST:
-${prompt}
-
-Respond ONLY with valid JSON, no markdown.
-`;
-
-    const result = await model.generateContent(systemInstruction);
-    let response = result.response.text().trim();
-    response = response.replace(/```json/g, '').replace(/```/g, '').trim();
-    const data = JSON.parse(response);
     
-    if (!data.plan || !Array.isArray(data.plan)) {
-      throw new Error("Invalid plan format");
+    // Ensure actions array exists
+    if (!data.actions) {
+      data.actions = [];
     }
-
-    console.log(`✅ Plan generated with ${data.plan.length} steps`);
-    res.json({ success: true, plan: data.plan });
+    
+    console.log(`✅ AI Response: ${data.actions.length} actions`);
+    res.json(data);
 
   } catch (error) {
-    console.error("Plan Error:", error);
+    console.error("AI Error:", error);
     res.status(500).json({ 
-      success: false, 
       error: error.message,
-      plan: [] 
+      message: "AI processing failed. Please try again."
     });
   }
 });
 
-app.post('/step', async (req, res) => {
-  try {
-    console.log("⚙️ Executing Step...");
-    const { prompt, context } = req.body;
-    const { originalPrompt, stepDescription, stepIndex, chatHistory, createdScripts } = context || {};
-
-    const historyContext = formatChatHistory(chatHistory);
-    const scriptsContext = formatCreatedScripts(createdScripts);
-
-    const fullPrompt = `
-You are Acidnade — a senior Roblox Luau engineer with elite standards.
-
-You fully understand:
-- The existing architecture
-- Previously created scripts and systems
-- Naming conventions and shared patterns
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚨 ABSOLUTE NAMING RULE (NON-NEGOTIABLE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Every script MUST have a descriptive, meaningful name (8-35 chars). Forbidden: single letters, "Script", "Main", "Handler".
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧠 PROJECT CONTEXT (PERSISTENT)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CONVERSATION HISTORY:
-${historyContext}
-
-PREVIOUSLY CREATED SCRIPTS:
-${scriptsContext}
-
-You MUST:
-- Assume existing scripts are present
-- Reference their behavior when relevant
-- Ensure backward compatibility
-- Never duplicate responsibility
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 CURRENT TASK
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TASK TO EXECUTE:
-${stepDescription || prompt}
-
-ORIGINAL REQUEST CONTEXT:
-${originalPrompt || "N/A"}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📝 DOCUMENTATION REQUIREMENTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ALL CODE MUST INCLUDE:
-1. Header comment explaining script purpose
-2. Inline comments for non-obvious logic (-- explain WHY)
-3. Document function parameters/returns
-4. Use --[[ for multi-line explanations
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧪 QUALITY RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Use game:GetService()
-- Avoid magic numbers
-- Defensive programming
-- No dead code or TODOs
-- Clean, production-ready Luau
-
-⛔ OUTPUT: ONLY raw Luau code with -- ScriptName: header. NO markdown.
-`;
-
-    const result = await model.generateContent(fullPrompt);
-    let code = result.response.text().trim();
-    code = code.replace(/```lua/g, '').replace(/```/g, '').trim();
-
-    const scriptNameMatch = code.match(/--[^\n]*ScriptName:[^\n]*([A-Za-z0-9_]+)/);
-    let scriptName = scriptNameMatch ? scriptNameMatch[1] : null;
-
-    if (!scriptName || scriptName.length <= 2 || /^[a-zA-Z]$/.test(scriptName)) {
-      scriptName = null;
-    }
-
-    console.log(`✅ Step ${stepIndex || '?'} executed: ${scriptName || 'Generated'}`);
-    res.json({ success: true, code, scriptName, response: code });
-
-  } catch (error) {
-    console.error("Step Error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+// Legacy compatibility endpoints (optional - keep for backward compatibility)
+app.post('/chat', async (req, res) => {
+  console.log("⚠️ Legacy /chat endpoint called - redirecting to /ai");
+  req.body.workspace = req.body.context?.workspace || { scripts: [], scriptCount: 0 };
+  return app._router.handle(
+    Object.assign(req, { url: '/ai', originalUrl: '/ai' }), 
+    res
+  );
 });
 
-app.post('/improve', async (req, res) => {
-  try {
-    console.log("⚡ Self-Improvement Request");
-    const { currentSource, instruction, scriptName, chatHistory, createdScripts } = req.body;
-
-    if (!currentSource || !instruction) {
-      return res.status(400).json({ success: false, error: "Missing source or instruction" });
-    }
-
-    const historyContext = formatChatHistory(chatHistory);
-    const scriptsContext = formatCreatedScripts(createdScripts);
-
-    const systemInstruction = `
-You are Acidnade — a senior Roblox engineer performing self-improvement.
-
-CONVERSATION HISTORY:
-${historyContext}
-
-PREVIOUSLY CREATED SCRIPTS:
-${scriptsContext}
-
-TASK: Modify the provided Lua code based on the user's instruction.
-
-RULES:
-1. Return ONLY raw Lua code with documentation comments
-2. Preserve core functionality
-3. Apply changes precisely
-4. Ensure backward compatibility
-5. Add comments explaining key changes
-
-CURRENT CODE:
-${currentSource}
-
-USER INSTRUCTION:
-${instruction}
-
-Return the complete modified Lua code.
-`;
-
-    const result = await model.generateContent(systemInstruction);
-    let cleanCode = result.response.text().trim();
-    cleanCode = cleanCode.replace(/```lua/g, '').replace(/```/g, '').trim();
-
-    console.log(`✅ Code improved for: ${scriptName || 'Script'}`);
-    res.json({ success: true, code: cleanCode, changes: `Applied: ${instruction}` });
-
-  } catch (error) {
-    console.error("Improvement Error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Start server on all interfaces (required for Discloud)
+// Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI Server v6.1 ready`);
+  console.log(`\n🚀 Acidnade AI Server v7.0 - Autonomous Mode`);
   console.log(`🌍 Listening on http://0.0.0.0:${PORT}`);
   console.log(`\n✅ Endpoints:`);
-  console.log(`   GET  /health     - Public health check`);
-  console.log(`   POST /chat      - Main intelligence`);
-  console.log(`   POST /plan      - Generate plans`);
-  console.log(`   POST /step      - Execute plan steps`);
-  console.log(`   POST /improve   - Self-improve mode`);
-  console.log(`\n🔑 Security: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : 'Disabled (set ACIDNADE_API_KEY)'}`);
-  console.log(`\n📡 Global deployment ready!\n`);
+  console.log(`   GET  /health     - Health check`);
+  console.log(`   POST /ai         - Autonomous AI with full workspace access`);
+  console.log(`\n🔑 Security: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : 'Disabled'}`);
+  console.log(`🧠 Model: Gemini 2.0 Flash (Experimental)`);
+  console.log(`\n🎯 Features:`);
+  console.log(`   • Autonomous script reading`);
+  console.log(`   • Workspace-wide search`);
+  console.log(`   • Natural language interaction`);
+  console.log(`   • No special syntax required`);
+  console.log(`\n📡 Ready for requests!\n`);
 });
