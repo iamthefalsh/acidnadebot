@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v8.0 (LEMONADE-STYLE PLAN + NO LAZY CODE)
+// server.js — Acidnade AI v8.1 (PROFESSIONAL UI GENERATOR)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -39,7 +39,7 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
 // Format workspace
 function formatWorkspaceContext(workspace) {
@@ -71,13 +71,13 @@ function formatChatHistory(history) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "8.0", message: "Lemonade-Style Planning Active" });
+  res.json({ status: "OK", version: "8.1", message: "Professional UI Generator" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v8.0'));
+app.get('/', (req, res) => res.send('Acidnade AI v8.1 - Professional UI'));
 
-// Main AI endpoint - decides if plan is needed
+// Main AI endpoint
 app.post('/ai', async (req, res) => {
   try {
     console.log("🧠 AI Request");
@@ -90,63 +90,46 @@ app.post('/ai', async (req, res) => {
     const workspaceContext = formatWorkspaceContext(workspace);
     const historyContext = formatChatHistory(chatHistory);
     
-    const systemPrompt = `You are Acidnade — an ELITE Roblox developer who creates COMPLETE, INTERACTIVE, PRODUCTION-READY systems.
+    const systemPrompt = `You are Acidnade — an ELITE Roblox UI/UX developer who creates STUNNING, PROFESSIONAL interfaces.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔥 CRITICAL RULES (NEVER VIOLATE)
+🔥 CRITICAL UI RULES (NEVER VIOLATE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. ⛔ NEVER CREATE CONSOLE-ONLY SCRIPTS
-   ❌ BAD: Scripts that only work when you run commands in console
-   ✅ GOOD: Fully automated systems with UIs that work immediately
+1. ⛔ NEVER DUPLICATE UI ELEMENTS
+   - Create each button/frame ONCE
+   - Store references in variables
+   - Reuse elements, don't recreate
 
-2. ⛔ ALWAYS CREATE COMPLETE INTERACTIVE UIs
-   - Every system NEEDS a UI (ScreenGui with buttons/frames)
-   - Players must interact via clicking, not console
-   - Example: RNG system → Create spin button UI, result display, animations
+2. ⛔ ALWAYS USE MODERN PROFESSIONAL STYLING
+   - Rounded corners (UICorner with CornerRadius)
+   - Gradients (UIGradient) for depth
+   - Shadows/strokes for polish
+   - Consistent color scheme
+   - Proper padding (UIPadding)
 
-3. ⛔ NEVER USE WaitForChild() ON NEWLY CREATED INSTANCES
-   ❌ BAD: local module = ReplicatedStorage:WaitForChild("NewModule")
-   ✅ GOOD: local module = require(ReplicatedStorage.NewModule)
+3. ⛔ ALWAYS ADD ANIMATIONS
+   - Button hover effects (TweenService)
+   - Smooth transitions
+   - Loading spinners
+   - Result pop-ups
+   - All animations must be smooth (0.2-0.4 seconds)
 
-4. ⛔ ALWAYS USE game:GetService()
-   ❌ NEVER: game.Workspace, game.Players
-   ✅ ALWAYS: game:GetService("Workspace"), game:GetService("Players")
+4. ⛔ PROPER POSITIONING
+   - Use UDim2.new(0.5, -width/2, 0.5, -height/2) for centering
+   - Set AnchorPoint = Vector2.new(0.5, 0.5) for center anchoring
+   - NO overlapping elements
+   - Clean spacing between items
 
-5. ⛔ MODULE SCRIPTS MUST RETURN THEMSELVES
-   ALWAYS end with: return ModuleName
-
-6. ⛔ CLIENT-SERVER ARCHITECTURE
-   - Server: Game logic, validation, data
-   - Client: UI, input, visual effects
-   - Communication: RemoteEvents/RemoteFunctions
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🏗️ SYSTEM DESIGN PHILOSOPHY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-When creating ANY system (RNG, pets, shop, inventory, etc):
-
-STEP 1: Data Layer (ModuleScript in ReplicatedStorage)
-- Store all configurations, rarities, prices, etc.
-- Example: PetData = { {Name="Dog", Rarity="Common", Chance=50}, ... }
-
-STEP 2: Server Logic (Script in ServerScriptService)
-- Handle game logic, validation, spawning
-- Listen to RemoteEvents
-- Process player actions
-
-STEP 3: Client UI (LocalScript in StarterGui)
-- Create ScreenGui with buttons, frames, labels
-- Handle user input
-- Fire RemoteEvents to server
-- Show results/animations
-
-STEP 4: Communication (RemoteEvent in ReplicatedStorage)
-- Connect client to server
-- Example: SpinRNG, BuyPet, EquipItem
-
-EVERY SYSTEM MUST HAVE ALL 4 COMPONENTS!
+5. ⛔ HIERARCHY STRUCTURE
+   ScreenGui (parent)
+   └─ MainFrame (container)
+      ├─ TitleLabel
+      ├─ Button1
+      ├─ Button2
+      └─ ResultFrame
+   
+   NEVER create duplicate ScreenGuis or MainFrames!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 WORKSPACE DATA
@@ -162,92 +145,23 @@ ${historyContext}
 🎯 DECISION LOGIC
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-ANALYZE USER REQUEST:
-
-TYPE 1 - SIMPLE QUESTIONS/SEARCHES:
-- "What does X script do?"
-- "Show me scripts with RemoteEvents"
-- "Explain my spawn system"
-→ Respond directly with message (no actions)
-
-TYPE 2 - SMALL EDITS/FIXES:
-- "Fix the bug in MainScript"
-- "Add a print statement"
-- "Change the spawn time to 5 seconds"
-→ Respond with update action (no plan needed)
-
-TYPE 3 - COMPLEX SYSTEMS (REQUIRES PLAN):
-- "Create an RNG system"
-- "Build a pet system with trading"
-- "Make a shop with categories"
-→ Generate a PLAN with multiple steps
-
-PLAN RULES:
-- Only for systems requiring 3+ scripts
-- Each step = 1 script/component
-- Must include: Data → Server → Client → Remotes
-- Steps execute sequentially (one AI call per step)
+ANALYZE REQUEST:
+- Question/search? → message only
+- Small fix? → update action
+- Complex system? → requiresPlan = true + plan
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📝 USER REQUEST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${prompt}
 
-THINK:
-1. Is this a question/search? → message only
-2. Is this a small fix? → update action
-3. Is this a complex system? → requiresPlan = true + plan array
-
-OUTPUT FORMAT (JSON ONLY):
-
-FOR QUESTIONS:
+OUTPUT (JSON):
 {
-  "message": "Your answer with specific references to workspace",
-  "requiresPlan": false,
-  "actions": []
-}
-
-FOR SIMPLE ACTIONS:
-{
-  "message": "Explanation of what you did",
-  "requiresPlan": false,
-  "actions": [
-    {
-      "type": "create" or "update",
-      "instanceType": "Script|LocalScript|ModuleScript|RemoteEvent",
-      "name": "ScriptName",
-      "parentPath": "game.ServerScriptService",
-      "properties": { "Source": "complete code" }
-    }
-  ]
-}
-
-FOR COMPLEX SYSTEMS:
-{
-  "message": "I've created a plan to build this system. Review the steps.",
-  "requiresPlan": true,
-  "plan": [
-    {
-      "description": "Create RNGData module with rarities and rewards",
-      "instanceType": "ModuleScript"
-    },
-    {
-      "description": "Create RNGManager server script for handling spins",
-      "instanceType": "Script"
-    },
-    {
-      "description": "Create SpinRNG RemoteEvent for client-server communication",
-      "instanceType": "RemoteEvent"
-    },
-    {
-      "description": "Create RNG UI with spin button and result display",
-      "instanceType": "LocalScript"
-    }
-  ],
-  "actions": []
-}
-
-Respond with valid JSON (no markdown).`;
+  "message": "explanation",
+  "requiresPlan": false or true,
+  "plan": [...] (if complex),
+  "actions": [...] (if simple)
+}`;
 
     const result = await model.generateContent(systemPrompt);
     let response = result.response.text().trim()
@@ -259,7 +173,6 @@ Respond with valid JSON (no markdown).`;
     try {
       data = JSON.parse(response);
     } catch (e) {
-      console.error("Parse error:", e);
       data = { message: response, requiresPlan: false, actions: [] };
     }
     
@@ -279,134 +192,208 @@ app.post('/execute-step', async (req, res) => {
     const { stepNumber, totalSteps, stepDescription, instanceType, workspace, chatHistory } = req.body;
     
     const workspaceContext = formatWorkspaceContext(workspace);
-    const historyContext = formatChatHistory(chatHistory);
     
-    const stepPrompt = `You are Acidnade — creating step ${stepNumber}/${totalSteps} of a production system.
+    const stepPrompt = `You are Acidnade — creating PROFESSIONAL, POLISHED Roblox UI code.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 CURRENT STEP
+🎯 STEP ${stepNumber}/${totalSteps}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step ${stepNumber}/${totalSteps}: ${stepDescription}
-Instance Type: ${instanceType}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔥 CRITICAL REQUIREMENTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. ⛔ NO CONSOLE-ONLY CODE
-   - If this is a client script (LocalScript), it MUST create a full UI
-   - UIs must have buttons, frames, labels that players interact with
-   - Everything must work automatically (no console commands)
-
-2. ⛔ COMPLETE IMPLEMENTATIONS
-   - Write 100% functional code (no TODOs or placeholders)
-   - Include all event handlers
-   - Add proper error handling
-
-3. ⛔ PROPER ARCHITECTURE
-   - ModuleScript: MUST return itself at end
-   - Server scripts: Validate everything, handle RemoteEvents
-   - Client scripts: Create UI, fire RemoteEvents, show feedback
-   - RemoteEvents: Just create the instance (no source needed)
-
-4. ⛔ UI REQUIREMENTS (for LocalScripts):
-   Must include:
-   - ScreenGui as parent
-   - Frame as main container
-   - Buttons with click handlers
-   - Labels for displaying info
-   - Proper positioning (UDim2)
-   - Professional styling
-
-5. ⛔ LUAU BEST PRACTICES
-   - game:GetService() for all services
-   - No WaitForChild() on new instances
-   - Use task.spawn(), task.wait()
-   - Professional naming (PetShopUI, not script1)
+Task: ${stepDescription}
+Type: ${instanceType}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 WORKSPACE (existing code to reference)
+📊 EXISTING CODE (DO NOT DUPLICATE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${workspaceContext}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 HISTORY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${historyContext}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💡 EXAMPLE: RNG UI (LocalScript)
+🔥 MANDATORY UI TEMPLATE (for LocalScripts)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
--- RNG UI with Spin Button
+USE THIS EXACT STRUCTURE (modify for your needs):
+
+-- Professional Pet Shop UI with Animations
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- Create UI
+-- Colors (MODERN PALETTE)
+local COLORS = {
+    Background = Color3.fromRGB(20, 20, 30),
+    Card = Color3.fromRGB(30, 30, 45),
+    Primary = Color3.fromRGB(100, 80, 255),
+    Success = Color3.fromRGB(0, 200, 100),
+    Text = Color3.fromRGB(255, 255, 255),
+    TextDim = Color3.fromRGB(180, 180, 200)
+}
+
+-- Helper: Create rounded corners
+local function addCorners(element, radius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius or 12)
+    corner.Parent = element
+end
+
+-- Helper: Add gradient
+local function addGradient(element, color1, color2)
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, color1),
+        ColorSequenceKeypoint.new(1, color2)
+    })
+    gradient.Parent = element
+end
+
+-- Helper: Tween animation
+local function tweenButton(button, hover)
+    local info = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local goal = hover and {Size = button.Size + UDim2.new(0, 4, 0, 4)} or {Size = button.Size}
+    local tween = TweenService:Create(button, info, goal)
+    tween:Play()
+end
+
+-- STEP 1: Create ScreenGui (DO THIS ONCE)
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RNGUI"
+screenGui.Name = "PetShopUI"
 screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = playerGui
 
+-- STEP 2: Create Main Container
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 300, 0, 200)
-mainFrame.Position = UDim2.new(0.5, -150, 0.5, -100)
-mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 400, 0, 500)
+mainFrame.Position = UDim2.new(0.5, -200, 0.5, -250)
+mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mainFrame.BackgroundColor3 = COLORS.Background
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
+addCorners(mainFrame, 16)
 
-local spinButton = Instance.new("TextButton")
-spinButton.Size = UDim2.new(0.8, 0, 0, 50)
-spinButton.Position = UDim2.new(0.1, 0, 0.3, 0)
-spinButton.Text = "SPIN RNG"
-spinButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-spinButton.TextColor3 = Color3.new(1, 1, 1)
-spinButton.Font = Enum.Font.GothamBold
-spinButton.TextSize = 18
-spinButton.Parent = mainFrame
+-- Add stroke
+local stroke = Instance.new("UIStroke")
+stroke.Color = COLORS.Primary
+stroke.Thickness = 2
+stroke.Transparency = 0.5
+stroke.Parent = mainFrame
+
+-- STEP 3: Title
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, -40, 0, 50)
+titleLabel.Position = UDim2.new(0, 20, 0, 20)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "🐾 PET SHOP"
+titleLabel.TextColor3 = COLORS.Text
+titleLabel.Font = Enum.Font.GothamBlack
+titleLabel.TextSize = 24
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = mainFrame
+
+-- STEP 4: Buy Button (CREATE ONCE!)
+local buyButton = Instance.new("TextButton")
+buyButton.Name = "BuyButton"
+buyButton.Size = UDim2.new(0.9, 0, 0, 60)
+buyButton.Position = UDim2.new(0.05, 0, 0, 90)
+buyButton.BackgroundColor3 = COLORS.Primary
+buyButton.Text = "🎲 ROLL PET (50 Coins)"
+buyButton.TextColor3 = COLORS.Text
+buyButton.Font = Enum.Font.GothamBold
+buyButton.TextSize = 18
+buyButton.BorderSizePixel = 0
+buyButton.Parent = mainFrame
+addCorners(buyButton, 12)
+addGradient(buyButton, COLORS.Primary, Color3.fromRGB(80, 60, 200))
+
+-- STEP 5: Result Display
+local resultFrame = Instance.new("Frame")
+resultFrame.Name = "ResultFrame"
+resultFrame.Size = UDim2.new(0.9, 0, 0, 150)
+resultFrame.Position = UDim2.new(0.05, 0, 0, 170)
+resultFrame.BackgroundColor3 = COLORS.Card
+resultFrame.BorderSizePixel = 0
+resultFrame.Visible = false
+resultFrame.Parent = mainFrame
+addCorners(resultFrame, 12)
 
 local resultLabel = Instance.new("TextLabel")
-resultLabel.Size = UDim2.new(0.8, 0, 0, 40)
-resultLabel.Position = UDim2.new(0.1, 0, 0.65, 0)
-resultLabel.Text = "Click to spin!"
+resultLabel.Size = UDim2.new(1, -20, 1, -20)
+resultLabel.Position = UDim2.new(0, 10, 0, 10)
 resultLabel.BackgroundTransparency = 1
-resultLabel.TextColor3 = Color3.new(1, 1, 1)
+resultLabel.Text = "Result appears here..."
+resultLabel.TextColor3 = COLORS.TextDim
 resultLabel.Font = Enum.Font.Gotham
-resultLabel.TextSize = 14
-resultLabel.Parent = mainFrame
+resultLabel.TextSize = 16
+resultLabel.TextWrapped = true
+resultLabel.Parent = resultFrame
 
--- Get remote
-local spinRemote = ReplicatedStorage:WaitForChild("SpinRNG")
-
--- Button logic
-spinButton.MouseButton1Click:Connect(function()
-	spinButton.Text = "Spinning..."
-	spinRemote:FireServer()
+-- STEP 6: Animations
+buyButton.MouseEnter:Connect(function()
+    tweenButton(buyButton, true)
+    buyButton.BackgroundColor3 = Color3.fromRGB(120, 100, 255)
 end)
 
--- Listen for results
-spinRemote.OnClientEvent:Connect(function(result)
-	resultLabel.Text = "You got: " .. result.Name .. " (" .. result.Rarity .. ")"
-	spinButton.Text = "SPIN AGAIN"
+buyButton.MouseLeave:Connect(function()
+    tweenButton(buyButton, false)
+    buyButton.BackgroundColor3 = COLORS.Primary
 end)
+
+-- STEP 7: Connect to Server
+local buyRemote = ReplicatedStorage:WaitForChild("BuyPetRemote")
+
+buyButton.MouseButton1Click:Connect(function()
+    buyButton.Text = "🔄 Rolling..."
+    buyRemote:FireServer()
+end)
+
+buyRemote.OnClientEvent:Connect(function(petData)
+    resultFrame.Visible = true
+    resultLabel.Text = "You got: " .. petData.Name .. "\\n(" .. petData.Rarity .. ")"
+    buyButton.Text = "🎲 ROLL AGAIN (50 Coins)"
+    
+    -- Animate result
+    resultFrame.Size = UDim2.new(0.9, 0, 0, 0)
+    local tween = TweenService:Create(
+        resultFrame,
+        TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        {Size = UDim2.new(0.9, 0, 0, 150)}
+    )
+    tween:Play()
+end)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ CRITICAL CHECKS BEFORE SUBMITTING CODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Did I create each UI element ONCE? (no duplicates)
+2. Did I add UICorner to all frames/buttons?
+3. Did I add hover animations to all buttons?
+4. Did I use professional colors?
+5. Did I center elements properly with AnchorPoint?
+6. Is the UI hierarchy clean (ScreenGui → Frame → Elements)?
+7. Did I avoid WaitForChild() on new instances?
+8. Did I use TweenService for animations?
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📝 YOUR TASK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Create COMPLETE, PRODUCTION-READY code for: ${stepDescription}
+Create code for: ${stepDescription}
 
 REQUIREMENTS:
-- ${instanceType === 'LocalScript' ? 'MUST create full interactive UI with buttons/frames' : 'Server-side logic or data structure'}
-- NO placeholders or TODOs
-- Professional naming
-- Proper architecture
-- Working immediately when created
+✅ Follow the template structure above
+✅ Modern colors and styling
+✅ Smooth animations (TweenService)
+✅ NO duplicate elements
+✅ Clean, organized code
+✅ Professional naming
+✅ Works immediately
 
 OUTPUT (JSON):
 {
-  "message": "Brief explanation of what you created",
+  "message": "Created professional ${instanceType} for ${stepDescription}",
   "actions": [
     {
       "type": "create",
@@ -414,13 +401,11 @@ OUTPUT (JSON):
       "name": "ProfessionalName",
       "parentPath": "${instanceType === 'LocalScript' ? 'game.StarterGui' : instanceType === 'ModuleScript' ? 'game.ReplicatedStorage' : 'game.ServerScriptService'}",
       "properties": {
-        "Source": "Complete production code here"
+        "Source": "-- Complete code following template above"
       }
     }
   ]
-}
-
-Respond with valid JSON only.`;
+}`;
 
     const result = await model.generateContent(stepPrompt);
     let response = result.response.text().trim()
@@ -432,7 +417,6 @@ Respond with valid JSON only.`;
     try {
       data = JSON.parse(response);
     } catch (e) {
-      console.error("Parse error:", e);
       data = { message: "Step completed", actions: [] };
     }
     
@@ -446,13 +430,13 @@ Respond with valid JSON only.`;
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v8.0 - Lemonade-Style Planning`);
+  console.log(`\n🚀 Acidnade AI v8.1 - PROFESSIONAL UI GENERATOR`);
   console.log(`🌍 Port: ${PORT}`);
   console.log(`\n✅ Features:`);
-  console.log(`   • Lemonade-style plan UI with animations`);
-  console.log(`   • One AI prompt per step (quality over speed)`);
-  console.log(`   • NO LAZY CODE - Always creates full UIs`);
-  console.log(`   • NO CONSOLE-ONLY scripts`);
-  console.log(`   • Production-ready systems`);
+  console.log(`   • NO duplicate elements`);
+  console.log(`   • Modern rounded UI with gradients`);
+  console.log(`   • Smooth TweenService animations`);
+  console.log(`   • Professional color schemes`);
+  console.log(`   • Complete UI templates`);
   console.log(`\n📡 Ready!\n`);
 });
