@@ -41,7 +41,7 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 // Helper: Format workspace data for AI
 function formatWorkspaceContext(workspace) {
