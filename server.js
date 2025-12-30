@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v8.2 (STRUCTURED RESPONSE + LEMONADE COMPATIBLE)
+// server.js — Acidnade AI v9.1 (FORCES CREATION, NO EXPLANATIONS)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -39,192 +39,121 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-// 🔥 NEW SYSTEM PROMPT (Concise, structured, no fluff)
-const SYSTEM_PROMPT = `
-You are Acidnade, a professional Roblox Studio AI. 
-CONTEXT: You have access to Workspace, ServerScriptService, ReplicatedStorage, StarterGui, and StarterPlayer.
-TONE: 
-- Be normal and concise. No "Greetings, Developer" or robotic formality.
-- No "homeless" or slang talk. Just a helpful peer.
-- Keep answers short. If a long explanation isn't asked for, don't give one.
-
-RULES:
-1. RICHTEXT: Always use <b>bold</b> or <font color="#00aaff">color</font> for key terms.
-2. NO GREETING: Do not send the first message. Only reply to user prompts.
-3. SCRIPTING: If asked to build/script, you MUST return a JSON 'plan' array. 
-4. SERVICES: Look beyond Workspace. Suggest putting UIs in StarterGui and logic in ServerScriptService.
-
-FORMAT:
-If building: {"plan": [{"description": "Step 1", "type": "create", "className": "Part", "name": "Obstacle", "parentPath": "Workspace", "properties": {...}}, ...], "message": "Short summary."}
-If chatting: {"message": "Your concise answer here."}
-`;
-
-// Format workspace (keep full for /execute-step compatibility)
-function formatWorkspaceContext(workspace) {
-  if (!workspace || !workspace.scripts) return "No workspace data.";
+// Format context
+function formatContext(context) {
+  if (!context) return "Empty workspace.";
   
-  let context = `WORKSPACE SNAPSHOT:\n`;
-  context += `Scripts: ${workspace.scriptCount || 0} | Folders: ${workspace.folderCount || 0} | Remotes: ${workspace.remoteCount || 0}\n\n`;
+  let text = `WORKSPACE:\n`;
   
-  if (workspace.scripts.length > 0) {
-    context += `EXISTING SCRIPTS:\n`;
-    for (const script of workspace.scripts.slice(0, 15)) {
-      context += `\n${script.name} (${script.type}) - ${script.lines} lines\n`;
-      context += `Path: ${script.path}\n`;
-      if (script.source) {
-        const preview = script.source.split('\n').slice(0, 50).join('\n');
-        context += `Source:\n${preview}\n`;
-        if (script.lines > 50) context += `... (${script.lines - 50} more lines)\n`;
+  if (context.hierarchy) {
+    for (const svc of context.hierarchy.slice(0, 5)) {
+      if (svc && svc.name) {
+        text += `- ${svc.name}: ${svc.children?.length || 0} items\n`;
       }
     }
   }
   
-  return context;
-}
-
-function formatChatHistory(history) {
-  if (!history || history.length === 0) return "No history.";
-  return history.slice(-8).map(m => `${m.role === "user" ? "User" : "AI"}: ${m.content}`).join('\n');
+  return text;
 }
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "8.2", message: "Structured Response Mode" });
+  res.json({ status: "OK", version: "9.1" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v8.2 - Structured Response'));
+app.get('/', (req, res) => res.send('Acidnade AI v9.1'));
 
-// 🔁 Main AI endpoint — UPDATED FORMAT
+// Main endpoint
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🧠 AI Request (v8.2)");
-    const { prompt, context } = req.body; // ✅ Note: now uses "context" like your new spec
+    console.log("🧠 AI Request");
+    const { prompt, context } = req.body;
+    
+    const contextSummary = formatContext(context);
+    
+    const systemPrompt = `You are Acidnade, a Roblox dev AI that CREATES code, not explains it.
 
-    // 🔍 Build context summary from full snapshot (for AI awareness)
-    let workspaceSummary = "Current project state:\n";
-    if (context?.hierarchy) {
-      for (const svc of context.hierarchy) {
-        if (svc) {
-          workspaceSummary += `- ${svc.name}: ${svc.children?.length || 0} children\n`;
-        }
+CRITICAL RULES:
+1. When user asks to CREATE/BUILD/MAKE something, you MUST return a "plan" array with ACTUAL WORKING CODE
+2. NEVER just explain how to do it - ALWAYS include the complete code in the plan
+3. Keep responses SHORT (1-2 sentences)
+4. Talk like a normal helpful dev, not formal, not slang
+
+${contextSummary}
+
+RESPONSE FORMAT:
+
+For questions (what, why, how):
+{
+  "message": "Short answer here"
+}
+
+For creating ANYTHING (ALWAYS do this when user wants something built):
+{
+  "message": "Creating it now.",
+  "plan": [
+    {
+      "description": "Clear step description",
+      "type": "create",
+      "className": "LocalScript",
+      "name": "ShopUI",
+      "parentPath": "game.StarterGui",
+      "properties": {
+        "Source": "-- COMPLETE WORKING CODE HERE\\nlocal Players = game:GetService(\\"Players\\")\\n..."
       }
     }
-    if (context?.selection?.length) {
-      workspaceSummary += `- ${context.selection.length} instance(s) selected\n`;
-    }
+  ]
+}
 
-    const userMessage = `CONTEXT:\n${workspaceSummary}\n\nUSER REQUEST:\n${prompt}`;
+EXAMPLES:
 
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.3,
-        maxOutputTokens: 800
-      },
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
-    });
+User: "make me a shop"
+Response: {"message":"Creating shop system.","plan":[{"description":"Create shop UI","type":"create","className":"LocalScript","name":"ShopUI","parentPath":"game.StarterGui","properties":{"Source":"-- Full UI code"}},{"description":"Create shop handler","type":"create","className":"Script","name":"ShopHandler","parentPath":"game.ServerScriptService","properties":{"Source":"-- Full server code"}}]}
 
-    let rawResponse = result.response.text().trim();
-    // Clean common markdown
-    rawResponse = rawResponse
+User: "what scripts do I have"
+Response: {"message":"You have X scripts in your workspace."}
+
+USER REQUEST:
+${prompt}
+
+REMEMBER: If they want ANYTHING created, return a plan with complete code. Don't explain, BUILD IT.
+
+Respond with JSON only.`;
+
+    const result = await model.generateContent(systemPrompt);
+    let response = result.response.text().trim()
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
       .trim();
-
+    
     let data;
     try {
-      data = JSON.parse(rawResponse);
+      data = JSON.parse(response);
     } catch (e) {
-      console.warn("JSON parse failed, falling back to message-only:", rawResponse);
-      data = { message: rawResponse };
+      console.error("Parse error:", e);
+      data = { message: response };
     }
-
-    // Ensure minimal valid response
+    
+    // Ensure valid response
     if (!data.message && !data.plan) {
       data.message = "Done.";
     }
-
-    console.log(`✅ Response: ${data.plan ? 'PLAN' : 'MESSAGE'}`);
+    
+    console.log(`✅ ${data.plan ? 'PLAN (' + data.plan.length + ' steps)' : 'MESSAGE'}`);
     res.json(data);
 
   } catch (error) {
     console.error("AI Error:", error);
-    res.status(500).json({ error: error.message || "AI generation failed" });
-  }
-});
-
-// ⚙️ Keep /execute-step for backward compatibility (used in step-by-step mode)
-app.post('/execute-step', async (req, res) => {
-  try {
-    console.log("⚙️ Executing Step (Legacy)");
-    const { stepNumber, totalSteps, stepDescription, instanceType, workspace } = req.body;
-    
-    const workspaceContext = formatWorkspaceContext(workspace);
-    
-    const stepPrompt = `You are Acidnade — creating PROFESSIONAL, POLISHED Roblox UI code.
-
-TASK: ${stepDescription}
-TYPE: ${instanceType}
-
-EXISTING CODE (DO NOT DUPLICATE):
-${workspaceContext}
-
-🔥 OUTPUT ONLY VALID JSON IN THIS FORMAT:
-{
-  "message": "Created professional UI element",
-  "plan": [
-    {
-      "description": "${stepDescription}",
-      "type": "create",
-      "className": "${instanceType}",
-      "name": "${instanceType.replace(/Script$/, '')}UI",
-      "parentPath": "${instanceType === 'LocalScript' ? 'StarterGui' : instanceType === 'ModuleScript' ? 'ReplicatedStorage' : 'ServerScriptService'}",
-      "properties": {
-        "Source": "-- FULL CODE HERE (modern, animated, no duplicates)"
-      }
-    }
-  ]
-}`;
-
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: stepPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.4,
-        maxOutputTokens: 1200
-      }
-    });
-
-    let raw = result.response.text().trim().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    
-    let data;
-    try {
-      data = JSON.parse(raw);
-    } catch (e) {
-      data = { message: "Step generated", plan: [] };
-    }
-
-    console.log(`✅ Step ${stepNumber}/${totalSteps} complete`);
-    res.json(data);
-
-  } catch (error) {
-    console.error("Step Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v8.2 - STRUCTURED RESPONSE MODE`);
+  console.log(`\n🚀 Acidnade AI v9.1 - FORCES CREATION`);
   console.log(`🌍 Port: ${PORT}`);
-  console.log(`\n✅ Features:`);
-  console.log(`   • Modern structured output: { plan, message }`);
-  console.log(`   • RichText support (<b>, <font>)`);
-  console.log(`   • Multi-service context awareness`);
-  console.log(`   • No robotic greetings`);
-  console.log(`   • Full Lemonade UI compatibility`);
+  console.log(`\n✅ AI now CREATES instead of EXPLAINS`);
   console.log(`\n📡 Ready!\n`);
 });
