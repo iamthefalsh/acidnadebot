@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v8.1 (PROFESSIONAL UI GENERATOR)
+// server.js — Acidnade AI v8.2 (STRUCTURED RESPONSE + LEMONADE COMPATIBLE)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -41,7 +41,27 @@ if (!process.env.API_KEY) {
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
-// Format workspace
+// 🔥 NEW SYSTEM PROMPT (Concise, structured, no fluff)
+const SYSTEM_PROMPT = `
+You are Acidnade, a professional Roblox Studio AI. 
+CONTEXT: You have access to Workspace, ServerScriptService, ReplicatedStorage, StarterGui, and StarterPlayer.
+TONE: 
+- Be normal and concise. No "Greetings, Developer" or robotic formality.
+- No "homeless" or slang talk. Just a helpful peer.
+- Keep answers short. If a long explanation isn't asked for, don't give one.
+
+RULES:
+1. RICHTEXT: Always use <b>bold</b> or <font color="#00aaff">color</font> for key terms.
+2. NO GREETING: Do not send the first message. Only reply to user prompts.
+3. SCRIPTING: If asked to build/script, you MUST return a JSON 'plan' array. 
+4. SERVICES: Look beyond Workspace. Suggest putting UIs in StarterGui and logic in ServerScriptService.
+
+FORMAT:
+If building: {"plan": [{"description": "Step 1", "type": "create", "className": "Part", "name": "Obstacle", "parentPath": "Workspace", "properties": {...}}, ...], "message": "Short summary."}
+If chatting: {"message": "Your concise answer here."}
+`;
+
+// Format workspace (keep full for /execute-step compatibility)
 function formatWorkspaceContext(workspace) {
   if (!workspace || !workspace.scripts) return "No workspace data.";
   
@@ -71,355 +91,123 @@ function formatChatHistory(history) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "8.1", message: "Professional UI Generator" });
+  res.json({ status: "OK", version: "8.2", message: "Structured Response Mode" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v8.1 - Professional UI'));
+app.get('/', (req, res) => res.send('Acidnade AI v8.2 - Structured Response'));
 
-// Main AI endpoint
+// 🔁 Main AI endpoint — UPDATED FORMAT
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🧠 AI Request");
-    const { prompt, workspace, chatHistory } = req.body;
-    
-    if (!workspace) {
-      return res.status(400).json({ error: "Workspace required" });
+    console.log("🧠 AI Request (v8.2)");
+    const { prompt, context } = req.body; // ✅ Note: now uses "context" like your new spec
+
+    // 🔍 Build context summary from full snapshot (for AI awareness)
+    let workspaceSummary = "Current project state:\n";
+    if (context?.hierarchy) {
+      for (const svc of context.hierarchy) {
+        if (svc) {
+          workspaceSummary += `- ${svc.name}: ${svc.children?.length || 0} children\n`;
+        }
+      }
     }
-    
-    const workspaceContext = formatWorkspaceContext(workspace);
-    const historyContext = formatChatHistory(chatHistory);
-    
-    const systemPrompt = `You are Acidnade — an ELITE Roblox UI/UX developer who creates STUNNING, PROFESSIONAL interfaces.
+    if (context?.selection?.length) {
+      workspaceSummary += `- ${context.selection.length} instance(s) selected\n`;
+    }
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔥 CRITICAL UI RULES (NEVER VIOLATE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    const userMessage = `CONTEXT:\n${workspaceSummary}\n\nUSER REQUEST:\n${prompt}`;
 
-1. ⛔ NEVER DUPLICATE UI ELEMENTS
-   - Create each button/frame ONCE
-   - Store references in variables
-   - Reuse elements, don't recreate
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: userMessage }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.3,
+        maxOutputTokens: 800
+      },
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+    });
 
-2. ⛔ ALWAYS USE MODERN PROFESSIONAL STYLING
-   - Rounded corners (UICorner with CornerRadius)
-   - Gradients (UIGradient) for depth
-   - Shadows/strokes for polish
-   - Consistent color scheme
-   - Proper padding (UIPadding)
-
-3. ⛔ ALWAYS ADD ANIMATIONS
-   - Button hover effects (TweenService)
-   - Smooth transitions
-   - Loading spinners
-   - Result pop-ups
-   - All animations must be smooth (0.2-0.4 seconds)
-
-4. ⛔ PROPER POSITIONING
-   - Use UDim2.new(0.5, -width/2, 0.5, -height/2) for centering
-   - Set AnchorPoint = Vector2.new(0.5, 0.5) for center anchoring
-   - NO overlapping elements
-   - Clean spacing between items
-
-5. ⛔ HIERARCHY STRUCTURE
-   ScreenGui (parent)
-   └─ MainFrame (container)
-      ├─ TitleLabel
-      ├─ Button1
-      ├─ Button2
-      └─ ResultFrame
-   
-   NEVER create duplicate ScreenGuis or MainFrames!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 WORKSPACE DATA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${workspaceContext}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 HISTORY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${historyContext}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 DECISION LOGIC
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-ANALYZE REQUEST:
-- Question/search? → message only
-- Small fix? → update action
-- Complex system? → requiresPlan = true + plan
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📝 USER REQUEST
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${prompt}
-
-OUTPUT (JSON):
-{
-  "message": "explanation",
-  "requiresPlan": false or true,
-  "plan": [...] (if complex),
-  "actions": [...] (if simple)
-}`;
-
-    const result = await model.generateContent(systemPrompt);
-    let response = result.response.text().trim()
+    let rawResponse = result.response.text().trim();
+    // Clean common markdown
+    rawResponse = rawResponse
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
       .trim();
-    
+
     let data;
     try {
-      data = JSON.parse(response);
+      data = JSON.parse(rawResponse);
     } catch (e) {
-      data = { message: response, requiresPlan: false, actions: [] };
+      console.warn("JSON parse failed, falling back to message-only:", rawResponse);
+      data = { message: rawResponse };
     }
-    
-    console.log(`✅ Response: ${data.requiresPlan ? 'PLAN' : 'DIRECT'}`);
+
+    // Ensure minimal valid response
+    if (!data.message && !data.plan) {
+      data.message = "Done.";
+    }
+
+    console.log(`✅ Response: ${data.plan ? 'PLAN' : 'MESSAGE'}`);
     res.json(data);
 
   } catch (error) {
     console.error("AI Error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || "AI generation failed" });
   }
 });
 
-// Execute individual plan step
+// ⚙️ Keep /execute-step for backward compatibility (used in step-by-step mode)
 app.post('/execute-step', async (req, res) => {
   try {
-    console.log("⚙️ Executing Step");
-    const { stepNumber, totalSteps, stepDescription, instanceType, workspace, chatHistory } = req.body;
+    console.log("⚙️ Executing Step (Legacy)");
+    const { stepNumber, totalSteps, stepDescription, instanceType, workspace } = req.body;
     
     const workspaceContext = formatWorkspaceContext(workspace);
     
     const stepPrompt = `You are Acidnade — creating PROFESSIONAL, POLISHED Roblox UI code.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 STEP ${stepNumber}/${totalSteps}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Task: ${stepDescription}
-Type: ${instanceType}
+TASK: ${stepDescription}
+TYPE: ${instanceType}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 EXISTING CODE (DO NOT DUPLICATE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXISTING CODE (DO NOT DUPLICATE):
 ${workspaceContext}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔥 MANDATORY UI TEMPLATE (for LocalScripts)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-USE THIS EXACT STRUCTURE (modify for your needs):
-
--- Professional Pet Shop UI with Animations
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Colors (MODERN PALETTE)
-local COLORS = {
-    Background = Color3.fromRGB(20, 20, 30),
-    Card = Color3.fromRGB(30, 30, 45),
-    Primary = Color3.fromRGB(100, 80, 255),
-    Success = Color3.fromRGB(0, 200, 100),
-    Text = Color3.fromRGB(255, 255, 255),
-    TextDim = Color3.fromRGB(180, 180, 200)
-}
-
--- Helper: Create rounded corners
-local function addCorners(element, radius)
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, radius or 12)
-    corner.Parent = element
-end
-
--- Helper: Add gradient
-local function addGradient(element, color1, color2)
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, color1),
-        ColorSequenceKeypoint.new(1, color2)
-    })
-    gradient.Parent = element
-end
-
--- Helper: Tween animation
-local function tweenButton(button, hover)
-    local info = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local goal = hover and {Size = button.Size + UDim2.new(0, 4, 0, 4)} or {Size = button.Size}
-    local tween = TweenService:Create(button, info, goal)
-    tween:Play()
-end
-
--- STEP 1: Create ScreenGui (DO THIS ONCE)
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "PetShopUI"
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.Parent = playerGui
-
--- STEP 2: Create Main Container
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 400, 0, 500)
-mainFrame.Position = UDim2.new(0.5, -200, 0.5, -250)
-mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-mainFrame.BackgroundColor3 = COLORS.Background
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
-addCorners(mainFrame, 16)
-
--- Add stroke
-local stroke = Instance.new("UIStroke")
-stroke.Color = COLORS.Primary
-stroke.Thickness = 2
-stroke.Transparency = 0.5
-stroke.Parent = mainFrame
-
--- STEP 3: Title
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Name = "Title"
-titleLabel.Size = UDim2.new(1, -40, 0, 50)
-titleLabel.Position = UDim2.new(0, 20, 0, 20)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "🐾 PET SHOP"
-titleLabel.TextColor3 = COLORS.Text
-titleLabel.Font = Enum.Font.GothamBlack
-titleLabel.TextSize = 24
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.Parent = mainFrame
-
--- STEP 4: Buy Button (CREATE ONCE!)
-local buyButton = Instance.new("TextButton")
-buyButton.Name = "BuyButton"
-buyButton.Size = UDim2.new(0.9, 0, 0, 60)
-buyButton.Position = UDim2.new(0.05, 0, 0, 90)
-buyButton.BackgroundColor3 = COLORS.Primary
-buyButton.Text = "🎲 ROLL PET (50 Coins)"
-buyButton.TextColor3 = COLORS.Text
-buyButton.Font = Enum.Font.GothamBold
-buyButton.TextSize = 18
-buyButton.BorderSizePixel = 0
-buyButton.Parent = mainFrame
-addCorners(buyButton, 12)
-addGradient(buyButton, COLORS.Primary, Color3.fromRGB(80, 60, 200))
-
--- STEP 5: Result Display
-local resultFrame = Instance.new("Frame")
-resultFrame.Name = "ResultFrame"
-resultFrame.Size = UDim2.new(0.9, 0, 0, 150)
-resultFrame.Position = UDim2.new(0.05, 0, 0, 170)
-resultFrame.BackgroundColor3 = COLORS.Card
-resultFrame.BorderSizePixel = 0
-resultFrame.Visible = false
-resultFrame.Parent = mainFrame
-addCorners(resultFrame, 12)
-
-local resultLabel = Instance.new("TextLabel")
-resultLabel.Size = UDim2.new(1, -20, 1, -20)
-resultLabel.Position = UDim2.new(0, 10, 0, 10)
-resultLabel.BackgroundTransparency = 1
-resultLabel.Text = "Result appears here..."
-resultLabel.TextColor3 = COLORS.TextDim
-resultLabel.Font = Enum.Font.Gotham
-resultLabel.TextSize = 16
-resultLabel.TextWrapped = true
-resultLabel.Parent = resultFrame
-
--- STEP 6: Animations
-buyButton.MouseEnter:Connect(function()
-    tweenButton(buyButton, true)
-    buyButton.BackgroundColor3 = Color3.fromRGB(120, 100, 255)
-end)
-
-buyButton.MouseLeave:Connect(function()
-    tweenButton(buyButton, false)
-    buyButton.BackgroundColor3 = COLORS.Primary
-end)
-
--- STEP 7: Connect to Server
-local buyRemote = ReplicatedStorage:WaitForChild("BuyPetRemote")
-
-buyButton.MouseButton1Click:Connect(function()
-    buyButton.Text = "🔄 Rolling..."
-    buyRemote:FireServer()
-end)
-
-buyRemote.OnClientEvent:Connect(function(petData)
-    resultFrame.Visible = true
-    resultLabel.Text = "You got: " .. petData.Name .. "\\n(" .. petData.Rarity .. ")"
-    buyButton.Text = "🎲 ROLL AGAIN (50 Coins)"
-    
-    -- Animate result
-    resultFrame.Size = UDim2.new(0.9, 0, 0, 0)
-    local tween = TweenService:Create(
-        resultFrame,
-        TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        {Size = UDim2.new(0.9, 0, 0, 150)}
-    )
-    tween:Play()
-end)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ CRITICAL CHECKS BEFORE SUBMITTING CODE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Did I create each UI element ONCE? (no duplicates)
-2. Did I add UICorner to all frames/buttons?
-3. Did I add hover animations to all buttons?
-4. Did I use professional colors?
-5. Did I center elements properly with AnchorPoint?
-6. Is the UI hierarchy clean (ScreenGui → Frame → Elements)?
-7. Did I avoid WaitForChild() on new instances?
-8. Did I use TweenService for animations?
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📝 YOUR TASK
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Create code for: ${stepDescription}
-
-REQUIREMENTS:
-✅ Follow the template structure above
-✅ Modern colors and styling
-✅ Smooth animations (TweenService)
-✅ NO duplicate elements
-✅ Clean, organized code
-✅ Professional naming
-✅ Works immediately
-
-OUTPUT (JSON):
+🔥 OUTPUT ONLY VALID JSON IN THIS FORMAT:
 {
-  "message": "Created professional ${instanceType} for ${stepDescription}",
-  "actions": [
+  "message": "Created professional UI element",
+  "plan": [
     {
+      "description": "${stepDescription}",
       "type": "create",
-      "instanceType": "${instanceType}",
-      "name": "ProfessionalName",
-      "parentPath": "${instanceType === 'LocalScript' ? 'game.StarterGui' : instanceType === 'ModuleScript' ? 'game.ReplicatedStorage' : 'game.ServerScriptService'}",
+      "className": "${instanceType}",
+      "name": "${instanceType.replace(/Script$/, '')}UI",
+      "parentPath": "${instanceType === 'LocalScript' ? 'StarterGui' : instanceType === 'ModuleScript' ? 'ReplicatedStorage' : 'ServerScriptService'}",
       "properties": {
-        "Source": "-- Complete code following template above"
+        "Source": "-- FULL CODE HERE (modern, animated, no duplicates)"
       }
     }
   ]
 }`;
 
-    const result = await model.generateContent(stepPrompt);
-    let response = result.response.text().trim()
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: stepPrompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.4,
+        maxOutputTokens: 1200
+      }
+    });
+
+    let raw = result.response.text().trim().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     
     let data;
     try {
-      data = JSON.parse(response);
+      data = JSON.parse(raw);
     } catch (e) {
-      data = { message: "Step completed", actions: [] };
+      data = { message: "Step generated", plan: [] };
     }
-    
+
     console.log(`✅ Step ${stepNumber}/${totalSteps} complete`);
     res.json(data);
 
@@ -430,13 +218,13 @@ OUTPUT (JSON):
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v8.1 - PROFESSIONAL UI GENERATOR`);
+  console.log(`\n🚀 Acidnade AI v8.2 - STRUCTURED RESPONSE MODE`);
   console.log(`🌍 Port: ${PORT}`);
   console.log(`\n✅ Features:`);
-  console.log(`   • NO duplicate elements`);
-  console.log(`   • Modern rounded UI with gradients`);
-  console.log(`   • Smooth TweenService animations`);
-  console.log(`   • Professional color schemes`);
-  console.log(`   • Complete UI templates`);
+  console.log(`   • Modern structured output: { plan, message }`);
+  console.log(`   • RichText support (<b>, <font>)`);
+  console.log(`   • Multi-service context awareness`);
+  console.log(`   • No robotic greetings`);
+  console.log(`   • Full Lemonade UI compatibility`);
   console.log(`\n📡 Ready!\n`);
 });
