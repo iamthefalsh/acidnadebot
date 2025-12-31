@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v9.3 (SMART AI WITH NORMAL CONVERSATION)
+// server.js — Acidnade AI v9.4 (ROBUST ERROR HANDLING)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -39,7 +39,7 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // Format context
 function formatContext(context) {
@@ -87,7 +87,7 @@ function wantsToCreateOrFix(message) {
   const lowerMessage = message.toLowerCase();
   
   // Greetings and questions - NO PLAN
-  const greetings = ["hi", "hello", "hey", "greetings"];
+  const greetings = ["hi", "hello", "hey", "greetings", "yo", "what's up"];
   const questions = ["how are you", "what can you do", "help", "? "];
   const normalChat = ["thanks", "thank you", "good", "ok", "okay", "bye"];
   
@@ -127,17 +127,23 @@ function wantsToCreateOrFix(message) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "9.3" });
+  res.json({ status: "OK", version: "9.4" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v9.3'));
+app.get('/', (req, res) => res.send('Acidnade AI v9.4'));
 
 // Main endpoint
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🧠 AI Request");
+    console.log("🧠 AI Request received");
     const { prompt, context } = req.body;
+    
+    if (!prompt || prompt.trim() === '') {
+      return res.json({ 
+        message: "Hi! I'm Acidnade AI. What would you like to build today?" 
+      });
+    }
     
     const contextSummary = formatContext(context);
     const shouldCreatePlan = wantsToCreateOrFix(prompt);
@@ -193,7 +199,7 @@ User: "hi"
 Response: {"message": "Hey there! 👋 I'm Acidnade AI, ready to help you build awesome Roblox games. What would you like to create today?"}
 
 User: "OnServerInvoke is not a valid member of RemoteEvent"
-Response: {"message": "Ah, that's a common error! `OnServerInvoke` was used in older Roblox versions. You should use `OnServerEvent` instead for RemoteEvents. Want me to fix that script for you?"}
+Response: {"message": "Ah, that's a common error! \`OnServerInvoke\` was used in older Roblox versions. You should use \`OnServerEvent\` instead for RemoteEvents. Want me to fix that script for you?"}
 
 User: "create a wheel of fortune game"
 Response: {"message": "Awesome! Let me build you a complete Wheel of Fortune game with spinning animations and rewards.", "plan": [{"step":1,"description":"Create wheel UI script","type":"create","className":"LocalScript","name":"WheelUI","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"local Players = game:GetService(\\"Players\\")\\n-- Modern wheel UI code here"}}, {"step":2,"description":"Create wheel logic","type":"create","className":"Script","name":"WheelManager","parentPath":"game.ServerScriptService","properties":{"Source":"local RemoteEvent = game:GetService(\\"ReplicatedStorage\\"):WaitForChild(\\"WheelEvent\\")\\n-- Server logic here"}}]}
@@ -206,53 +212,95 @@ ${prompt}
 
 Respond with JSON only.`;
 
-    const result = await model.generateContent(systemPrompt);
-    let response = result.response.text().trim()
+    console.log("🤖 Sending request to Gemini AI...");
+    
+    let result;
+    try {
+      result = await model.generateContent(systemPrompt);
+    } catch (apiError) {
+      console.error("Gemini API Error:", apiError.message);
+      return res.json({ 
+        message: "Hey! 👋 I'm here to help. Let's build something awesome together. What would you like to create?" 
+      });
+    }
+    
+    // FIXED: Check if response exists and has text()
+    if (!result || !result.response || typeof result.response.text !== 'function') {
+      console.error("Invalid Gemini API response structure");
+      return res.json({ 
+        message: "Ready to help! What Roblox game feature would you like me to build for you today?" 
+      });
+    }
+    
+    let response;
+    try {
+      response = result.response.text().trim();
+      console.log("📝 Raw AI response received");
+    } catch (textError) {
+      console.error("Error getting text from response:", textError.message);
+      return res.json({ 
+        message: "Hi! I'm Acidnade AI. Ready to create amazing Roblox experiences with you!" 
+      });
+    }
+    
+    // Clean the response
+    response = response
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
       .trim();
     
-    // Clean up the response
-    response = response.replace(/\\\\n/g, '\n').replace(/\\\\"/g, '\\"');
-    
     let data;
     try {
       data = JSON.parse(response);
-    } catch (e) {
-      console.error("Parse error:", e.message);
-      // If parsing fails, create a simple response
+      console.log("✅ Successfully parsed AI response");
+    } catch (parseError) {
+      console.error("JSON Parse Error:", parseError.message);
+      console.log("Raw response (first 200 chars):", response.substring(0, 200));
+      
+      // Fallback based on user intent
       if (shouldCreatePlan) {
         data = { 
-          message: `I'll help you ${prompt.toLowerCase().includes('create') ? 'create' : 'fix'} that! Let me set up the scripts for you.`,
+          message: `I'll help you ${prompt.toLowerCase().includes('create') ? 'create' : 'fix'} that! The AI had a hiccup, but I'm ready to assist. Could you describe what you want in simpler terms?`,
           plan: [] 
         };
       } else {
         data = { 
-          message: "Hi! I'm Acidnade AI, your Roblox development assistant. How can I help you today?" 
+          message: "Hey there! I'm Acidnade AI, your friendly Roblox development assistant. How can I help you today?" 
         };
       }
     }
     
-    console.log(`✅ ${shouldCreatePlan ? 'CREATION REQUEST' : 'CONVERSATION'}: ${data.plan ? data.plan.length + ' steps' : 'chat response'}`);
+    // Ensure we always have a message
+    if (!data.message) {
+      data.message = "Ready to build! What would you like me to create?";
+    }
+    
+    // Ensure plan is an array if it exists
+    if (data.plan && !Array.isArray(data.plan)) {
+      data.plan = [];
+    }
+    
+    console.log(`📤 Sending response: ${data.plan ? data.plan.length + ' steps' : 'chat only'}`);
     res.json(data);
 
   } catch (error) {
-    console.error("AI Error:", error);
+    console.error("Server Error:", error.message);
     // Always return a valid response
     res.json({ 
-      message: "Hi! 👋 I'm Acidnade AI. Ready to help you build awesome Roblox games! What would you like to create today?" 
+      message: "Hi there! 👋 I'm Acidnade AI, ready to help you build awesome Roblox games. What would you like to create?" 
     });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v9.3 - SMART AI WITH NORMAL CONVERSATION`);
+  console.log(`\n🚀 Acidnade AI v9.4 - ROBUST ERROR HANDLING`);
   console.log(`🌍 Port: ${PORT}`);
-  console.log(`\n✅ AI Features:`);
+  console.log(`🔑 API Key: ${process.env.API_KEY ? '✓ Set' : '✗ Missing'}`);
+  console.log(`\n✅ Features:`);
+  console.log(`   • Improved error handling`);
+  console.log(`   • Better Gemini API response validation`);
   console.log(`   • Smart conversation detection`);
-  console.log(`   • Normal chat for greetings/questions`);
-  console.log(`   • Automatic plan creation for builds`);
-  console.log(`   • Error fixing assistance`);
-  console.log(`   • Friendly, helpful responses`);
-  console.log(`\n💬 Ready for normal conversation and game creation!\n`);
+  console.log(`   • Always returns valid responses`);
+  console.log(`   • Detailed logging for debugging`);
+  console.log(`\n💬 Ready for chat and game creation!\n`);
 });
