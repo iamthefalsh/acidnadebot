@@ -94,6 +94,52 @@ app.get('/health', (req, res) => {
 app.get('/ping', (req, res) => res.send('PONG'));
 app.get('/', (req, res) => res.send('Acidnade AI v10.1'));
 
+// Enhanced knowledge base for Roblox development
+const ROBOX_KNOWLEDGE_BASE = `
+ROBLOX DEVELOPMENT BEST PRACTICES:
+
+1. SCRIPT TYPES & PLACEMENT:
+   - Script (server-side): game.ServerScriptService, game.ServerStorage
+   - LocalScript (client-side): game.StarterPlayer.StarterPlayerScripts, game.StarterGui
+   - ModuleScript: game.ReplicatedStorage.Modules, game.ServerScriptService.Modules
+   - RemoteEvent: game.ReplicatedStorage.Remotes
+   - RemoteFunction: game.ReplicatedStorage.Remotes
+   - ScreenGui: game.StarterGui, game.Player.PlayerGui
+
+2. SECURITY PATTERNS:
+   - Always validate input with pcall()
+   - Use RBAC (Role-Based Access Control) for admin systems
+   - Never trust client data - validate on server
+   - Use :FindFirstChild() before accessing children
+   - Implement rate limiting for remote events
+
+3. PERFORMANCE PATTERNS:
+   - Cache services: local ReplicatedStorage = game:GetService("ReplicatedStorage")
+   - Use task.spawn() for non-critical async operations
+   - Debounce rapid-fire events (clicks, input)
+   - Clean up connections with :Disconnect()
+   - Use CollectionService for tagging systems
+
+4. COMMON PATTERNS:
+   - DataStores: Use UpdateAsync with retry logic
+   - PlayerData: Use profiles with ProfileService
+   - GUIs: Use ScreenGuis with AutoLocalize enabled
+   - Animations: Use AnimationController with Humanoid
+   - Sounds: Use SoundGroups for organization
+
+5. ERROR HANDLING:
+   - Always wrap in pcall() for risky operations
+   - Use warn() for non-critical errors
+   - Implement try-catch for data stores
+   - Validate player existence before operations
+
+6. MODULE ARCHITECTURE:
+   - Single responsibility principle
+   - Dependency injection for services
+   - Event-driven communication
+   - State management with Maid pattern
+`;
+
 // Main endpoint
 app.post('/ai', async (req, res) => {
   try {
@@ -120,9 +166,10 @@ app.post('/ai', async (req, res) => {
       sessionData.set(sessionId, session);
     }
 
-    // === 🧠 FULLY AI-DRIVEN INTENT DETECTION ===
-    // No more keyword functions — the model decides everything
+    // === 🧠 ENHANCED AI-DRIVEN INTENT DETECTION ===
     const systemPrompt = `You are Acidnade, an expert Roblox AI assistant fluent in **Luau** and game architecture.
+
+${ROBOX_KNOWLEDGE_BASE}
 
 Your job is to **analyze the user's message** and respond appropriately:
 
@@ -130,6 +177,8 @@ Your job is to **analyze the user's message** and respond appropriately:
 - If it's a **request to create something new** → output a "create" plan
 - If it's a **request to edit/modify existing code** → output a "modify" plan with COMPLETE updated source
 - If it's a **bug report or "not working"** → treat as debugging: fix the most recent relevant script
+
+IMPORTANT: For complex plans (3+ steps), break them into SIMPLER, SEQUENTIAL steps that can be executed one at a time.
 
 Use this context:
 
@@ -156,6 +205,7 @@ ${session.createdInstances.length > 0
   "needsApproval": true, // if plan has ≥3 steps
   "stepsTotal": N,
   "progressText": "Steps (0/N)",
+  "sequentialExecution": true, // NEW: Execute steps one at a time
   "plan": [
     {
       "step": 1,
@@ -165,8 +215,10 @@ ${session.createdInstances.length > 0
       "name": "ExactInstanceName", // ← critical for modify!
       "parentPath": "game.ServerScriptService.Folder",
       "properties": {
-        "Source": "-- FULL LUUAU CODE\\n-- Complete, safe, runnable\\n..."
-      }
+        "Source": "-- FULL LUAU CODE\\n-- Complete, safe, runnable\\n..."
+      },
+      "requiresConfirmation": false, // NEW: Ask before executing this step
+      "timeout": 5 // NEW: Maximum seconds to wait before proceeding
     }
   ]
 }
@@ -178,13 +230,18 @@ ${session.createdInstances.length > 0
 
 ---
 
-### 🛠️ RULES
+### 🛠️ ENHANCED RULES
 - ALWAYS output **complete Luau code** — never snippets or placeholders
 - For "modify": **never delete unrelated logic**, add with \`-- ADDED:\` comments
 - Use Roblox best practices: pcall, service caching, cleanup
 - Never delete unless user **explicitly says "delete" or "remove"**
 - If script name is unknown during modify, infer from context (e.g., "shop" → "ShopSystem")
 - Prioritize safety: validate players, instances, and inputs
+- For complex systems: Break into smaller, testable components
+- Always include proper error handling with pcall()
+- Use descriptive variable names and comments
+- Implement proper cleanup with connections and Maid pattern
+- Optimize for performance: avoid while wait() loops
 
 USER MESSAGE:
 "${prompt}"
@@ -254,6 +311,11 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
       data.stepsTotal = data.plan.length;
       data.progressText = `Steps (0/${data.stepsTotal})`;
       
+      // Force sequential execution for safety
+      if (!data.sequentialExecution) {
+        data.sequentialExecution = true;
+      }
+      
       if (data.plan.length >= 3 && data.needsApproval === undefined) {
         data.needsApproval = true;
       }
@@ -261,6 +323,14 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
       // Track session memory
       data.plan.forEach(step => {
         if (!step.type) step.type = "create";
+        
+        // Ensure sequential execution flags
+        if (!step.hasOwnProperty('requiresConfirmation')) {
+          step.requiresConfirmation = false;
+        }
+        if (!step.hasOwnProperty('timeout')) {
+          step.timeout = 5;
+        }
         
         if (sessionId && step.type !== "delete") {
           session.previousSteps.push({
@@ -288,7 +358,7 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
       sessionData.set(sessionId, session);
     }
     
-    console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps` : 'chat'}, needsApproval: ${!!data.needsApproval}`);
+    console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps` : 'chat'}, needsApproval: ${!!data.needsApproval}, Sequential: ${!!data.sequentialExecution}`);
     res.json(data);
 
   } catch (error) {
@@ -313,11 +383,14 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌍 Port: ${PORT}`);
   console.log(`🔑 API Key: ${process.env.API_KEY ? '✓ Set' : '✗ Missing'}`);
   console.log(`🧠 Model: gemini-3-flash-preview (cutting-edge)`);
+  console.log(`📚 Enhanced Roblox Knowledge Base`);
   console.log(`\n✅ UPGRADES:`);
   console.log(`   • All keyword logic REMOVED`);
   console.log(`   • AI now 100% decides intent`);
   console.log(`   • Universal Luau-focused prompt`);
   console.log(`   • Smarter session memory`);
   console.log(`   • Safer, cleaner, future-proof`);
+  console.log(`   • Enhanced Roblox development knowledge`);
+  console.log(`   • Sequential execution support`);
   console.log(`\n💻 Ready for intelligent Roblox development!\n`);
 });
