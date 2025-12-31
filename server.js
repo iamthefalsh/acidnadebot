@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v9.2 (ENHANCED CREATION WITH DELETE + MODERN UI)
+// server.js — Acidnade AI v9.3 (SMART AI WITH NORMAL CONVERSATION)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -82,13 +82,56 @@ function formatContext(context) {
   return text;
 }
 
+// Check if user wants to create/build something
+function wantsToCreateOrFix(message) {
+  const lowerMessage = message.toLowerCase();
+  
+  // Greetings and questions - NO PLAN
+  const greetings = ["hi", "hello", "hey", "greetings"];
+  const questions = ["how are you", "what can you do", "help", "? "];
+  const normalChat = ["thanks", "thank you", "good", "ok", "okay", "bye"];
+  
+  for (const word of [...greetings, ...questions, ...normalChat]) {
+    if (lowerMessage.includes(word) && lowerMessage.length < 50) {
+      return false;
+    }
+  }
+  
+  // Error reports - NO PLAN (just conversation)
+  if (lowerMessage.includes("error") || lowerMessage.includes("fix this") || 
+      lowerMessage.includes("not working") || lowerMessage.includes("issue")) {
+    return false;
+  }
+  
+  // CREATE/BUILD/MAKE keywords - YES PLAN
+  const createKeywords = [
+    "create", "build", "make", "add", "implement", "code", 
+    "script", "ui", "system", "game", "widget", "button",
+    "gui", "shop", "wheel", "fortune", "inventory", "leaderboard",
+    "data store", "datastore", "remote", "tween", "animation"
+  ];
+  
+  for (const keyword of createKeywords) {
+    if (lowerMessage.includes(keyword)) {
+      return true;
+    }
+  }
+  
+  // DELETE/REMOVE - YES PLAN
+  if (lowerMessage.includes("delete") || lowerMessage.includes("remove")) {
+    return true;
+  }
+  
+  return false;
+}
+
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "9.2" });
+  res.json({ status: "OK", version: "9.3" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v9.2'));
+app.get('/', (req, res) => res.send('Acidnade AI v9.3'));
 
 // Main endpoint
 app.post('/ai', async (req, res) => {
@@ -97,81 +140,69 @@ app.post('/ai', async (req, res) => {
     const { prompt, context } = req.body;
     
     const contextSummary = formatContext(context);
+    const shouldCreatePlan = wantsToCreateOrFix(prompt);
     
-    const systemPrompt = `You are Acidnade, a Roblox dev AI that CREATES code, not explains it.
+    const systemPrompt = `You are Acidnade, a helpful Roblox development AI assistant.
 
-CRITICAL RULES:
-1. When user asks to CREATE/BUILD/MAKE/DELETE/MODIFY something, you MUST return a "plan" array with ACTUAL WORKING CODE
-2. NEVER just explain how to do it - ALWAYS include the complete code in the plan
-3. Keep responses SHORT (1-2 sentences)
-4. Talk like a normal helpful dev, not formal, not slang
-5. IMPORTANT: NEVER create ScreenGuis - create LocalScripts in StarterPlayerScripts instead
-6. AI CAN DELETE scripts when requested by user (use "type": "delete")
+${shouldCreatePlan ? `USER WANTS TO CREATE/MODIFY/DELETE SOMETHING:
+- They want to: ${prompt}
+- YOU MUST return a "plan" array with ACTUAL WORKING CODE
+- Include complete code in the properties.Source field
+- For UI: Create LocalScripts, NOT ScreenGuis
+- For deletion: use "type": "delete"` : `USER IS ASKING A QUESTION OR GREETING:
+- Respond naturally and helpfully
+- Keep it brief and friendly
+- NO PLAN needed for greetings/questions`}
 
-ADVANCED UI CREATION RULES:
-- NEVER create ScreenGui directly
-- ALWAYS create LocalScript in StarterPlayerScripts
-- The LocalScript should create UI programmatically with modern styling:
-  * Always add UICorners to frames/buttons (radius 8-16)
-  * Add UIStrokes with black color (Color3.new(0,0,0)) thickness 1-2
-  * Use premium fonts: SourceSansProBold for titles, SourceSansPro for body
-  * For buttons: Use green (#00FF88) or accent colors with black text
-  * Add hover animations and effects using TweenService
-  * Use proper UIPadding and UIListLayout for organization
-  * Add drop shadows (ImageLabel with shadow asset rbxassetid://1316045217)
-  * Use gradients for premium look
-  * For ALL text labels: Add black UIStroke for readability
-  * Use AnchorPoint for center positioning
-  * Set ZIndexBehavior to Sibling
-  * Make UI responsive with UDim2 scaling
-
-SCRIPT DELETION:
-- If user asks to delete/remove scripts, include a step with "type": "delete"
-- Provide the exact path to delete: {"type": "delete", "path": "game.ServerScriptService.ScriptName"}
-- Always check if the file exists before attempting deletion
+ABOUT YOU:
+- You're a friendly Roblox development expert
+- You help with coding, debugging, and game design
+- When creating: provide COMPLETE working code
+- When asked: explain concepts clearly
+- Make UI modern: black strokes, corners, gradients
+- Talk like a normal helpful dev
 
 ${contextSummary}
 
 RESPONSE FORMAT (JSON ONLY):
 
-For questions (what, why, how):
+${shouldCreatePlan ? `FOR CREATION/DELETION/MODIFICATION:
 {
-  "message": "Short answer here"
-}
-
-For creating ANYTHING (ALWAYS do this when user wants something built):
-{
-  "message": "Creating it now.",
+  "message": "Brief friendly response about what you're doing",
   "plan": [
     {
       "step": 1,
-      "description": "Clear step description",
+      "description": "What this step does",
       "type": "create|modify|delete",
       "className": "LocalScript/Script/ModuleScript/RemoteEvent",
       "name": "DescriptiveName",
       "parentPath": "game.Service.Path",
       "properties": {
-        "Source": "-- COMPLETE WORKING CODE HERE\\\\nlocal Players = game:GetService(\\\\"Players\\\\")\\\\n..."
+        "Source": "-- COMPLETE WORKING CODE\\nlocal Players = game:GetService(\\"Players\\")\\n..."
       }
     }
   ]
-}
+}` : `FOR QUESTIONS/GREETINGS/CONVERSATION:
+{
+  "message": "Your normal friendly response here"
+}`}
 
-EXAMPLE RESPONSES:
+EXAMPLES:
 
-User: "make me a shop system"
-Response: {"message":"Creating shop system.","plan":[{"step":1,"description":"Create shop UI script","type":"create","className":"LocalScript","name":"ShopUI","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"local Players = game:GetService(\\\\"Players\\\\")\\\\n-- Create UI programmatically with modern styling..."}},{"step":2,"description":"Create shop server handler","type":"create","className":"Script","name":"ShopHandler","parentPath":"game.ServerScriptService","properties":{"Source":"local DataStoreService = game:GetService(\\\\"DataStoreService\\\\")\\\\n-- Full server code"}}]}
+User: "hi"
+Response: {"message": "Hey there! 👋 I'm Acidnade AI, ready to help you build awesome Roblox games. What would you like to create today?"}
 
-User: "delete the test script in ServerScriptService"
-Response: {"message":"Deleting test script.","plan":[{"step":1,"description":"Delete test script","type":"delete","className":"Script","name":"TestScript","parentPath":"game.ServerScriptService"}]}
+User: "OnServerInvoke is not a valid member of RemoteEvent"
+Response: {"message": "Ah, that's a common error! `OnServerInvoke` was used in older Roblox versions. You should use `OnServerEvent` instead for RemoteEvents. Want me to fix that script for you?"}
 
 User: "create a wheel of fortune game"
-Response: {"message":"Creating Wheel of Fortune RNG game.","plan":[{"step":1,"description":"Create wheel UI script","type":"create","className":"LocalScript","name":"WheelOfFortuneUI","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"-- Complete wheel UI code with spinning animation"}},{"step":2,"description":"Create wheel game logic","type":"create","className":"Script","name":"WheelGame","parentPath":"game.ServerScriptService","properties":{"Source":"-- Complete server-side RNG logic"}},{"step":3,"description":"Create rewards system","type":"create","className":"ModuleScript","name":"RewardSystem","parentPath":"game.ReplicatedStorage","properties":{"Source":"-- Module for handling rewards"}}]}
+Response: {"message": "Awesome! Let me build you a complete Wheel of Fortune game with spinning animations and rewards.", "plan": [{"step":1,"description":"Create wheel UI script","type":"create","className":"LocalScript","name":"WheelUI","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"local Players = game:GetService(\\"Players\\")\\n-- Modern wheel UI code here"}}, {"step":2,"description":"Create wheel logic","type":"create","className":"Script","name":"WheelManager","parentPath":"game.ServerScriptService","properties":{"Source":"local RemoteEvent = game:GetService(\\"ReplicatedStorage\\"):WaitForChild(\\"WheelEvent\\")\\n-- Server logic here"}}]}
+
+User: "what can you do?"
+Response: {"message": "I can help you build Roblox games! I create scripts, UI systems, game mechanics, fix errors, and more. Just tell me what you want to build and I'll write the complete code for you. 😊"}
 
 USER REQUEST:
 ${prompt}
-
-REMEMBER: If they want ANYTHING created/modified/deleted, return a plan with complete code. Don't explain, BUILD IT.
 
 Respond with JSON only.`;
 
@@ -181,73 +212,47 @@ Respond with JSON only.`;
       .replace(/```\n?/g, '')
       .trim();
     
-    // Fix common JSON issues
-    response = response.replace(/\\n/g, '\n').replace(/\\\\"/g, '\\"');
+    // Clean up the response
+    response = response.replace(/\\\\n/g, '\n').replace(/\\\\"/g, '\\"');
     
     let data;
     try {
       data = JSON.parse(response);
     } catch (e) {
       console.error("Parse error:", e.message);
-      console.error("Response that failed:", response.substring(0, 200));
-      // Try to extract JSON from malformed response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          data = JSON.parse(jsonMatch[0]);
-        } catch (e2) {
-          console.error("Second parse error:", e2.message);
-          data = { 
-            message: "Creating what you requested. Please check the Studio output for details.", 
-            plan: [] 
-          };
-        }
+      // If parsing fails, create a simple response
+      if (shouldCreatePlan) {
+        data = { 
+          message: `I'll help you ${prompt.toLowerCase().includes('create') ? 'create' : 'fix'} that! Let me set up the scripts for you.`,
+          plan: [] 
+        };
       } else {
         data = { 
-          message: "Creating what you requested. The AI response was malformed, but the system will handle it.", 
-          plan: [] 
+          message: "Hi! I'm Acidnade AI, your Roblox development assistant. How can I help you today?" 
         };
       }
     }
     
-    // Ensure valid response
-    if (!data.message && !data.plan) {
-      data.message = "Done.";
-    }
-    
-    // Ensure all plan steps have required fields
-    if (data.plan && Array.isArray(data.plan)) {
-      data.plan.forEach((step, index) => {
-        if (!step.step) step.step = index + 1;
-        if (!step.type) step.type = "create";
-        if (step.type === "delete") {
-          if (!step.path && step.parentPath && step.name) {
-            step.path = step.parentPath + "." + step.name;
-          }
-        }
-      });
-    }
-    
-    console.log(`✅ ${data.plan ? 'PLAN (' + data.plan.length + ' steps)' : 'MESSAGE'}`);
+    console.log(`✅ ${shouldCreatePlan ? 'CREATION REQUEST' : 'CONVERSATION'}: ${data.plan ? data.plan.length + ' steps' : 'chat response'}`);
     res.json(data);
 
   } catch (error) {
     console.error("AI Error:", error);
-    res.status(500).json({ 
-      message: "Working on your request. Server processing complete.",
-      plan: []
+    // Always return a valid response
+    res.json({ 
+      message: "Hi! 👋 I'm Acidnade AI. Ready to help you build awesome Roblox games! What would you like to create today?" 
     });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v9.2 - ENHANCED CREATION WITH DELETE + MODERN UI`);
+  console.log(`\n🚀 Acidnade AI v9.3 - SMART AI WITH NORMAL CONVERSATION`);
   console.log(`🌍 Port: ${PORT}`);
   console.log(`\n✅ AI Features:`);
-  console.log(`   • Creates instead of explains`);
-  console.log(`   • Can delete scripts`);
-  console.log(`   • Modern UI styling rules`);
-  console.log(`   • Enhanced context awareness`);
-  console.log(`   • Fixed JSON parsing issues`);
-  console.log(`\n📡 Ready for Wheel of Fortune RNG game creation!\n`);
+  console.log(`   • Smart conversation detection`);
+  console.log(`   • Normal chat for greetings/questions`);
+  console.log(`   • Automatic plan creation for builds`);
+  console.log(`   • Error fixing assistance`);
+  console.log(`   • Friendly, helpful responses`);
+  console.log(`\n💬 Ready for normal conversation and game creation!\n`);
 });
