@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v9.4 (ROBUST ERROR HANDLING)
+// server.js — Acidnade AI v9.5 (SMART EDITING, NO UNNECESSARY DELETION)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -97,12 +97,6 @@ function wantsToCreateOrFix(message) {
     }
   }
   
-  // Error reports - NO PLAN (just conversation)
-  if (lowerMessage.includes("error") || lowerMessage.includes("fix this") || 
-      lowerMessage.includes("not working") || lowerMessage.includes("issue")) {
-    return false;
-  }
-  
   // CREATE/BUILD/MAKE keywords - YES PLAN
   const createKeywords = [
     "create", "build", "make", "add", "implement", "code", 
@@ -122,16 +116,43 @@ function wantsToCreateOrFix(message) {
     return true;
   }
   
+  // EDIT/UPDATE/MODIFY - YES PLAN (but modify existing)
+  if (lowerMessage.includes("edit") || lowerMessage.includes("update") || 
+      lowerMessage.includes("modify") || lowerMessage.includes("fix") ||
+      lowerMessage.includes("change") || lowerMessage.includes("improve")) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Check if user wants to edit existing code
+function wantsToEdit(message) {
+  const lowerMessage = message.toLowerCase();
+  const editKeywords = ["edit", "update", "modify", "fix", "change", "improve", "add to"];
+  
+  for (const keyword of editKeywords) {
+    if (lowerMessage.includes(keyword)) {
+      return true;
+    }
+  }
+  
+  // If asking about specific scripts that likely exist
+  if (lowerMessage.includes("wheel") || lowerMessage.includes("obby") || 
+      lowerMessage.includes("ui") || lowerMessage.includes("script")) {
+    return true;
+  }
+  
   return false;
 }
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "9.4" });
+  res.json({ status: "OK", version: "9.5" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v9.4'));
+app.get('/', (req, res) => res.send('Acidnade AI v9.5'));
 
 // Main endpoint
 app.post('/ai', async (req, res) => {
@@ -141,50 +162,58 @@ app.post('/ai', async (req, res) => {
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "Hi! I'm Acidnade AI. What would you like to build today?" 
+        message: "Hi! I'm Acidnade AI. What would you like to build or edit today?" 
       });
     }
     
     const contextSummary = formatContext(context);
     const shouldCreatePlan = wantsToCreateOrFix(prompt);
+    const shouldEditExisting = wantsToEdit(prompt);
     
     const systemPrompt = `You are Acidnade, a helpful Roblox development AI assistant.
 
-${shouldCreatePlan ? `USER WANTS TO CREATE/MODIFY/DELETE SOMETHING:
-- They want to: ${prompt}
-- YOU MUST return a "plan" array with ACTUAL WORKING CODE
-- Include complete code in the properties.Source field
-- For UI: Create LocalScripts, NOT ScreenGuis
-- For deletion: use "type": "delete"` : `USER IS ASKING A QUESTION OR GREETING:
-- Respond naturally and helpfully
-- Keep it brief and friendly
-- NO PLAN needed for greetings/questions`}
+${shouldCreatePlan ? `USER WANTS TO: ${prompt}` : `USER IS ASKING A QUESTION OR GREETING:`}
+
+${shouldEditExisting ? `IMPORTANT - USER WANTS TO EDIT EXISTING CODE:
+- DO NOT DELETE existing scripts unless explicitly asked to
+- Use "type": "modify" instead of "create" for existing files
+- When modifying: include the FULL UPDATED code, not just changes
+- Add new features to existing scripts, don't recreate them
+- Preserve existing functionality while adding new features` : `IMPORTANT - USER WANTS NEW CODE:
+- Create fresh scripts with complete working code
+- For UI: Create LocalScripts, NOT ScreenGuis`}
+
+CRITICAL EDITING RULES:
+1. NEVER delete scripts unless user says "delete" or "remove"
+2. ALWAYS use "type": "modify" for editing existing scripts
+3. Include the COMPLETE updated source code
+4. Add comments like "-- ADDED: [feature]" for new changes
+5. Keep the existing code structure when possible
 
 ABOUT YOU:
 - You're a friendly Roblox development expert
 - You help with coding, debugging, and game design
 - When creating: provide COMPLETE working code
-- When asked: explain concepts clearly
-- Make UI modern: black strokes, corners, gradients
+- When editing: provide UPDATED complete code
 - Talk like a normal helpful dev
 
 ${contextSummary}
 
 RESPONSE FORMAT (JSON ONLY):
 
-${shouldCreatePlan ? `FOR CREATION/DELETION/MODIFICATION:
+${shouldCreatePlan ? `FOR CREATION/EDITING/MODIFICATION:
 {
-  "message": "Brief friendly response about what you're doing",
+  "message": "Brief friendly response",
   "plan": [
     {
       "step": 1,
       "description": "What this step does",
       "type": "create|modify|delete",
       "className": "LocalScript/Script/ModuleScript/RemoteEvent",
-      "name": "DescriptiveName",
+      "name": "ScriptName",
       "parentPath": "game.Service.Path",
       "properties": {
-        "Source": "-- COMPLETE WORKING CODE\\nlocal Players = game:GetService(\\"Players\\")\\n..."
+        "Source": "-- COMPLETE UPDATED CODE\\n-- Include ALL code, not just changes\\nlocal Players = game:GetService(\\"Players\\")\\n..."
       }
     }
   ]
@@ -196,19 +225,24 @@ ${shouldCreatePlan ? `FOR CREATION/DELETION/MODIFICATION:
 EXAMPLES:
 
 User: "hi"
-Response: {"message": "Hey there! 👋 I'm Acidnade AI, ready to help you build awesome Roblox games. What would you like to create today?"}
+Response: {"message": "Hey there! 👋 I'm Acidnade AI, ready to help you build awesome Roblox games. What would you like to create or edit today?"}
 
-User: "OnServerInvoke is not a valid member of RemoteEvent"
-Response: {"message": "Ah, that's a common error! \`OnServerInvoke\` was used in older Roblox versions. You should use \`OnServerEvent\` instead for RemoteEvents. Want me to fix that script for you?"}
+User: "add a timer to my obby game"
+Response: {"message": "Adding a timer to your obby game! I'll update the existing script with timer functionality.", "plan": [{"step":1,"description":"Update obby script with timer","type":"modify","className":"LocalScript","name":"ObbyScript","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"-- UPDATED OBBY SCRIPT WITH TIMER\\nlocal Players = game:GetService(\\"Players\\")\\nlocal RunService = game:GetService(\\"RunService\\")\\n\\n-- EXISTING OBBY CODE...\\n\\n-- ADDED: Timer functionality\\nlocal timer = 0\\nlocal timerLabel = Instance.new(\\"TextLabel\\")\\ntimerLabel.Text = \\"Time: 0\\"\\n-- ... rest of updated code"}}]}
 
 User: "create a wheel of fortune game"
-Response: {"message": "Awesome! Let me build you a complete Wheel of Fortune game with spinning animations and rewards.", "plan": [{"step":1,"description":"Create wheel UI script","type":"create","className":"LocalScript","name":"WheelUI","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"local Players = game:GetService(\\"Players\\")\\n-- Modern wheel UI code here"}}, {"step":2,"description":"Create wheel logic","type":"create","className":"Script","name":"WheelManager","parentPath":"game.ServerScriptService","properties":{"Source":"local RemoteEvent = game:GetService(\\"ReplicatedStorage\\"):WaitForChild(\\"WheelEvent\\")\\n-- Server logic here"}}]}
+Response: {"message": "Awesome! Creating a Wheel of Fortune game with spinning animations.", "plan": [{"step":1,"description":"Create wheel UI script","type":"create","className":"LocalScript","name":"WheelUI","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"local Players = game:GetService(\\"Players\\")\\n-- Complete wheel UI code"}}]}
 
-User: "what can you do?"
-Response: {"message": "I can help you build Roblox games! I create scripts, UI systems, game mechanics, fix errors, and more. Just tell me what you want to build and I'll write the complete code for you. 😊"}
+User: "delete the test script"
+Response: {"message": "Deleting test script.","plan":[{"step":1,"description":"Delete test script","type":"delete","className":"Script","name":"TestScript","parentPath":"game.ServerScriptService"}]}
+
+User: "improve the wheel spin animation"
+Response: {"message": "Improving the wheel spin animation with smoother effects!", "plan": [{"step":1,"description":"Update wheel animation","type":"modify","className":"LocalScript","name":"WheelUI","parentPath":"game.StarterPlayer.StarterPlayerScripts","properties":{"Source":"-- UPDATED WHEEL SCRIPT WITH IMPROVED ANIMATION\\n-- Existing wheel code...\\n\\n-- ADDED: Smoother spin animation with easing\\nlocal TweenService = game:GetService(\\"TweenService\\")\\n-- ... rest of updated code"}}]}
 
 USER REQUEST:
 ${prompt}
+
+IMPORTANT: If editing existing code, use "type": "modify" and provide COMPLETE updated code.
 
 Respond with JSON only.`;
 
@@ -220,15 +254,14 @@ Respond with JSON only.`;
     } catch (apiError) {
       console.error("Gemini API Error:", apiError.message);
       return res.json({ 
-        message: "Hey! 👋 I'm here to help. Let's build something awesome together. What would you like to create?" 
+        message: "Hey! 👋 I'm here to help. Let's build or edit something awesome together. What would you like to work on?" 
       });
     }
     
-    // FIXED: Check if response exists and has text()
     if (!result || !result.response || typeof result.response.text !== 'function') {
       console.error("Invalid Gemini API response structure");
       return res.json({ 
-        message: "Ready to help! What Roblox game feature would you like me to build for you today?" 
+        message: "Ready to help! What Roblox game feature would you like me to build or improve for you today?" 
       });
     }
     
@@ -239,7 +272,7 @@ Respond with JSON only.`;
     } catch (textError) {
       console.error("Error getting text from response:", textError.message);
       return res.json({ 
-        message: "Hi! I'm Acidnade AI. Ready to create amazing Roblox experiences with you!" 
+        message: "Hi! I'm Acidnade AI. Ready to create or edit amazing Roblox experiences with you!" 
       });
     }
     
@@ -260,7 +293,7 @@ Respond with JSON only.`;
       // Fallback based on user intent
       if (shouldCreatePlan) {
         data = { 
-          message: `I'll help you ${prompt.toLowerCase().includes('create') ? 'create' : 'fix'} that! The AI had a hiccup, but I'm ready to assist. Could you describe what you want in simpler terms?`,
+          message: `I'll help you ${prompt.toLowerCase().includes('edit') ? 'edit' : 'create'} that!`,
           plan: [] 
         };
       } else {
@@ -272,7 +305,7 @@ Respond with JSON only.`;
     
     // Ensure we always have a message
     if (!data.message) {
-      data.message = "Ready to build! What would you like me to create?";
+      data.message = "Ready to build or edit! What would you like me to work on?";
     }
     
     // Ensure plan is an array if it exists
@@ -280,27 +313,46 @@ Respond with JSON only.`;
       data.plan = [];
     }
     
-    console.log(`📤 Sending response: ${data.plan ? data.plan.length + ' steps' : 'chat only'}`);
+    // For modify steps, ensure they have proper type
+    if (data.plan && Array.isArray(data.plan)) {
+      data.plan.forEach(step => {
+        if (!step.type) {
+          step.type = shouldEditExisting ? "modify" : "create";
+        }
+        // Ensure modify steps have existing script names
+        if (step.type === "modify" && step.name && step.name.includes("New")) {
+          // Try to guess the existing script name
+          if (prompt.toLowerCase().includes("wheel")) {
+            step.name = "WheelUI";
+          } else if (prompt.toLowerCase().includes("obby")) {
+            step.name = "ObbyScript";
+          } else if (prompt.toLowerCase().includes("ui")) {
+            step.name = "GameUI";
+          }
+        }
+      });
+    }
+    
+    console.log(`📤 Sending response: ${data.plan ? data.plan.length + ' steps (' + (data.plan[0]?.type || 'create') + ')' : 'chat only'}`);
     res.json(data);
 
   } catch (error) {
     console.error("Server Error:", error.message);
-    // Always return a valid response
     res.json({ 
-      message: "Hi there! 👋 I'm Acidnade AI, ready to help you build awesome Roblox games. What would you like to create?" 
+      message: "Hi there! 👋 I'm Acidnade AI, ready to help you build or edit awesome Roblox games. What would you like to work on?" 
     });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v9.4 - ROBUST ERROR HANDLING`);
+  console.log(`\n🚀 Acidnade AI v9.5 - SMART EDITING, NO UNNECESSARY DELETION`);
   console.log(`🌍 Port: ${PORT}`);
   console.log(`🔑 API Key: ${process.env.API_KEY ? '✓ Set' : '✗ Missing'}`);
   console.log(`\n✅ Features:`);
-  console.log(`   • Improved error handling`);
-  console.log(`   • Better Gemini API response validation`);
-  console.log(`   • Smart conversation detection`);
-  console.log(`   • Always returns valid responses`);
-  console.log(`   • Detailed logging for debugging`);
-  console.log(`\n💬 Ready for chat and game creation!\n`);
+  console.log(`   • Smart editing (modify instead of delete)`);
+  console.log(`   • Preserves existing scripts`);
+  console.log(`   • Adds features to existing code`);
+  console.log(`   • Complete updated code in responses`);
+  console.log(`   • Only deletes when explicitly asked`);
+  console.log(`\n💻 Ready for smart editing and creation!\n`);
 });
