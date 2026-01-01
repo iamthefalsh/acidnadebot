@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v10.3 (MEMORY + SMART OPERATIONS)
+// server.js — Acidnade AI v10.3 (FIXED DUPLICATION + PROPER MEMORY)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -41,74 +41,62 @@ if (!process.env.API_KEY) {
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
-// Session memory storage
-const sessionMemory = new Map();
+// Store session data
+const sessionData = new Map();
 
-// Format context with memory
+// Format context - IMPROVED with better memory
 function formatContext(context) {
-  if (!context) return "No context available.";
+  if (!context) return "Empty workspace.";
   
-  let text = `SESSION CONTEXT:\n\n`;
+  let text = `📊 WORKSPACE STATE:\n`;
   
-  // Project stats
-  if (context.project) {
-    text += `PROJECT STATE:\n`;
-    text += `- Scripts: ${context.project.TotalScripts || 0}\n`;
-    text += `- UI Elements: ${context.project.TotalUI || 0}\n\n`;
+  // Project statistics
+  if (context.project && context.project.Statistics) {
+    const stats = context.project.Statistics;
+    text += `• Scripts: ${stats.TotalScripts || 0}\n`;
+    text += `• UI Elements: ${stats.TotalUI || 0}\n`;
+    text += `• Total Instances: ${stats.TotalInstances || 0}\n`;
   }
   
-  // Session stats
-  if (context.stats) {
-    text += `SESSION STATS:\n`;
-    text += `- Created: ${context.stats.totalCreated || 0} items\n`;
-    text += `- Modified: ${context.stats.totalModified || 0} items\n`;
-    text += `- Deleted: ${context.stats.totalDeleted || 0} items\n\n`;
+  // Existing scripts - IMPORTANT for avoiding duplication
+  if (context.project && context.project.ScriptDetails) {
+    const scripts = context.project.ScriptDetails;
+    if (scripts.length > 0) {
+      text += `\n📁 EXISTING SCRIPTS (${scripts.length}):\n`;
+      // Show recent scripts first
+      scripts.slice(-15).forEach(script => {
+        text += `- ${script.Name} (${script.Type}) in ${script.Path}\n`;
+      });
+    }
   }
   
-  // Recent creations
-  if (context.created && context.created.length > 0) {
-    text += `RECENTLY CREATED:\n`;
-    context.created.forEach((item, i) => {
-      text += `${i + 1}. ${item.Name || item.name} (${item.ClassName || item.className}) at ${item.Path || item.path}\n`;
+  // Recently created by THIS SESSION
+  if (context.createdInstances && context.createdInstances.length > 0) {
+    text += `\n🆕 RECENTLY CREATED IN THIS SESSION:\n`;
+    context.createdInstances.slice(-10).forEach(item => {
+      text += `- ${item.name} (${item.className}) in ${item.parentPath || 'unknown'}\n`;
     });
-    text += '\n';
-  }
-  
-  // Recent modifications
-  if (context.modified && context.modified.length > 0) {
-    text += `RECENTLY MODIFIED:\n`;
-    context.modified.forEach((item, i) => {
-      text += `${i + 1}. ${item.Name || item.name} (${item.ClassName || item.className})\n`;
-    });
-    text += '\n';
-  }
-  
-  // Recent deletions
-  if (context.deleted && context.deleted.length > 0) {
-    text += `RECENTLY DELETED:\n`;
-    context.deleted.forEach((item, i) => {
-      text += `${i + 1}. ${item.Name || item.name} (${item.ClassName || item.className})\n`;
-    });
-    text += '\n';
-  }
-  
-  // Chat history (last 5 messages)
-  if (context.chatHistory && context.chatHistory.length > 0) {
-    text += `CONVERSATION HISTORY (last ${Math.min(5, context.chatHistory.length)} messages):\n`;
-    const recent = context.chatHistory.slice(-5);
-    recent.forEach(msg => {
-      const role = msg.role === 'user' ? 'USER' : 'AI';
-      const content = (msg.content || '').substring(0, 100);
-      text += `${role}: ${content}${content.length >= 100 ? '...' : ''}\n`;
-    });
-    text += '\n';
   }
   
   // Current selection
-  if (context.selected && context.selected.length > 0) {
-    text += `CURRENT SELECTION:\n`;
-    context.selected.forEach(obj => {
-      text += `- ${obj.Name} (${obj.ClassName})\n`;
+  if (context.selectedObjects && context.selectedObjects.length > 0) {
+    text += `\n🎯 CURRENT SELECTION:\n`;
+    context.selectedObjects.forEach(item => {
+      text += `- ${item.Name || item.name} (${item.ClassName || item.className})\n`;
+    });
+  }
+  
+  // Chat history
+  if (context.chatHistory && context.chatHistory.length > 0) {
+    text += `\n💬 RECENT CONVERSATION:\n`;
+    // Show last 6 messages
+    const recentMessages = context.chatHistory.slice(-6);
+    recentMessages.forEach(msg => {
+      if (typeof msg === 'object') {
+        const role = msg.role === 'user' ? 'You' : 'AI';
+        const content = msg.content?.substring(0, 80) || '...';
+        text += `${role}: ${content}\n`;
+      }
     });
   }
   
@@ -123,7 +111,35 @@ app.get('/health', (req, res) => {
 app.get('/ping', (req, res) => res.send('PONG'));
 app.get('/', (req, res) => res.send('Acidnade AI v10.3'));
 
-// Main AI endpoint
+// Enhanced knowledge base
+const ROBOX_KNOWLEDGE_BASE = `
+ROBLOX DEVELOPMENT RULES:
+
+1. CRITICAL - CHECK EXISTING SCRIPTS FIRST:
+   • ALWAYS check "EXISTING SCRIPTS" list before creating anything
+   • If a script with similar name/purpose exists → MODIFY it instead
+   • NEVER create duplicates of the same script
+   • Use descriptive, unique names (e.g., "PlayerDataManager" not "Script")
+
+2. INTELLIGENT SCRIPT PLACEMENT:
+   • LocalScripts for UI → game.StarterPlayer.StarterPlayerScripts
+   • LocalScripts for tools/mechanics → game.ReplicatedStorage.Client
+   • Scripts (server) → game.ServerScriptService
+   • ModuleScripts → game.ReplicatedStorage.Modules
+   • RemoteEvents → game.ReplicatedStorage.Remotes
+
+3. MODIFICATION OVER CREATION:
+   • When user says "add to", "update", "fix", "improve" → MODIFY existing
+   • When editing existing features → Find the script first, then modify
+   • Always preserve existing functionality unless asked to remove
+
+4. MEMORY & CONTEXT:
+   • Remember what was created/mentioned recently
+   • Reference previous steps when continuing work
+   • Avoid repeating the same actions
+`;
+
+// Main endpoint
 app.post('/ai', async (req, res) => {
   try {
     console.log("🧠 AI Request received");
@@ -131,125 +147,123 @@ app.post('/ai', async (req, res) => {
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "Hi! I'm Acidnade AI. What would you like to create today?" 
+        message: "👋 Hi! I'm Acidnade AI. Ready to help with Roblox or just chat!" 
       });
     }
     
-    // Store session memory
-    if (sessionId) {
-      if (!sessionMemory.has(sessionId)) {
-        sessionMemory.set(sessionId, {
-          created: [],
-          modified: [],
-          deleted: [],
-          history: []
-        });
-      }
-      
-      const memory = sessionMemory.get(sessionId);
-      
-      // Update memory from context
-      if (context.created) {
-        context.created.forEach(item => {
-          if (!memory.created.find(c => c.path === item.path)) {
-            memory.created.push(item);
-          }
-        });
-        // Keep last 20
-        if (memory.created.length > 20) {
-          memory.created = memory.created.slice(-20);
-        }
-      }
+    // Get or create session data
+    const session = sessionId ? (sessionData.get(sessionId) || {}) : {};
+    if (!session.previousSteps) session.previousSteps = [];
+    if (!session.createdInstances) session.createdInstances = [];
+    if (!session.chatHistory) session.chatHistory = [];
+    
+    // Add to chat history
+    session.chatHistory.push({ role: 'user', content: prompt });
+    if (session.chatHistory.length > 20) {
+      session.chatHistory = session.chatHistory.slice(-20);
     }
     
-    const contextSummary = formatContext(context);
+    const contextSummary = formatContext({
+      ...context,
+      chatHistory: session.chatHistory
+    });
     
-    // Enhanced AI prompt with memory awareness
-    const systemPrompt = `You are Acidnade AI, an expert Roblox development assistant with PERFECT MEMORY.
+    // Store session
+    sessionData.set(sessionId, session);
 
-CRITICAL MEMORY RULES:
-1. YOU REMEMBER EVERYTHING from this session
-2. Check "RECENTLY CREATED" before creating - DON'T duplicate
-3. For MODIFY requests - look in "RECENTLY CREATED" or "RECENTLY MODIFIED" for the script name
-4. For DELETE requests - find the exact name from context
-5. ALWAYS reference what you've already created when relevant
+    // === 🧠 SMART AI WITH MEMORY ===
+    const systemPrompt = `You are Acidnade, a friendly AI with Roblox expertise.
 
+${ROBOX_KNOWLEDGE_BASE}
+
+## 🎯 HOW TO RESPOND:
+
+### 1. DEVELOPMENT REQUESTS (Output plan):
+- When user wants to CREATE, BUILD, MAKE, EDIT, FIX, or MODIFY anything
+- When user describes game features or mechanics
+- When user mentions specific scripts or objects
+- When continuing previous work
+
+### 2. CHAT REQUESTS (Chat only):
+- Greetings and casual conversation
+- General knowledge questions
+- Life advice or philosophical discussions
+- Questions about yourself
+
+### 3. CRITICAL RULES:
+1. CHECK EXISTING SCRIPTS: Before creating, check if similar script exists
+2. NO DUPLICATION: Never create the same script twice
+3. MODIFY FIRST: If script exists, modify it instead of creating new
+4. USE CONTEXT: Reference previous steps and created items
+
+CURRENT CONTEXT:
 ${contextSummary}
 
-RESPONSE FORMAT:
+---
 
-For development tasks (create/modify/delete):
+## 📤 OUTPUT FORMAT
+
+### For Development:
 {
-  "message": "Brief friendly response acknowledging what you'll do",
-  "needsApproval": true,  // if 3+ steps
+  "message": "Brief explanation of what I'll do",
+  "needsApproval": true, // true if ≥3 steps
   "stepsTotal": N,
+  "progressText": "Steps (0/N)",
+  "sequentialExecution": true,
   "plan": [
     {
       "step": 1,
       "description": "Clear description",
       "type": "create|modify|delete",
-      "className": "Script/LocalScript/ModuleScript/ScreenGui/etc",
-      "name": "ExactName",
-      "parentPath": "game.ServerScriptService",
+      "className": "Script|LocalScript|ModuleScript|etc",
+      "name": "DescriptiveUniqueName",
+      "parentPath": "game.ServerScriptService", // Appropriate location
       "properties": {
-        "Source": "-- Complete working code\\n..."
-      }
+        "Source": "-- Complete Luau code\\n-- With comments\\n..."
+      },
+      "requiresConfirmation": false,
+      "timeout": 5
     }
   ]
 }
 
-For chat/questions:
+### For Chat:
 {
-  "message": "Your helpful response"
+  "message": "Your friendly, helpful response"
 }
 
-CRITICAL OPERATION RULES:
+---
 
-CREATE:
-- ALWAYS check RECENTLY CREATED first - don't duplicate!
-- If script exists, say "I already created X for you"
-- Use descriptive names
-- Place scripts intelligently:
-  * Server logic → game.ServerScriptService
-  * UI LocalScripts → game.StarterPlayer.StarterPlayerScripts
-  * Client logic → game.ReplicatedStorage.Client
-  * Modules → game.ReplicatedStorage.Modules
-  * RemoteEvents → game.ReplicatedStorage.Remotes
-
-MODIFY:
-- Type MUST be "modify"
-- Look in RECENTLY CREATED or chat history for script name
-- Provide COMPLETE updated source code
-- Use comments like "-- MODIFIED:", "-- ADDED:"
-- parentPath should be the PARENT container
-- name should be EXACT script name
-
-DELETE:
-- Type MUST be "delete"
-- Find exact name from context
-- Confirm what you're deleting
-- parentPath and name must match existing item
+## 🚨 IMPORTANT GUIDELINES:
+1. If user mentions existing script (like "DebugGUI"), MODIFY it
+2. If creating similar to existing script, MODIFY instead
+3. Use names that don't conflict with existing scripts
+4. Remember what was created in this session
+5. For UI LocalScripts: game.StarterPlayer.StarterPlayerScripts
+6. For client logic: game.ReplicatedStorage.Client
+7. Keep code clean and well-commented
 
 USER REQUEST:
 "${prompt}"
 
-Respond in STRICT JSON only. No markdown.`;
-
-    console.log("🤖 Sending to Gemini...");
+Now respond in STRICT JSON only.`;
+    
+    console.log("🤖 Sending to AI...");
     
     let result;
     try {
       result = await model.generateContent(systemPrompt);
     } catch (apiError) {
-      console.error("Gemini API Error:", apiError.message);
+      console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "I'm here to help! What would you like to build?" 
+        message: "Hello! I'm here to help. What would you like to work on?" 
       });
     }
     
     if (!result?.response?.text) {
+      console.error("No response from AI");
       return res.json({ 
-        message: "Ready to help! What would you like to create?" 
+        message: "Ready to assist! I can help with Roblox development or chat." 
       });
     }
     
@@ -257,12 +271,13 @@ Respond in STRICT JSON only. No markdown.`;
     try {
       response = result.response.text().trim();
     } catch (textError) {
+      console.error("Error extracting text:", textError);
       return res.json({ 
-        message: "Hello! I'm Acidnade AI, ready to help you build amazing Roblox experiences!" 
+        message: "Hi there! How can I help you today?" 
       });
     }
     
-    // Clean markdown fences
+    // Clean response
     response = response
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
@@ -273,53 +288,82 @@ Respond in STRICT JSON only. No markdown.`;
       data = JSON.parse(response);
     } catch (parseError) {
       console.error("JSON Parse Failed:", parseError.message);
-      console.log("Raw response preview:", response.substring(0, 300));
+      console.log("Raw response:", response.substring(0, 300));
       
-      data = { 
-        message: "I'm ready to help! What would you like to create or modify?" 
-      };
+      // Fallback with memory
+      const lastMessage = session.chatHistory[session.chatHistory.length - 2];
+      const lastContent = lastMessage?.content || "";
+      
+      if (lastContent.toLowerCase().includes("create") || 
+          lastContent.toLowerCase().includes("make") ||
+          lastContent.toLowerCase().includes("build")) {
+        data = { 
+          message: "I'll help you create that! But I need you to be more specific. What exactly should I build?" 
+        };
+      } else {
+        data = { 
+          message: "I'm here to help! Tell me what you'd like to work on." 
+        };
+      }
     }
     
     // Ensure message exists
     if (!data.message) {
-      data.message = "I'm here to help!";
+      data.message = "Let me help with that!";
     }
     
-    // Normalize plan
-    if (data.plan && !Array.isArray(data.plan)) {
-      data.plan = [];
-    }
+    // Track AI response in history
+    session.chatHistory.push({ role: 'assistant', content: data.message });
     
-    // Set metadata for plans
+    // Handle plans
     if (data.plan && Array.isArray(data.plan)) {
       data.stepsTotal = data.plan.length;
       data.progressText = `Steps (0/${data.stepsTotal})`;
       
+      if (!data.sequentialExecution) data.sequentialExecution = true;
       if (data.plan.length >= 3 && data.needsApproval === undefined) {
         data.needsApproval = true;
       }
       
-      // Validate each step
+      // Track in session
       data.plan.forEach(step => {
         if (!step.type) step.type = "create";
+        if (!step.requiresConfirmation) step.requiresConfirmation = false;
+        if (!step.timeout) step.timeout = 5;
         
-        // Ensure proper fields
-        if (!step.description) {
-          step.description = `${step.type} ${step.name || 'item'}`;
+        // Smart LocalScript placement
+        if (step.className === "LocalScript") {
+          const desc = (step.description || "").toLowerCase();
+          if (desc.includes("ui") || desc.includes("gui") || desc.includes("button") || 
+              desc.includes("screen") || desc.includes("interface")) {
+            if (!step.parentPath.includes("StarterPlayer")) {
+              step.parentPath = "game.StarterPlayer.StarterPlayerScripts";
+            }
+          } else if (!step.parentPath.includes("ReplicatedStorage") && 
+                     !step.parentPath.includes("Workspace")) {
+            step.parentPath = "game.ReplicatedStorage.Client";
+          }
         }
         
-        // Intelligent LocalScript placement
-        if (step.className === "LocalScript" && !step.parentPath.includes("StarterPlayer")) {
-          if (step.description && (
-            step.description.toLowerCase().includes("ui") ||
-            step.description.toLowerCase().includes("gui") ||
-            step.description.toLowerCase().includes("interface")
-          )) {
-            step.parentPath = "game.StarterPlayer.StarterPlayerScripts";
+        // Add to session memory
+        if (step.type !== "delete") {
+          session.previousSteps.push({
+            description: step.description,
+            type: step.type,
+            name: step.name,
+            parentPath: step.parentPath,
+            timestamp: Date.now()
+          });
+          
+          if (session.previousSteps.length > 15) {
+            session.previousSteps = session.previousSteps.slice(-15);
           }
         }
       });
     }
+    
+    // Update session
+    sessionData.set(sessionId, session);
     
     console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps` : 'chat'}`);
     res.json(data);
@@ -327,30 +371,48 @@ Respond in STRICT JSON only. No markdown.`;
   } catch (error) {
     console.error("Server Error:", error);
     res.json({ 
-      message: "Hi! I'm Acidnade AI. I'm here to help you build amazing Roblox games!" 
+      message: "Hi! 😊 I'm Acidnade AI. Ready to help you build amazing things!" 
     });
   }
 });
 
-// Session cleanup endpoint
+// Session cleanup
 app.post('/session/clear', (req, res) => {
   const { sessionId } = req.body;
-  if (sessionId && sessionMemory.has(sessionId)) {
-    sessionMemory.delete(sessionId);
+  if (sessionId && sessionData.has(sessionId)) {
+    sessionData.delete(sessionId);
   }
   res.json({ success: true });
 });
 
+// Session info endpoint
+app.get('/session/:id', (req, res) => {
+  const sessionId = req.params.id;
+  const session = sessionData.get(sessionId);
+  
+  if (session) {
+    res.json({
+      exists: true,
+      steps: session.previousSteps?.length || 0,
+      chatHistory: session.chatHistory?.length || 0,
+      createdInstances: session.createdInstances?.length || 0
+    });
+  } else {
+    res.json({ exists: false });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v10.3 — MEMORY + SMART OPERATIONS`);
+  console.log(`\n🚀 Acidnade AI v10.3 — FIXED MEMORY & DUPLICATION`);
   console.log(`🌍 Port: ${PORT}`);
   console.log(`🔑 API Key: ${process.env.API_KEY ? '✓ Set' : '✗ Missing'}`);
   console.log(`🧠 Model: gemini-3-flash-preview`);
-  console.log(`\n✅ KEY FEATURES:`);
-  console.log(`   • Full memory system - remembers everything`);
-  console.log(`   • Smart duplicate prevention`);
-  console.log(`   • Working modify & delete operations`);
-  console.log(`   • Context-aware responses`);
-  console.log(`   • Intelligent script placement`);
+  console.log(`\n✅ FIXES:`);
+  console.log(`   • Proper chat history memory`);
+  console.log(`   • Checks existing scripts before creating`);
+  console.log(`   • No more duplication`);
+  console.log(`   • Can modify existing scripts`);
+  console.log(`   • Better LocalScript placement`);
+  console.log(`   • Session persistence`);
   console.log(`\n💬 Ready for intelligent development!\n`);
 });
