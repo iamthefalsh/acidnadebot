@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v10.3 (FIXED DUPLICATION + PROPER MEMORY)
+// server.js — Acidnade AI v10.4 (NO DIRECT UI CREATION)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -44,13 +44,12 @@ const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 // Store session data
 const sessionData = new Map();
 
-// Format context - IMPROVED with better memory
+// Format context
 function formatContext(context) {
   if (!context) return "Empty workspace.";
   
   let text = `📊 WORKSPACE STATE:\n`;
   
-  // Project statistics
   if (context.project && context.project.Statistics) {
     const stats = context.project.Statistics;
     text += `• Scripts: ${stats.TotalScripts || 0}\n`;
@@ -58,38 +57,32 @@ function formatContext(context) {
     text += `• Total Instances: ${stats.TotalInstances || 0}\n`;
   }
   
-  // Existing scripts - IMPORTANT for avoiding duplication
   if (context.project && context.project.ScriptDetails) {
     const scripts = context.project.ScriptDetails;
     if (scripts.length > 0) {
       text += `\n📁 EXISTING SCRIPTS (${scripts.length}):\n`;
-      // Show recent scripts first
       scripts.slice(-15).forEach(script => {
         text += `- ${script.Name} (${script.Type}) in ${script.Path}\n`;
       });
     }
   }
   
-  // Recently created by THIS SESSION
   if (context.createdInstances && context.createdInstances.length > 0) {
-    text += `\n🆕 RECENTLY CREATED IN THIS SESSION:\n`;
+    text += `\n🆕 RECENTLY CREATED:\n`;
     context.createdInstances.slice(-10).forEach(item => {
       text += `- ${item.name} (${item.className}) in ${item.parentPath || 'unknown'}\n`;
     });
   }
   
-  // Current selection
   if (context.selectedObjects && context.selectedObjects.length > 0) {
-    text += `\n🎯 CURRENT SELECTION:\n`;
+    text += `\n🎯 SELECTED:\n`;
     context.selectedObjects.forEach(item => {
       text += `- ${item.Name || item.name} (${item.ClassName || item.className})\n`;
     });
   }
   
-  // Chat history
   if (context.chatHistory && context.chatHistory.length > 0) {
-    text += `\n💬 RECENT CONVERSATION:\n`;
-    // Show last 6 messages
+    text += `\n💬 RECENT CHAT:\n`;
     const recentMessages = context.chatHistory.slice(-6);
     recentMessages.forEach(msg => {
       if (typeof msg === 'object') {
@@ -105,38 +98,36 @@ function formatContext(context) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "10.3" });
+  res.json({ status: "OK", version: "10.4" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v10.3'));
+app.get('/', (req, res) => res.send('Acidnade AI v10.4'));
 
 // Enhanced knowledge base
 const ROBOX_KNOWLEDGE_BASE = `
-ROBLOX DEVELOPMENT RULES:
+CRITICAL RULES FOR UI CREATION:
 
-1. CRITICAL - CHECK EXISTING SCRIPTS FIRST:
-   • ALWAYS check "EXISTING SCRIPTS" list before creating anything
-   • If a script with similar name/purpose exists → MODIFY it instead
-   • NEVER create duplicates of the same script
-   • Use descriptive, unique names (e.g., "PlayerDataManager" not "Script")
+1. NO DIRECT UI INSTANCE CREATION:
+   • NEVER create ScreenGui, Frame, TextLabel, TextButton, ImageLabel, or any UI instances directly
+   • ALL UI must be created DYNAMICALLY by a LocalScript
+   • UI instances should exist ONLY in code, not as separate instances
 
-2. INTELLIGENT SCRIPT PLACEMENT:
-   • LocalScripts for UI → game.StarterPlayer.StarterPlayerScripts
-   • LocalScripts for tools/mechanics → game.ReplicatedStorage.Client
+2. CORRECT APPROACH FOR UI:
+   • Create ONE LocalScript in game.StarterPlayer.StarterPlayerScripts
+   • That LocalScript should create ALL UI elements programmatically
+   • Example: Create ScreenGui, then Frame, then buttons inside the LocalScript code
+   • This ensures UI is properly parented and managed
+
+3. SCRIPT PLACEMENT:
+   • LocalScripts for UI → game.StarterPlayer.StarterPlayerScripts (ALWAYS)
    • Scripts (server) → game.ServerScriptService
    • ModuleScripts → game.ReplicatedStorage.Modules
    • RemoteEvents → game.ReplicatedStorage.Remotes
 
-3. MODIFICATION OVER CREATION:
-   • When user says "add to", "update", "fix", "improve" → MODIFY existing
-   • When editing existing features → Find the script first, then modify
-   • Always preserve existing functionality unless asked to remove
-
-4. MEMORY & CONTEXT:
-   • Remember what was created/mentioned recently
-   • Reference previous steps when continuing work
-   • Avoid repeating the same actions
+4. AVOID DUPLICATION:
+   • Check existing scripts before creating
+   • Modify existing scripts instead of creating duplicates
 `;
 
 // Main endpoint
@@ -147,7 +138,7 @@ app.post('/ai', async (req, res) => {
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "👋 Hi! I'm Acidnade AI. Ready to help with Roblox or just chat!" 
+        message: "👋 Hi! I'm Acidnade AI. Ready to help!" 
       });
     }
     
@@ -168,80 +159,52 @@ app.post('/ai', async (req, res) => {
       chatHistory: session.chatHistory
     });
     
-    // Store session
     sessionData.set(sessionId, session);
 
-    // === 🧠 SMART AI WITH MEMORY ===
+    // === 🧠 SMART AI WITH UI RULES ===
     const systemPrompt = `You are Acidnade, a friendly AI with Roblox expertise.
 
 ${ROBOX_KNOWLEDGE_BASE}
 
-## 🎯 HOW TO RESPOND:
+## 🚨 CRITICAL UI RULE:
+DO NOT CREATE UI INSTANCES (ScreenGui, Frame, TextLabel, etc) AS SEPARATE STEPS.
+ALL UI must be created INSIDE a LocalScript's code.
 
-### 1. DEVELOPMENT REQUESTS (Output plan):
-- When user wants to CREATE, BUILD, MAKE, EDIT, FIX, or MODIFY anything
-- When user describes game features or mechanics
-- When user mentions specific scripts or objects
-- When continuing previous work
-
-### 2. CHAT REQUESTS (Chat only):
-- Greetings and casual conversation
-- General knowledge questions
-- Life advice or philosophical discussions
-- Questions about yourself
-
-### 3. CRITICAL RULES:
-1. CHECK EXISTING SCRIPTS: Before creating, check if similar script exists
-2. NO DUPLICATION: Never create the same script twice
-3. MODIFY FIRST: If script exists, modify it instead of creating new
-4. USE CONTEXT: Reference previous steps and created items
-
-CURRENT CONTEXT:
-${contextSummary}
-
----
+## 🎯 HOW TO HANDLE UI REQUESTS:
+1. User wants a UI (menu, HUD, buttons, etc)
+2. Create ONE LocalScript in game.StarterPlayer.StarterPlayerScripts
+3. That LocalScript creates ALL UI elements programmatically
+4. Example LocalScript should include code like:
+   local screenGui = Instance.new("ScreenGui")
+   local frame = Instance.new("Frame")
+   -- etc
 
 ## 📤 OUTPUT FORMAT
+For UI requests, output ONE LocalScript that creates everything:
 
-### For Development:
 {
-  "message": "Brief explanation of what I'll do",
-  "needsApproval": true, // true if ≥3 steps
-  "stepsTotal": N,
-  "progressText": "Steps (0/N)",
+  "message": "I'll create a UI game!",
+  "needsApproval": false,
+  "stepsTotal": 1,
+  "progressText": "Steps (0/1)",
   "sequentialExecution": true,
   "plan": [
     {
       "step": 1,
-      "description": "Clear description",
-      "type": "create|modify|delete",
-      "className": "Script|LocalScript|ModuleScript|etc",
-      "name": "DescriptiveUniqueName",
-      "parentPath": "game.ServerScriptService", // Appropriate location
+      "description": "Create UI game with dynamic UI creation",
+      "type": "create",
+      "className": "LocalScript",
+      "name": "GameNameClient",
+      "parentPath": "game.StarterPlayer.StarterPlayerScripts",
       "properties": {
-        "Source": "-- Complete Luau code\\n-- With comments\\n..."
-      },
-      "requiresConfirmation": false,
-      "timeout": 5
+        "Source": "-- This script creates ALL UI elements\\nlocal Players = game:GetService('Players')\\nlocal player = Players.LocalPlayer\\nlocal playerGui = player:WaitForChild('PlayerGui')\\n\\n-- Create ScreenGui\\nlocal screenGui = Instance.new('ScreenGui')\\nscreenGui.Name = 'GameGui'\\nscreenGui.Parent = playerGui\\n\\n-- Create Frame\\nlocal mainFrame = Instance.new('Frame')\\n-- ... and so on"
+      }
     }
   ]
 }
 
-### For Chat:
-{
-  "message": "Your friendly, helpful response"
-}
-
----
-
-## 🚨 IMPORTANT GUIDELINES:
-1. If user mentions existing script (like "DebugGUI"), MODIFY it
-2. If creating similar to existing script, MODIFY instead
-3. Use names that don't conflict with existing scripts
-4. Remember what was created in this session
-5. For UI LocalScripts: game.StarterPlayer.StarterPlayerScripts
-6. For client logic: game.ReplicatedStorage.Client
-7. Keep code clean and well-commented
+CURRENT CONTEXT:
+${contextSummary}
 
 USER REQUEST:
 "${prompt}"
@@ -256,14 +219,14 @@ Now respond in STRICT JSON only.`;
     } catch (apiError) {
       console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "Hello! I'm here to help. What would you like to work on?" 
+        message: "Hello! Ready to create something awesome." 
       });
     }
     
     if (!result?.response?.text) {
       console.error("No response from AI");
       return res.json({ 
-        message: "Ready to assist! I can help with Roblox development or chat." 
+        message: "Ready to help with your game!" 
       });
     }
     
@@ -273,7 +236,7 @@ Now respond in STRICT JSON only.`;
     } catch (textError) {
       console.error("Error extracting text:", textError);
       return res.json({ 
-        message: "Hi there! How can I help you today?" 
+        message: "Hi there! What game would you like to make?" 
       });
     }
     
@@ -290,29 +253,17 @@ Now respond in STRICT JSON only.`;
       console.error("JSON Parse Failed:", parseError.message);
       console.log("Raw response:", response.substring(0, 300));
       
-      // Fallback with memory
-      const lastMessage = session.chatHistory[session.chatHistory.length - 2];
-      const lastContent = lastMessage?.content || "";
-      
-      if (lastContent.toLowerCase().includes("create") || 
-          lastContent.toLowerCase().includes("make") ||
-          lastContent.toLowerCase().includes("build")) {
-        data = { 
-          message: "I'll help you create that! But I need you to be more specific. What exactly should I build?" 
-        };
-      } else {
-        data = { 
-          message: "I'm here to help! Tell me what you'd like to work on." 
-        };
-      }
+      data = { 
+        message: "I'll help you create that game! I'll make sure all UI is created properly inside a LocalScript." 
+      };
     }
     
     // Ensure message exists
     if (!data.message) {
-      data.message = "Let me help with that!";
+      data.message = "Creating your game with proper UI setup!";
     }
     
-    // Track AI response in history
+    // Track AI response
     session.chatHistory.push({ role: 'assistant', content: data.message });
     
     // Handle plans
@@ -325,23 +276,35 @@ Now respond in STRICT JSON only.`;
         data.needsApproval = true;
       }
       
-      // Track in session
+      // ENFORCE UI RULES
       data.plan.forEach(step => {
         if (!step.type) step.type = "create";
         if (!step.requiresConfirmation) step.requiresConfirmation = false;
         if (!step.timeout) step.timeout = 5;
         
-        // Smart LocalScript placement
+        // PREVENT DIRECT UI INSTANCE CREATION
+        const uiClasses = ["ScreenGui", "Frame", "TextLabel", "TextButton", "ImageLabel", "ScrollingFrame", "TextBox", "UIListLayout", "UIPadding", "UICorner", "UIStroke"];
+        if (uiClasses.includes(step.className)) {
+          console.log(`🚫 BLOCKED UI Creation: ${step.className}`);
+          // Convert to LocalScript that creates the UI
+          step.className = "LocalScript";
+          step.name = step.name.replace("Gui", "Client").replace("Frame", "Client").replace("Label", "Client").replace("Button", "Client");
+          step.parentPath = "game.StarterPlayer.StarterPlayerScripts";
+          
+          // Update description
+          step.description = "Create UI elements programmatically: " + step.description;
+          
+          // Update source to create UI
+          if (step.properties && step.properties.Source) {
+            const originalSource = step.properties.Source;
+            step.properties.Source = `-- This LocalScript creates UI elements dynamically\nlocal Players = game:GetService("Players")\nlocal player = Players.LocalPlayer\nlocal playerGui = player:WaitForChild("PlayerGui")\n\n-- Create UI elements here\n-- Original plan was to create: ${step.className} "${step.name}"\n-- ${originalSource}`;
+          }
+        }
+        
+        // Force LocalScripts to StarterPlayerScripts
         if (step.className === "LocalScript") {
-          const desc = (step.description || "").toLowerCase();
-          if (desc.includes("ui") || desc.includes("gui") || desc.includes("button") || 
-              desc.includes("screen") || desc.includes("interface")) {
-            if (!step.parentPath.includes("StarterPlayer")) {
-              step.parentPath = "game.StarterPlayer.StarterPlayerScripts";
-            }
-          } else if (!step.parentPath.includes("ReplicatedStorage") && 
-                     !step.parentPath.includes("Workspace")) {
-            step.parentPath = "game.ReplicatedStorage.Client";
+          if (!step.parentPath.includes("StarterPlayer")) {
+            step.parentPath = "game.StarterPlayer.StarterPlayerScripts";
           }
         }
         
@@ -371,7 +334,7 @@ Now respond in STRICT JSON only.`;
   } catch (error) {
     console.error("Server Error:", error);
     res.json({ 
-      message: "Hi! 😊 I'm Acidnade AI. Ready to help you build amazing things!" 
+      message: "Hi! 😊 Let's create an amazing game together!" 
     });
   }
 });
@@ -385,34 +348,15 @@ app.post('/session/clear', (req, res) => {
   res.json({ success: true });
 });
 
-// Session info endpoint
-app.get('/session/:id', (req, res) => {
-  const sessionId = req.params.id;
-  const session = sessionData.get(sessionId);
-  
-  if (session) {
-    res.json({
-      exists: true,
-      steps: session.previousSteps?.length || 0,
-      chatHistory: session.chatHistory?.length || 0,
-      createdInstances: session.createdInstances?.length || 0
-    });
-  } else {
-    res.json({ exists: false });
-  }
-});
-
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v10.3 — FIXED MEMORY & DUPLICATION`);
+  console.log(`\n🚀 Acidnade AI v10.4 — NO DIRECT UI CREATION`);
   console.log(`🌍 Port: ${PORT}`);
   console.log(`🔑 API Key: ${process.env.API_KEY ? '✓ Set' : '✗ Missing'}`);
   console.log(`🧠 Model: gemini-3-flash-preview`);
-  console.log(`\n✅ FIXES:`);
-  console.log(`   • Proper chat history memory`);
-  console.log(`   • Checks existing scripts before creating`);
-  console.log(`   • No more duplication`);
-  console.log(`   • Can modify existing scripts`);
-  console.log(`   • Better LocalScript placement`);
-  console.log(`   • Session persistence`);
-  console.log(`\n💬 Ready for intelligent development!\n`);
+  console.log(`\n✅ NEW RULE:`);
+  console.log(`   • NO ScreenGui/Frame/TextLabel as separate instances`);
+  console.log(`   • All UI created inside LocalScripts`);
+  console.log(`   • LocalScripts always in StarterPlayerScripts`);
+  console.log(`   • Cleaner workspace, proper UI parenting`);
+  console.log(`\n🎮 Ready for better game creation!\n`);
 });
