@@ -1,4 +1,4 @@
-// server.js — Acidnade AI v10.1 (AI-DRIVEN INTENT + NO KEYWORDS)
+// server.js — Acidnade AI v10.2 (SMART + FLEXIBLE + BETTER SCRIPT PLACEMENT)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -39,7 +39,6 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-// 🔥 Keep your cutting-edge model name
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 // Store session data
@@ -88,56 +87,59 @@ function formatContext(context) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "10.1" });
+  res.json({ status: "OK", version: "10.2" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v10.1'));
+app.get('/', (req, res) => res.send('Acidnade AI v10.2'));
 
 // Enhanced knowledge base for Roblox development
 const ROBOX_KNOWLEDGE_BASE = `
 ROBLOX DEVELOPMENT BEST PRACTICES:
 
-1. SCRIPT TYPES & PLACEMENT:
-   - Script (server-side): game.ServerScriptService, game.ServerStorage
-   - LocalScript (client-side): game.StarterPlayer.StarterPlayerScripts, game.StarterGui
-   - ModuleScript: game.ReplicatedStorage.Modules, game.ServerScriptService.Modules
-   - RemoteEvent: game.ReplicatedStorage.Remotes
-   - RemoteFunction: game.ReplicatedStorage.Remotes
-   - ScreenGui: game.StarterGui, game.Player.PlayerGui
+1. INTELLIGENT SCRIPT PLACEMENT RULES:
+   - Script (server-side): game.ServerScriptService
+   - ModuleScript (shared code): game.ReplicatedStorage.Modules
+   - RemoteEvent/RemoteFunction: game.ReplicatedStorage.Remotes
+   - LocalScript RULES:
+     * If it creates/controls UI: game.StarterPlayer.StarterPlayerScripts
+     * If it's for character/player controls: game.StarterPlayer.StarterCharacterScripts
+     * If it's for client-side game logic: game.ReplicatedStorage.Client
+     * If it's tool-related: game.ReplicatedStorage.Tools
+     * If user specifies location: use their specified location
+   - ScreenGui: game.StarterGui
+   - Folder: Organize by purpose (e.g., "Systems", "UI", "Data")
 
-2. SECURITY PATTERNS:
+2. SMART SCRIPT ORGANIZATION:
+   - Don't always follow the same template (Remote + Module + Script + LocalScript)
+   - Choose the simplest solution for the task
+   - If it's a small feature, one script might be enough
+   - If it's complex, break into logical components
+
+3. SECURITY PATTERNS:
    - Always validate input with pcall()
-   - Use RBAC (Role-Based Access Control) for admin systems
    - Never trust client data - validate on server
    - Use :FindFirstChild() before accessing children
    - Implement rate limiting for remote events
 
-3. PERFORMANCE PATTERNS:
+4. PERFORMANCE PATTERNS:
    - Cache services: local ReplicatedStorage = game:GetService("ReplicatedStorage")
    - Use task.spawn() for non-critical async operations
    - Debounce rapid-fire events (clicks, input)
    - Clean up connections with :Disconnect()
-   - Use CollectionService for tagging systems
 
-4. COMMON PATTERNS:
+5. COMMON PATTERNS:
    - DataStores: Use UpdateAsync with retry logic
    - PlayerData: Use profiles with ProfileService
    - GUIs: Use ScreenGuis with AutoLocalize enabled
    - Animations: Use AnimationController with Humanoid
    - Sounds: Use SoundGroups for organization
 
-5. ERROR HANDLING:
+6. ERROR HANDLING:
    - Always wrap in pcall() for risky operations
    - Use warn() for non-critical errors
    - Implement try-catch for data stores
    - Validate player existence before operations
-
-6. MODULE ARCHITECTURE:
-   - Single responsibility principle
-   - Dependency injection for services
-   - Event-driven communication
-   - State management with Maid pattern
 `;
 
 // Main endpoint
@@ -148,7 +150,7 @@ app.post('/ai', async (req, res) => {
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "Hi! I'm Acidnade AI. What would you like to build or edit today?" 
+        message: "👋 Hi! I'm Acidnade AI. I can help you with Roblox development or just chat about anything. What's on your mind?" 
       });
     }
     
@@ -166,19 +168,35 @@ app.post('/ai', async (req, res) => {
       sessionData.set(sessionId, session);
     }
 
-    // === 🧠 ENHANCED AI-DRIVEN INTENT DETECTION ===
-    const systemPrompt = `You are Acidnade, an expert Roblox AI assistant fluent in **Luau** and game architecture.
+    // === 🧠 SMART CONTEXT-AWARE AI ===
+    const systemPrompt = `You are Acidnade, a friendly and knowledgeable AI assistant with expertise in Roblox development (Luau).
 
 ${ROBOX_KNOWLEDGE_BASE}
 
-Your job is to **analyze the user's message** and respond appropriately:
+## 🤔 HOW TO RESPOND:
 
-- If it's a **greeting, question, or casual chat** → return a friendly message (no plan)
-- If it's a **request to create something new** → output a "create" plan
-- If it's a **request to edit/modify existing code** → output a "modify" plan with COMPLETE updated source
-- If it's a **bug report or "not working"** → treat as debugging: fix the most recent relevant script
+### 1. ROBLOX DEVELOPMENT REQUESTS (Output a plan):
+- When user wants to CREATE, BUILD, MAKE, EDIT, FIX, or MODIFY anything in Roblox
+- When user describes a game feature, system, or mechanic
+- When user asks "how to" implement something in Roblox
+- When user mentions specific Roblox classes or scripts
 
-IMPORTANT: For complex plans (3+ steps), break them into SIMPLER, SEQUENTIAL steps that can be executed one at a time.
+### 2. GENERAL CONVERSATION (Chat response only):
+- Greetings, casual chat, life questions
+- General knowledge questions
+- Philosophical discussions
+- When user just wants to talk
+- Questions about yourself or your capabilities
+
+### 3. INTELLIGENT SCRIPT PLACEMENT:
+- DON'T always use the same template (Remote+Module+Script+LocalScript)
+- Choose the MINIMAL setup needed for the task
+- For LocalScripts:
+  • UI-related → StarterPlayer.StarterPlayerScripts (unless user specifies)
+  • Character controls → StarterPlayer.StarterCharacterScripts
+  • Client logic → ReplicatedStorage.Client
+  • Tool scripts → ReplicatedStorage.Tools
+- Keep it SIMPLE and ORGANIZED
 
 Use this context:
 
@@ -199,56 +217,50 @@ ${session.createdInstances.length > 0
 
 ### 📤 OUTPUT FORMAT
 
-#### ➤ For code requests (create/edit/debug):
+#### ➤ For Roblox development requests:
 {
-  "message": "Brief explanation",
+  "message": "I'll help you with that! Here's my plan:",
   "needsApproval": true, // if plan has ≥3 steps
   "stepsTotal": N,
   "progressText": "Steps (0/N)",
-  "sequentialExecution": true, // NEW: Execute steps one at a time
+  "sequentialExecution": true,
   "plan": [
     {
       "step": 1,
-      "description": "Clear purpose",
+      "description": "Clear, concise description",
       "type": "create|modify|delete",
-      "className": "Valid Roblox ClassName (e.g., Script, LocalScript)",
-      "name": "ExactInstanceName", // ← critical for modify!
-      "parentPath": "game.ServerScriptService.Folder",
+      "className": "Valid Roblox ClassName",
+      "name": "DescriptiveName",
+      "parentPath": "Intelligent location based on purpose",
       "properties": {
-        "Source": "-- FULL LUAU CODE\\n-- Complete, safe, runnable\\n..."
+        "Source": "-- Complete, runnable Luau code\\n-- With comments\\n..."
       },
-      "requiresConfirmation": false, // NEW: Ask before executing this step
-      "timeout": 5 // NEW: Maximum seconds to wait before proceeding
+      "requiresConfirmation": false,
+      "timeout": 5
     }
   ]
 }
 
-#### ➤ For chat/greetings/questions:
+#### ➤ For general conversation:
 {
-  "message": "Your natural, helpful reply"
+  "message": "Your friendly, helpful response here"
 }
 
 ---
 
-### 🛠️ ENHANCED RULES
-- ALWAYS output **complete Luau code** — never snippets or placeholders
-- For "modify": **never delete unrelated logic**, add with \`-- ADDED:\` comments
-- Use Roblox best practices: pcall, service caching, cleanup
-- Never delete unless user **explicitly says "delete" or "remove"**
-- If script name is unknown during modify, infer from context (e.g., "shop" → "ShopSystem")
-- Prioritize safety: validate players, instances, and inputs
-- For complex systems: Break into smaller, testable components
-- Always include proper error handling with pcall()
-- Use descriptive variable names and comments
-- Implement proper cleanup with connections and Maid pattern
-- Optimize for performance: avoid while wait() loops
+### 🎯 CRITICAL RULES
+1. BE FLEXIBLE: Adjust script placement intelligently
+2. BE SIMPLE: Don't over-engineer solutions
+3. BE FRIENDLY: Chat naturally when appropriate
+4. BE HELPFUL: Provide complete code when needed
+5. BE SMART: Understand the user's actual needs
 
 USER MESSAGE:
 "${prompt}"
 
 Now respond in **strict JSON only**. No markdown, no extra text.`;
 
-    console.log("🤖 Sending request to Gemini AI (gemini-3-flash-preview)...");
+    console.log("🤖 Sending request to Gemini AI...");
     
     let result;
     try {
@@ -256,14 +268,14 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
     } catch (apiError) {
       console.error("Gemini API Error:", apiError.message);
       return res.json({ 
-        message: "Hey! 👋 I'm here to help. Let's build or edit something awesome together. What would you like to work on?" 
+        message: "Hey there! 😊 I'm here to help with Roblox development or just have a chat. What would you like to do?" 
       });
     }
     
     if (!result?.response?.text) {
       console.error("Invalid or missing response from model");
       return res.json({ 
-        message: "Ready to help! What Roblox feature would you like me to create or improve?" 
+        message: "Ready to assist! I can help with Roblox development or answer questions. What would you like?" 
       });
     }
     
@@ -273,7 +285,7 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
     } catch (textError) {
       console.error("Error extracting text:", textError.message);
       return res.json({ 
-        message: "Hi! I'm Acidnade AI. Ready to create or edit amazing Roblox experiences with you!" 
+        message: "Hello! I'm Acidnade AI. I can help you build amazing Roblox games or chat about anything!" 
       });
     }
     
@@ -290,15 +302,15 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
       console.error("JSON Parse Failed:", parseError.message);
       console.log("Raw response preview:", response.substring(0, 250));
       
-      // Fallback: assume chat if parse fails
+      // Fallback: Friendly chat response
       data = { 
-        message: "I'm ready to help! What would you like to build, edit, or fix in your Roblox game?" 
+        message: "I'm here to help! I can assist with Roblox development or answer general questions. What would you like to do?" 
       };
     }
     
     // Ensure message exists
     if (!data.message) {
-      data.message = "What would you like to work on?";
+      data.message = "I'm ready to help! What would you like to work on or talk about?";
     }
     
     // Normalize plan array
@@ -332,6 +344,32 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
           step.timeout = 5;
         }
         
+        // INTELLIGENT SCRIPT PLACEMENT VALIDATION
+        if (step.className === "LocalScript") {
+          // Check if user specified location
+          if (!step.parentPath || 
+              (!step.parentPath.includes("StarterPlayer") && 
+               !step.parentPath.includes("ReplicatedStorage") &&
+               !step.parentPath.includes("Workspace") &&
+               !step.parentPath.includes("Server"))) {
+            
+            // Default to StarterPlayer for UI-related LocalScripts
+            if (step.description && (
+                step.description.toLowerCase().includes("ui") ||
+                step.description.toLowerCase().includes("gui") ||
+                step.description.toLowerCase().includes("interface") ||
+                step.description.toLowerCase().includes("screen") ||
+                step.description.toLowerCase().includes("button") ||
+                step.description.toLowerCase().includes("label"))) {
+              step.parentPath = "game.StarterPlayer.StarterPlayerScripts";
+            }
+            // Default to ReplicatedStorage for client logic
+            else {
+              step.parentPath = "game.ReplicatedStorage.Client";
+            }
+          }
+        }
+        
         if (sessionId && step.type !== "delete") {
           session.previousSteps.push({
             description: step.description,
@@ -358,13 +396,13 @@ Now respond in **strict JSON only**. No markdown, no extra text.`;
       sessionData.set(sessionId, session);
     }
     
-    console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps` : 'chat'}, needsApproval: ${!!data.needsApproval}, Sequential: ${!!data.sequentialExecution}`);
+    console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps` : 'chat'}`);
     res.json(data);
 
   } catch (error) {
     console.error("Server Error:", error);
     res.json({ 
-      message: "Hi there! 👋 I'm Acidnade AI. How can I help you build or improve your Roblox game today?" 
+      message: "Hi! 😊 I'm Acidnade AI. Whether you need help with Roblox development or just want to chat, I'm here for you!" 
     });
   }
 });
@@ -379,18 +417,16 @@ app.post('/session/clear', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v10.1 — PURE AI INTENT ENGINE`);
+  console.log(`\n🚀 Acidnade AI v10.2 — SMART + FLEXIBLE + BETTER PLACEMENT`);
   console.log(`🌍 Port: ${PORT}`);
   console.log(`🔑 API Key: ${process.env.API_KEY ? '✓ Set' : '✗ Missing'}`);
-  console.log(`🧠 Model: gemini-3-flash-preview (cutting-edge)`);
-  console.log(`📚 Enhanced Roblox Knowledge Base`);
-  console.log(`\n✅ UPGRADES:`);
-  console.log(`   • All keyword logic REMOVED`);
-  console.log(`   • AI now 100% decides intent`);
-  console.log(`   • Universal Luau-focused prompt`);
-  console.log(`   • Smarter session memory`);
-  console.log(`   • Safer, cleaner, future-proof`);
-  console.log(`   • Enhanced Roblox development knowledge`);
-  console.log(`   • Sequential execution support`);
-  console.log(`\n💻 Ready for intelligent Roblox development!\n`);
+  console.log(`🧠 Model: gemini-3-flash-preview`);
+  console.log(`\n✅ KEY UPGRADES:`);
+  console.log(`   • Conversational for general chat/questions`);
+  console.log(`   • Intelligent LocalScript placement`);
+  console.log(`   • No rigid templates (Remote+Module+Script+LocalScript)`);
+  console.log(`   • UI LocalScripts → StarterPlayer.StarterPlayerScripts`);
+  console.log(`   • Client logic → ReplicatedStorage.Client`);
+  console.log(`   • Flexible and user-friendly`);
+  console.log(`\n💬 Ready for development help or friendly chat!\n`);
 });
