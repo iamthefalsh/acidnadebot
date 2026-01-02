@@ -1,4 +1,3 @@
-// server.js — Acidnade AI v10.5 (PURE AUTONOMY + INTELLIGENT DECISION MAKING)
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -78,13 +77,13 @@ function formatContext(context) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "10.5" });
+  res.json({ status: "OK", version: "11.0" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v10.5'));
+app.get('/', (req, res) => res.send('Acidnade AI v11.0 - Fully Autonomous'));
 
-// Main endpoint - SIMPLIFIED, NO RULES
+// Main endpoint - FULLY AUTONOMOUS WITH SCREENGUI RULES
 app.post('/ai', async (req, res) => {
   try {
     console.log("🧠 AI Request received");
@@ -100,31 +99,22 @@ app.post('/ai', async (req, res) => {
     const session = sessionId ? (sessionData.get(sessionId) || {}) : {};
     const contextSummary = formatContext(context);
     
-    // === PURE AI DECISION MAKING ===
-    const systemPrompt = `You are Acidnade, an intelligent AI assistant with Roblox/Luau knowledge.
+    // === FULLY AUTONOMOUS AI WITH SCREENGUI RULES ===
+    const systemPrompt = `You are Acidnade, a FULLY AUTONOMOUS AI assistant with deep Roblox/Luau expertise.
 
-USER CAN ASK YOU TO:
-1. CREATE things (scripts, systems, UI, games, mechanics)
-2. EDIT/UPDATE existing things
-3. DELETE things
-4. FIX/Debug problems
-5. EXPLAIN concepts
-6. Or just chat
+YOU HAVE COMPLETE FREEDOM TO:
+• Decide what to create, modify, or delete
+• Choose script types (Script, LocalScript, ModuleScript)
+• Design architectures and systems
+• Create any game mechanics
+• Make ALL technical decisions
+• Execute multi-step plans automatically
 
-YOUR CAPABILITIES:
-• Create/modify/delete any Roblox instances
-• Write complete Luau code
-• Design game systems
-• Create UI dynamically
-• Debug and fix issues
-• Answer questions
-
-IMPORTANT: Use your OWN intelligence to decide:
-• What needs to be created/modified/deleted
-• How many steps are needed
-• Where to place scripts intelligently
-• Whether to use RemoteEvents, Modules, etc. (only if needed)
-• Keep things SIMPLE - no unnecessary complexity
+🎯 MANDATORY SCREENGUI RULES:
+1. ALL ScreenGuis MUST go in "StarterGui" (for persistent UI)
+2. For player-specific UI, create in "game.Players.LocalPlayer.PlayerGui" via LocalScript
+3. NEVER put ScreenGuis in Workspace, ReplicatedStorage, or ServerScriptService
+4. UI LocalScripts should ALWAYS be inside the ScreenGui or its children
 
 CURRENT CONTEXT:
 ${contextSummary}
@@ -132,38 +122,56 @@ ${contextSummary}
 USER REQUEST:
 "${prompt}"
 
-ANALYZE THE REQUEST AND DECIDE:
-1. What exactly does the user want?
-2. What's the simplest way to achieve it?
-3. What instances need to be created/modified/deleted?
-4. How many steps are actually needed?
+YOUR AUTONOMOUS DECISION PROCESS:
+1. Analyze what the user wants
+2. Design the optimal solution (simple but effective)
+3. Decide ALL technical details yourself:
+   - Where to place scripts
+   - What type of scripts to use
+   - Whether to use RemoteEvents/Functions
+   - How to structure the code
+   - Number of steps needed
+4. Execute without asking for permission (you're autonomous)
 
-RESPOND IN THIS FORMAT (JSON only):
+RESPOND IN JSON FORMAT:
+
+For implementations (creating/modifying):
 {
-  "message": "Brief explanation of what you'll do",
+  "message": "Brief explanation of your autonomous decision",
   "plan": [
     {
       "step": 1,
-      "description": "What you're doing",
+      "description": "What this step does",
       "type": "create|modify|delete",
-      "className": "Script|LocalScript|ModuleScript|etc (choose intelligently)",
-      "name": "DescriptiveName",
-      "parentPath": "Appropriate location (choose intelligently)",
+      "className": "ClassName",
+      "name": "InstanceName",
+      "parentPath": "Parent.Path.Here",
       "properties": {
-        "Source": "-- Complete code here"
+        "Source": "-- Your complete code",
+        "OtherProperty": "value"
       }
     }
-  ]
+  ],
+  "autoExecute": true
 }
 
-OR if it's just chat/conversation:
+For conversations/questions:
 {
-  "message": "Your response here"
+  "message": "Your helpful response"
 }
 
-BE INTELLIGENT. BE SIMPLE. BE PRACTICAL.`;
+IMPORTANT AUTONOMOUS BEHAVIORS:
+• You decide EVERYTHING - no templates, no asking
+• Keep solutions elegant but simple
+• For ScreenGuis: ALWAYS use StarterGui
+• For UI scripts: ALWAYS use LocalScript inside the ScreenGui
+• Don't over-engineer - make smart, practical choices
+• Auto-execute all plans (set autoExecute: true)
+• Only ask for approval if it's a destructive operation (deleting many things)
+
+BE BOLD. BE SMART. BE AUTONOMOUS.`;
     
-    console.log("🤖 Letting AI decide autonomously...");
+    console.log("🤖 AI making fully autonomous decisions...");
     
     let result;
     try {
@@ -171,14 +179,14 @@ BE INTELLIGENT. BE SIMPLE. BE PRACTICAL.`;
     } catch (apiError) {
       console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "I'll help you with that! What exactly would you like to accomplish?" 
+        message: "I'm ready to autonomously create whatever you need! What would you like?" 
       });
     }
     
     if (!result?.response?.text) {
       console.error("No response from AI");
       return res.json({ 
-        message: "Let's work on something! What would you like me to create or help with?" 
+        message: "Let me autonomously build that for you! What's your vision?" 
       });
     }
     
@@ -188,7 +196,7 @@ BE INTELLIGENT. BE SIMPLE. BE PRACTICAL.`;
     } catch (textError) {
       console.error("Error extracting text:", textError);
       return res.json({ 
-        message: "I'm ready to help! Tell me what you need." 
+        message: "I'm your autonomous AI assistant. Tell me what to create!" 
       });
     }
     
@@ -205,42 +213,69 @@ BE INTELLIGENT. BE SIMPLE. BE PRACTICAL.`;
       console.error("JSON Parse Failed:", parseError.message);
       console.log("Raw response:", response.substring(0, 300));
       
-      // Pure AI fallback - let the AI explain what it wants to do
       data = { 
-        message: "I understand what you want! I'll create exactly what's needed - no templates, no unnecessary complexity. Just the right solution." 
+        message: "I'll autonomously create the perfect solution for you. Let me design it intelligently!" 
       };
     }
     
     // Ensure message exists
     if (!data.message) {
-      data.message = "I'll handle that for you!";
+      data.message = "I'll handle that autonomously!";
     }
     
-    // Handle plans intelligently
+    // Handle plans with full autonomy
     if (data.plan && Array.isArray(data.plan)) {
       data.stepsTotal = data.plan.length;
-      data.progressText = `Steps (0/${data.stepsTotal})`;
+      data.progressText = `Auto-executing ${data.stepsTotal} steps`;
       data.sequentialExecution = true;
       
-      // Let AI decide if approval is needed (≥3 steps)
-      if (data.plan.length >= 3 && data.needsApproval === undefined) {
-        data.needsApproval = true;
+      // FULL AUTONOMY: Auto-execute by default
+      if (data.autoExecute === undefined) {
+        data.autoExecute = true;
       }
       
-      console.log(`🤖 AI decided on: ${data.plan.length} steps`);
+      // Only need approval for destructive operations with 5+ deletions
+      const deletionCount = data.plan.filter(step => step.type === 'delete').length;
+      if (deletionCount >= 5) {
+        data.needsApproval = true;
+        data.autoExecute = false;
+        data.message = `⚠️ This will delete ${deletionCount} items. Please review and approve.`;
+      } else {
+        data.needsApproval = false;
+      }
+      
+      // Validate ScreenGui placements
+      data.plan = data.plan.map(step => {
+        if (step.className === 'ScreenGui') {
+          // Enforce ScreenGui rules
+          if (!step.parentPath || 
+              (!step.parentPath.includes('StarterGui') && 
+               !step.parentPath.includes('PlayerGui'))) {
+            console.log(`🔧 Auto-correcting ScreenGui placement: ${step.name}`);
+            step.parentPath = 'StarterGui';
+            step.description += ' (Auto-placed in StarterGui per rules)';
+          }
+        }
+        return step;
+      });
+      
+      console.log(`🤖 AI autonomous plan: ${data.plan.length} steps | Auto-execute: ${data.autoExecute}`);
     }
     
-    console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps` : 'chat'}`);
+    console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps (autonomous)` : 'chat'}`);
     res.json(data);
 
   } catch (error) {
     console.error("Server Error:", error);
     res.json({ 
-      message: "I'm here to help! Tell me what you'd like to create or work on." 
+      message: "I'm your fully autonomous AI! Tell me what you want to build." 
     });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v10.5 — PURE AUTONOMY`);
+  console.log(`\n🚀 Acidnade AI v11.0 — FULLY AUTONOMOUS MODE`);
+  console.log(`✅ ScreenGui rules enforced`);
+  console.log(`✅ Auto-execution enabled`);
+  console.log(`✅ Smart decision making active`);
 });
