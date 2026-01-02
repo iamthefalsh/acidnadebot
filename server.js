@@ -38,7 +38,15 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+const model = genAI.getGenerativeModel({ 
+  model: "gemini-3-flash-preview",
+  generationConfig: {
+    temperature: 0.9,
+    topP: 0.95,
+    topK: 64,
+    maxOutputTokens: 8192,
+  }
+});
 
 // Store session data
 const sessionData = new Map();
@@ -77,21 +85,21 @@ function formatContext(context) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "11.0" });
+  res.json({ status: "OK", version: "12.0" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v11.0 - Fully Autonomous'));
+app.get('/', (req, res) => res.send('Acidnade AI v12.0 - Deep Thinking Mode'));
 
-// Main endpoint - FULLY AUTONOMOUS WITH SCREENGUI RULES
+// Main endpoint - DEEP THINKING + CAREFUL PLANNING
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🧠 AI Request received");
+    console.log("🧠 AI Request received - Deep Thinking Mode");
     const { prompt, context, sessionId } = req.body;
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "👋 Hi! What would you like me to do?" 
+        message: "👋 Hi! What would you like me to carefully analyze and create for you?" 
       });
     }
     
@@ -99,22 +107,11 @@ app.post('/ai', async (req, res) => {
     const session = sessionId ? (sessionData.get(sessionId) || {}) : {};
     const contextSummary = formatContext(context);
     
-    // === FULLY AUTONOMOUS AI WITH SCREENGUI RULES ===
-    const systemPrompt = `You are Acidnade, a FULLY AUTONOMOUS AI assistant with deep Roblox/Luau expertise.
+    // === DEEP THINKING MODE WITH ENHANCED REASONING ===
+    const systemPrompt = `You are Acidnade, an EXPERT AI assistant with deep Roblox/Luau expertise and ADVANCED REASONING capabilities.
 
-YOU HAVE COMPLETE FREEDOM TO:
-• Decide what to create, modify, or delete
-• Choose script types (Script, LocalScript, ModuleScript)
-• Design architectures and systems
-• Create any game mechanics
-• Make ALL technical decisions
-• Execute multi-step plans automatically
-
-🎯 MANDATORY SCREENGUI RULES:
-1. ALL ScreenGuis MUST go in "StarterGui" (for persistent UI)
-2. For player-specific UI, create in "game.Players.LocalPlayer.PlayerGui" via LocalScript
-3. NEVER put ScreenGuis in Workspace, ReplicatedStorage, or ServerScriptService
-4. UI LocalScripts should ALWAYS be inside the ScreenGui or its children
+🧠 MANDATORY THINKING PROTOCOL:
+You MUST think step-by-step before responding. Use deep, careful analysis for EVERY request.
 
 CURRENT CONTEXT:
 ${contextSummary}
@@ -122,56 +119,147 @@ ${contextSummary}
 USER REQUEST:
 "${prompt}"
 
-YOUR AUTONOMOUS DECISION PROCESS:
-1. Analyze what the user wants
-2. Design the optimal solution (simple but effective)
-3. Decide ALL technical details yourself:
-   - Where to place scripts
-   - What type of scripts to use
-   - Whether to use RemoteEvents/Functions
-   - How to structure the code
-   - Number of steps needed
-4. Execute without asking for permission (you're autonomous)
+═══════════════════════════════════════════════════════════════
+PHASE 1: DEEP ANALYSIS (Think through this thoroughly)
+═══════════════════════════════════════════════════════════════
 
-RESPOND IN JSON FORMAT:
+<thinking>
+1. REQUIREMENT ANALYSIS:
+   - What EXACTLY does the user want?
+   - What are the explicit requirements?
+   - What are the IMPLICIT requirements they didn't mention?
+   - What edge cases should I consider?
 
-For implementations (creating/modifying):
+2. CONTEXT EVALUATION:
+   - What exists in the workspace already?
+   - What can I leverage vs what needs to be created?
+   - Are there any conflicts or dependencies?
+   - What's the current state of relevant systems?
+
+3. TECHNICAL DESIGN:
+   - What's the OPTIMAL architecture for this?
+   - Which script types should I use and WHY?
+     * Script: Server-side logic, game mechanics, data management
+     * LocalScript: Client-side UI, player input, visual effects
+     * ModuleScript: Shared code, utilities, configurations
+   - Where should each component be placed?
+     * StarterGui: For persistent UI (ScreenGuis MUST go here)
+     * StarterPlayer.StarterCharacterScripts: Character-specific
+     * ReplicatedStorage: Shared resources, RemoteEvents
+     * ServerScriptService: Server logic, game systems
+     * Workspace: Physical game objects
+   - Do I need RemoteEvents/RemoteFunctions? Why or why not?
+   - What properties need to be set?
+
+4. STEP BREAKDOWN:
+   - What's the logical order of operations?
+   - Which steps depend on others?
+   - How many steps will this take?
+   - Can any steps be combined for efficiency?
+
+5. QUALITY ASSURANCE:
+   - What could go wrong?
+   - How do I prevent bugs?
+   - Is this solution maintainable?
+   - Have I followed all Roblox best practices?
+
+6. SCREENGUI VALIDATION:
+   - If creating UI, is the ScreenGui in StarterGui? (MANDATORY)
+   - Are UI scripts LocalScripts? (MANDATORY)
+   - Are UI scripts properly parented inside the ScreenGui tree?
+</thinking>
+
+═══════════════════════════════════════════════════════════════
+PHASE 2: EXECUTION PLAN
+═══════════════════════════════════════════════════════════════
+
+Based on your deep thinking, create a DETAILED, SPECIFIC plan.
+
+RESPOND IN THIS JSON FORMAT:
+
+For implementation tasks:
 {
-  "message": "Brief explanation of your autonomous decision",
+  "thinking": "Your complete thought process from Phase 1 (be thorough)",
+  "message": "Clear explanation of your solution and reasoning",
   "plan": [
     {
       "step": 1,
-      "description": "What this step does",
+      "description": "DETAILED description of what this step accomplishes and WHY",
       "type": "create|modify|delete",
-      "className": "ClassName",
-      "name": "InstanceName",
-      "parentPath": "Parent.Path.Here",
+      "className": "Exact Roblox class name",
+      "name": "Descriptive, meaningful name",
+      "parentPath": "Precise path (e.g., 'StarterGui' for ScreenGuis)",
       "properties": {
-        "Source": "-- Your complete code",
+        "Source": "-- COMPLETE, PRODUCTION-READY CODE\n-- Include comments explaining logic\n-- Handle edge cases\n-- Follow best practices",
+        "Enabled": true,
         "OtherProperty": "value"
-      }
+      },
+      "reasoning": "Why this step is necessary and how it fits the solution"
     }
   ],
-  "autoExecute": true
+  "autoExecute": true,
+  "architecture": "Brief explanation of the overall architecture",
+  "considerations": ["Edge case 1", "Edge case 2", "etc"]
 }
 
-For conversations/questions:
+For conversation/questions:
 {
-  "message": "Your helpful response"
+  "thinking": "Your analysis of the question",
+  "message": "Your detailed, helpful response with reasoning"
 }
 
-IMPORTANT AUTONOMOUS BEHAVIORS:
-• You decide EVERYTHING - no templates, no asking
-• Keep solutions elegant but simple
-• For ScreenGuis: ALWAYS use StarterGui
-• For UI scripts: ALWAYS use LocalScript inside the ScreenGui
-• Don't over-engineer - make smart, practical choices
-• Auto-execute all plans (set autoExecute: true)
-• Only ask for approval if it's a destructive operation (deleting many things)
+═══════════════════════════════════════════════════════════════
+CRITICAL RULES & BEST PRACTICES
+═══════════════════════════════════════════════════════════════
 
-BE BOLD. BE SMART. BE AUTONOMOUS.`;
+🎯 SCREENGUI RULES (ABSOLUTE):
+• ALL ScreenGuis → StarterGui (for persistent UI)
+• ALL UI scripts → LocalScript (placed inside ScreenGui or its descendants)
+• Player-specific UI → Create in PlayerGui via LocalScript if needed
+• NEVER put ScreenGuis in Workspace, ReplicatedStorage, or ServerScriptService
+
+🏗️ SCRIPT PLACEMENT STRATEGY:
+• Server Scripts → ServerScriptService (game logic, data, security)
+• Client Scripts → StarterGui (UI) or StarterPlayer (character/camera)
+• Shared Modules → ReplicatedStorage (utilities, configs)
+• Remote Objects → ReplicatedStorage (client-server communication)
+
+💡 CODE QUALITY STANDARDS:
+• Write COMPLETE, working code (no placeholders or "add your code here")
+• Include proper error handling
+• Add meaningful comments
+• Use clear variable names
+• Follow Roblox API conventions
+• Optimize for performance
+
+🔧 SMART DECISIONS:
+• Use RemoteEvents only when TRULY needed (client-server communication)
+• Don't over-engineer simple solutions
+• Consider security (validate server-side)
+• Think about scalability
+• Handle edge cases gracefully
+
+🎨 STEP DESCRIPTIONS:
+• Be SPECIFIC: "Create LocalScript in ScreenGui to handle button clicks and update cooldown UI"
+• NOT vague: "Add script for buttons"
+• Explain the WHY, not just the WHAT
+• Include technical details
+
+═══════════════════════════════════════════════════════════════
+EXECUTION GUIDELINES
+═══════════════════════════════════════════════════════════════
+
+• Think DEEPLY before planning
+• Make steps DETAILED and SPECIFIC
+• Include reasoning for each decision
+• Auto-execute unless 5+ deletions
+• Validate all ScreenGui placements
+• Ensure all code is COMPLETE and FUNCTIONAL
+• Consider the user's skill level in explanations
+
+NOW: Analyze the user's request using the thinking protocol above, then provide your detailed response.`;
     
-    console.log("🤖 AI making fully autonomous decisions...");
+    console.log("🤖 AI entering deep thinking mode...");
     
     let result;
     try {
@@ -179,14 +267,14 @@ BE BOLD. BE SMART. BE AUTONOMOUS.`;
     } catch (apiError) {
       console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "I'm ready to autonomously create whatever you need! What would you like?" 
+        message: "I'm ready to carefully analyze and create what you need! What's your project?" 
       });
     }
     
     if (!result?.response?.text) {
       console.error("No response from AI");
       return res.json({ 
-        message: "Let me autonomously build that for you! What's your vision?" 
+        message: "Let me think through your requirements carefully. What would you like?" 
       });
     }
     
@@ -196,7 +284,7 @@ BE BOLD. BE SMART. BE AUTONOMOUS.`;
     } catch (textError) {
       console.error("Error extracting text:", textError);
       return res.json({ 
-        message: "I'm your autonomous AI assistant. Tell me what to create!" 
+        message: "I'm analyzing your request. Tell me what you need!" 
       });
     }
     
@@ -211,71 +299,93 @@ BE BOLD. BE SMART. BE AUTONOMOUS.`;
       data = JSON.parse(response);
     } catch (parseError) {
       console.error("JSON Parse Failed:", parseError.message);
-      console.log("Raw response:", response.substring(0, 300));
+      console.log("Raw response:", response.substring(0, 500));
+      
+      // Try to extract thinking and message from malformed response
+      const thinkingMatch = response.match(/<thinking>([\s\S]*?)<\/thinking>/);
+      const thinking = thinkingMatch ? thinkingMatch[1].trim() : null;
       
       data = { 
-        message: "I'll autonomously create the perfect solution for you. Let me design it intelligently!" 
+        thinking: thinking,
+        message: "I've analyzed your request thoroughly. I'll create a carefully planned solution with detailed steps and complete code." 
       };
     }
     
     // Ensure message exists
     if (!data.message) {
-      data.message = "I'll handle that autonomously!";
+      data.message = "I'll handle that with careful planning!";
     }
     
-    // Handle plans with full autonomy
+    // Handle plans with deep validation
     if (data.plan && Array.isArray(data.plan)) {
       data.stepsTotal = data.plan.length;
-      data.progressText = `Auto-executing ${data.stepsTotal} steps`;
+      data.progressText = `Carefully executing ${data.stepsTotal} steps`;
       data.sequentialExecution = true;
       
-      // FULL AUTONOMY: Auto-execute by default
+      // Auto-execute by default
       if (data.autoExecute === undefined) {
         data.autoExecute = true;
       }
       
-      // Only need approval for destructive operations with 5+ deletions
+      // Only need approval for mass destructive operations
       const deletionCount = data.plan.filter(step => step.type === 'delete').length;
       if (deletionCount >= 5) {
         data.needsApproval = true;
         data.autoExecute = false;
-        data.message = `⚠️ This will delete ${deletionCount} items. Please review and approve.`;
+        data.message = `⚠️ This will delete ${deletionCount} items. Please review carefully and approve.`;
       } else {
         data.needsApproval = false;
       }
       
-      // Validate ScreenGui placements
-      data.plan = data.plan.map(step => {
+      // Validate and enhance ScreenGui placements
+      data.plan = data.plan.map((step, index) => {
         if (step.className === 'ScreenGui') {
-          // Enforce ScreenGui rules
+          // Enforce ScreenGui rules strictly
           if (!step.parentPath || 
               (!step.parentPath.includes('StarterGui') && 
                !step.parentPath.includes('PlayerGui'))) {
             console.log(`🔧 Auto-correcting ScreenGui placement: ${step.name}`);
             step.parentPath = 'StarterGui';
-            step.description += ' (Auto-placed in StarterGui per rules)';
+            step.description += ' (Auto-placed in StarterGui per mandatory rules)';
+            step.reasoning = (step.reasoning || '') + ' ScreenGuis must be in StarterGui for proper replication.';
           }
         }
+        
+        // Ensure all steps have detailed descriptions
+        if (!step.description || step.description.length < 20) {
+          step.description = `Step ${index + 1}: ${step.type} ${step.className} named ${step.name}`;
+        }
+        
         return step;
       });
       
-      console.log(`🤖 AI autonomous plan: ${data.plan.length} steps | Auto-execute: ${data.autoExecute}`);
+      console.log(`🤖 AI deep thinking complete: ${data.plan.length} detailed steps`);
+      if (data.thinking) {
+        console.log(`💭 Thinking summary: ${data.thinking.substring(0, 200)}...`);
+      }
     }
     
-    console.log(`📤 Response: ${data.plan ? `${data.plan.length} steps (autonomous)` : 'chat'}`);
+    // Log thinking process if available
+    if (data.thinking) {
+      console.log(`📊 Analysis depth: ${data.thinking.length} characters of reasoning`);
+    }
+    
+    console.log(`📤 Response: ${data.plan ? `${data.plan.length} carefully planned steps` : 'thoughtful conversation'}`);
     res.json(data);
 
   } catch (error) {
     console.error("Server Error:", error);
     res.json({ 
-      message: "I'm your fully autonomous AI! Tell me what you want to build." 
+      message: "I'm ready to carefully analyze and build your solution. What do you need?" 
     });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v11.0 — FULLY AUTONOMOUS MODE`);
+  console.log(`\n🚀 Acidnade AI v12.0 — DEEP THINKING MODE`);
+  console.log(`🧠 Advanced reasoning enabled`);
+  console.log(`✅ Detailed step planning active`);
   console.log(`✅ ScreenGui rules enforced`);
-  console.log(`✅ Auto-execution enabled`);
-  console.log(`✅ Smart decision making active`);
+  console.log(`✅ Production-ready code generation`);
+  console.log(`💡 Maximum AI power engaged`);
 });
