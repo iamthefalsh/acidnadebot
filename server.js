@@ -33,7 +33,7 @@ if (!process.env.API_KEY) {
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-pro", // Better for code generation
+  model: "gemini-3-flash-preview", // Better for code generation
   generationConfig: {
     temperature: 0.7,
     topP: 0.95,
