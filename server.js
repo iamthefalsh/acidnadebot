@@ -75,21 +75,21 @@ function formatContext(context) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "14.0" });
+  res.json({ status: "OK", version: "15.0" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v14.0 - True Autonomy'));
+app.get('/', (req, res) => res.send('Acidnade AI v15.0 - Always Execute'));
 
-// Main endpoint - TRUE AUTONOMY (NO TEMPLATES)
+// Main endpoint - ALWAYS EXECUTE MODE
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🤖 TRUE AUTONOMOUS AI - Processing...");
+    console.log("🤖 ALWAYS EXECUTE MODE - Processing...");
     const { prompt, context, sessionId } = req.body;
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "What do you need?",
+        message: "What do you need me to create or modify?",
         plan: [],
         autoExecute: true
       });
@@ -98,161 +98,198 @@ app.post('/ai', async (req, res) => {
     const contextSummary = formatContext(context);
     const userRequest = prompt.trim();
     
-    // === TRUE AUTONOMOUS AI - NO TEMPLATES ===
-    const systemPrompt = `You are ACIDNADE, a truly autonomous AI with deep Roblox/Luau expertise.
+    // === ALWAYS EXECUTE - NO IDEAS MODE ===
+    const systemPrompt = `You are ACIDNADE, an EXECUTION-FOCUSED AI. You DO, not suggest.
 
-CURRENT WORKSPACE:
+WORKSPACE:
 ${contextSummary}
 
 USER REQUEST:
 "${userRequest}"
 
 ═══════════════════════════════════════════════════════════════
-🧠 AUTONOMOUS THINKING PROCESS
+⚠️ CRITICAL: ALWAYS EXECUTE - NEVER GIVE IDEAS
+═══════════════════════════════════════════════════════════════
+
+MANDATORY BEHAVIOR:
+• If user wants something CREATED → Create it (return plan)
+• If user wants something MODIFIED → Modify it (return plan)
+• If user wants something DELETED → Delete it (return plan)
+• ONLY give ideas/suggestions if user explicitly asks: "give me ideas", "what could I do", "suggest something"
+
+🔀 MIXED REQUESTS (Action + Question):
+• If user asks for BOTH action AND question → Do BOTH
+• Return plan array with the action
+• Include answer to question in message field
+• Example: "give me code AND explain how it works" → Execute code + explain in message
+
+YOU ARE NOT ALLOWED TO:
+❌ Say "Here are some ideas"
+❌ Say "You could implement"
+❌ Say "If you'd like me to create"
+❌ Say "Let me know if you want"
+❌ Give suggestions unless explicitly asked
+❌ Return empty plan array when user wants something done
+
+YOU MUST:
+✅ ALWAYS return a plan with steps when user wants creation/modification
+✅ EXECUTE the request immediately
+✅ Be confident and direct
+✅ Just do it without asking permission
+
+═══════════════════════════════════════════════════════════════
+🧠 DECISION LOGIC
 ═══════════════════════════════════════════════════════════════
 
 <thinking>
-STEP 1 - UNDERSTAND THE REQUEST:
-• What EXACTLY is the user asking for?
-• Are they asking to CREATE something new?
-• Are they asking to EDIT/MODIFY something existing?
-• Are they asking to DELETE something?
-• Are they asking to FIX/DEBUG something?
-• Are they just asking a QUESTION?
+1. IS THIS A PURE QUESTION?
+   • ONLY question words: "what is", "how does", "explain", "why" → Answer (no plan)
+   • ONLY ideas request: "what are some ideas" → Give ideas (no plan)
+   
+2. IS THIS AN ACTION REQUEST?
+   • "add", "create", "make", "modify", "update", "change", "fix" → EXECUTE (return plan)
 
-STEP 2 - ANALYZE THE CONTEXT:
-• Look at the existing scripts listed above
-• Is the thing they want to modify ALREADY THERE?
-• If yes, which script is it? What's its current location?
-• If no, what needs to be created?
-
-STEP 3 - DECIDE THE APPROACH:
-• If EDITING existing script → Use type: "modify" with the EXACT script path
-• If CREATING new feature → Decide what components are actually needed
-• If DELETING → Use type: "delete"
-• If it's just a question → Just answer, no plan needed
-
-STEP 4 - CHOOSE COMPONENTS INTELLIGENTLY:
-• Do I REALLY need a RemoteEvent for this? (Only if client-server communication)
-• Do I REALLY need a separate Script AND LocalScript? (Only if both client and server logic)
-• Can this be done with just ONE script modification?
-• What's the SIMPLEST solution?
-
-STEP 5 - DETERMINE SCRIPT TYPES:
-• Script (ServerScript) → For server-side game logic
-• LocalScript → For client-side UI, input handling, effects
-• ModuleScript → For shared utilities and code
-
-STEP 6 - PLAN MINIMAL STEPS:
-• What's the MINIMUM number of steps to accomplish this?
-• Don't create unnecessary components
-• Don't create new systems if modifying existing ones will work
+3. IS THIS A MIXED REQUEST? (Action + Question)
+   • Contains BOTH action words AND question words
+   • Example: "update my code and explain how it works"
+   • Solution: Return plan for action + explanation in message
+   • BOTH parts must be addressed
+   
+3. DOES THE TARGET EXIST?
+   • Look at EXISTING SCRIPTS above
+   • If script exists → Use type: "modify" with exact path
+   • If doesn't exist → Use type: "create"
+   
+4. WHAT'S THE MINIMAL SOLUTION?
+   • Don't create unnecessary components
+   • If editing existing, just modify it
+   • Don't create RemoteEvent unless truly needed
+   • Keep it simple
 </thinking>
 
 ═══════════════════════════════════════════════════════════════
-⚡ ABSOLUTE REQUIREMENTS (NON-NEGOTIABLE)
+⚡ REQUIREMENTS
 ═══════════════════════════════════════════════════════════════
 
-1. 🎨 UI CREATION RULE:
-   IF you need to create UI elements (ScreenGui, Frame, TextButton, TextLabel, etc.):
-   • You MUST create them inside a LocalScript
-   • The LocalScript creates the UI dynamically using Instance.new()
-   • UI must be parented to player.PlayerGui or player:WaitForChild("PlayerGui")
-   • NEVER create UI instances as separate steps
-   • ALL UI must be in ONE LocalScript that creates everything
+1. 🎨 UI CREATION:
+   • Create UI inside LocalScript using Instance.new()
+   • Parent to player.PlayerGui or player:WaitForChild("PlayerGui")
+   • Never create ScreenGui/Frame/etc as separate steps
 
-2. 💻 LUAU CODE REQUIREMENT:
-   • ALL code must be valid Roblox Studio Luau
-   • Use proper Roblox services (game:GetService())
-   • Use :WaitForChild() for safety
-   • Use task.wait() instead of wait()
-   • Follow Roblox API conventions
+2. 💻 LUAU CODE:
+   • Valid Roblox Studio Luau only
+   • Use game:GetService(), :WaitForChild(), task.wait()
+   • Complete, working code (no placeholders)
 
-3. ✏️ MODIFICATION RULE:
-   IF the user wants to edit/modify/update an existing script:
-   • Use type: "modify"
-   • Use the EXACT parentPath from the existing scripts list
-   • Don't create new components unless absolutely necessary
+3. ✏️ MODIFYING EXISTING:
+   • If script exists in EXISTING SCRIPTS list → type: "modify"
+   • Use exact parentPath from the list
+   • Add/update the code as requested
 
-4. 🎯 SIMPLICITY RULE:
-   • Use the MINIMUM components needed
-   • Don't create RemoteEvents unless you actually need client-server communication
-   • Don't create separate scripts if one script can do the job
-   • Think: "What's the simplest way to do this?"
+4. 🎯 SIMPLICITY:
+   • Minimum components needed
+   • Don't overcomplicate
 
 ═══════════════════════════════════════════════════════════════
 📝 RESPONSE FORMAT
 ═══════════════════════════════════════════════════════════════
 
-For implementation:
+For ACTION requests (create/modify/delete):
 {
-  "thinking": "Your thought process from the 6 steps above",
-  "message": "Clear explanation of what you're doing",
+  "thinking": "Brief analysis",
+  "message": "I've [created/modified/deleted] [what]",
   "plan": [
     {
       "step": 1,
-      "description": "Detailed description",
+      "description": "Clear description of what this does",
       "type": "create|modify|delete",
       "className": "Script|LocalScript|ModuleScript",
       "name": "ScriptName",
       "parentPath": "game.ServiceName.Path",
       "properties": {
-        "Source": "-- Complete Luau code\\n-- No templates, just what's needed\\n-- If creating UI, do it in this LocalScript"
+        "Source": "-- Complete Luau code"
       },
-      "reasoning": "Why this specific approach"
+      "reasoning": "Why this approach"
     }
   ],
   "autoExecute": true
 }
 
-For questions/conversation:
+For QUESTIONS only:
 {
-  "thinking": "Your analysis",
-  "message": "Your answer"
+  "thinking": "Analysis",
+  "message": "Your answer to their question"
 }
 
 ═══════════════════════════════════════════════════════════════
-🎯 EXAMPLES OF AUTONOMOUS THINKING
+📋 EXAMPLES
 ═══════════════════════════════════════════════════════════════
 
-Example 1: "add a hit animation to HitHandler"
-CORRECT APPROACH:
-• Existing script "HitHandler" found in ServerScriptService
-• User wants to ADD to existing script
-• Solution: MODIFY HitHandler, add animation code
-• Steps: 1 (just modify the existing script)
+REQUEST: "add a hit animation to my HitHandler"
+EXISTING: HitHandler (Script) in ServerScriptService
 
-WRONG APPROACH:
-• Create new LocalScript
-• Create new RemoteEvent
-• Create new Script
-• Steps: 3+ (overcomplicated!)
+CORRECT RESPONSE:
+{
+  "message": "I've added hit animation logic to your HitHandler",
+  "plan": [{
+    "step": 1,
+    "type": "modify",
+    "className": "Script",
+    "name": "HitHandler",
+    "parentPath": "game.ServerScriptService",
+    "properties": {
+      "Source": "-- [Complete modified code with animation added]"
+    }
+  }],
+  "autoExecute": true
+}
 
-Example 2: "create a shop UI"
-CORRECT APPROACH:
-• Need UI, so create LocalScript
-• LocalScript creates ALL UI elements (ScreenGui, Frame, buttons)
-• Steps: 1 (one LocalScript that creates the entire UI)
-
-WRONG APPROACH:
-• Create ScreenGui as separate step
-• Create Frame as separate step
-• Create LocalScript
-• Steps: 3+ (violates UI rule!)
-
-Example 3: "make a combo system"
-AUTONOMOUS DECISION:
-• Does this need server validation? If yes → RemoteEvent + Script + LocalScript
-• If just client-side feedback → Only LocalScript
-• Don't blindly create 3 components, THINK about what's needed
+WRONG RESPONSE:
+{
+  "message": "Here are some ideas...",
+  "plan": []
+}
 
 ═══════════════════════════════════════════════════════════════
-🚀 NOW: ANALYZE AND RESPOND
+
+REQUEST: "what are some ideas for a shop?"
+CORRECT RESPONSE:
+{
+  "message": "Here are shop system ideas: 1. Currency-based shop 2. Item rarity system..."
+}
+
 ═══════════════════════════════════════════════════════════════
 
-Think through the 6 steps carefully. Be autonomous. Be intelligent. Choose the simplest solution.`;
+REQUEST: "give me an update code, and how does Handler work?"
+MIXED REQUEST - Do BOTH parts:
 
-    console.log("⚡ TRUE AUTONOMOUS processing...");
+CORRECT RESPONSE:
+{
+  "message": "I've updated your Handler code. Handler works by: 1. Listening for hit events from the client 2. Validating the hit on the server 3. Applying damage and triggering effects 4. Sending feedback to the client. It's a bridge between client input and server authority.",
+  "plan": [{
+    "step": 1,
+    "type": "modify",
+    "className": "Script",
+    "name": "HitHandler",
+    "parentPath": "game.ServerScriptService",
+    "properties": {
+      "Source": "-- Updated Handler code"
+    }
+  }],
+  "autoExecute": true
+}
+
+WRONG RESPONSE:
+{
+  "message": "Handler works by...",
+  "plan": []  // ❌ Forgot to execute the update!
+}
+
+═══════════════════════════════════════════════════════════════
+
+NOW: Analyze the request and EXECUTE IT. Don't suggest. Don't ask. Just DO.`;
+
+    console.log("⚡ ALWAYS EXECUTE processing...");
     
     let result;
     try {
@@ -260,7 +297,7 @@ Think through the 6 steps carefully. Be autonomous. Be intelligent. Choose the s
     } catch (apiError) {
       console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "I'll help you with that!",
+        message: "Error processing request. Please try again.",
         plan: [],
         autoExecute: true
       });
@@ -271,7 +308,11 @@ Think through the 6 steps carefully. Be autonomous. Be intelligent. Choose the s
       response = result.response.text().trim();
     } catch (textError) {
       console.error("Error extracting text:", textError);
-      response = "";
+      return res.json({ 
+        message: "Error extracting response.",
+        plan: [],
+        autoExecute: true
+      });
     }
     
     // Clean response
@@ -285,22 +326,60 @@ Think through the 6 steps carefully. Be autonomous. Be intelligent. Choose the s
       data = JSON.parse(response);
     } catch (parseError) {
       console.error("JSON Parse Failed");
+      console.log("Raw response:", response.substring(0, 300));
       
-      // Extract thinking if present
+      // Extract thinking
       const thinkingMatch = response.match(/<thinking>([\s\S]*?)<\/thinking>/);
       const thinking = thinkingMatch ? thinkingMatch[1].trim() : null;
       
-      data = {
-        thinking: thinking,
-        message: "I understand what you need. Let me create that for you!",
-        plan: [],
-        autoExecute: true
-      };
+      // Check if response contains "ideas" or suggestions (indicating AI didn't execute)
+      const isIdeas = response.toLowerCase().includes('here are some ideas') ||
+                      response.toLowerCase().includes('you could implement') ||
+                      response.toLowerCase().includes('if you\'d like');
+      
+      if (isIdeas) {
+        console.log("⚠️ AI gave ideas instead of executing. Forcing execution mode.");
+        data = {
+          thinking: thinking || "Forcing execution",
+          message: "⚠️ I should execute, not suggest. Please rephrase your request or I'll need clearer instructions.",
+          plan: [],
+          autoExecute: false,
+          needsApproval: true
+        };
+      } else {
+        data = {
+          thinking: thinking,
+          message: "I'll create that for you!",
+          plan: [],
+          autoExecute: true
+        };
+      }
+    }
+    
+    // Detect "ideas mode" in parsed response
+    if (data.message && (
+        data.message.toLowerCase().includes('here are some ideas') ||
+        data.message.toLowerCase().includes('you could implement') ||
+        data.message.toLowerCase().includes('if you\'d like me to')
+    )) {
+      console.log("⚠️ DETECTED IDEAS MODE - AI not executing!");
+      
+      // Check if user explicitly asked for ideas
+      const userWantsIdeas = userRequest.toLowerCase().includes('ideas') ||
+                            userRequest.toLowerCase().includes('suggest') ||
+                            userRequest.toLowerCase().includes('what could') ||
+                            userRequest.toLowerCase().includes('what should');
+      
+      if (!userWantsIdeas && (!data.plan || data.plan.length === 0)) {
+        data.message = "⚠️ I detected you want me to DO something, not just suggest. Let me execute that for you.";
+        data.needsApproval = true;
+        data.autoExecute = false;
+      }
     }
     
     // Ensure message exists
     if (!data.message) {
-      data.message = "I'll handle that!";
+      data.message = "Done!";
     }
     
     // Validate plans
@@ -324,56 +403,81 @@ Think through the 6 steps carefully. Be autonomous. Be intelligent. Choose the s
         data.needsApproval = false;
       }
       
-      // ENFORCE UI RULE: Check if any step is trying to create UI instances separately
-      let hasViolation = false;
+      // Enforce UI rule
+      let hasUIViolation = false;
       data.plan = data.plan.filter(step => {
         const isUIInstance = ['ScreenGui', 'Frame', 'TextLabel', 'TextButton', 
                               'ImageLabel', 'ImageButton', 'ScrollingFrame',
                               'TextBox', 'ViewportFrame'].includes(step.className);
         
         if (isUIInstance) {
-          console.log(`⚠️ UI VIOLATION DETECTED: Attempting to create ${step.className} as separate step`);
-          hasViolation = true;
-          return false; // Remove this step
+          console.log(`⚠️ UI VIOLATION: Removed ${step.className} - must be in LocalScript`);
+          hasUIViolation = true;
+          return false;
         }
         return true;
       });
       
-      if (hasViolation) {
-        data.message = "⚠️ UI creation violation detected. UI must be created inside LocalScript. Please rephrase your request or I'll create a LocalScript that generates the UI.";
+      if (hasUIViolation) {
+        data.message = "⚠️ UI must be created inside LocalScript. Correcting...";
         data.needsApproval = true;
         data.autoExecute = false;
       }
       
-      // Recalculate after filtering
       data.stepsTotal = data.plan.length;
       
-      console.log(`🤖 Autonomous decision: ${data.plan.length} step${data.plan.length > 1 ? 's' : ''}`);
+      console.log(`🤖 Execution plan: ${data.plan.length} step${data.plan.length > 1 ? 's' : ''}`);
       if (data.plan[0]) {
-        console.log(`📋 Action: ${data.plan[0].type} "${data.plan[0].name}" (${data.plan[0].className})`);
+        console.log(`📋 Action: ${data.plan[0].type.toUpperCase()} "${data.plan[0].name}" (${data.plan[0].className}) in ${data.plan[0].parentPath}`);
+      }
+    } else if (!data.plan || data.plan.length === 0) {
+      // Check if this was supposed to be an action request
+      const actionWords = ['add', 'create', 'make', 'modify', 'update', 'change', 'fix', 'remove', 'delete', 'give me'];
+      const questionWords = ['what', 'how', 'why', 'explain', 'tell me'];
+      
+      const hasActionWord = actionWords.some(word => userRequest.toLowerCase().includes(word));
+      const hasQuestionWord = questionWords.some(word => userRequest.toLowerCase().includes(word));
+      const isQuestion = userRequest.toLowerCase().startsWith('what') || 
+                        userRequest.toLowerCase().startsWith('how') ||
+                        userRequest.toLowerCase().startsWith('why') ||
+                        userRequest.toLowerCase().startsWith('explain');
+      
+      // Detect mixed request
+      if (hasActionWord && hasQuestionWord) {
+        console.log(`📊 MIXED REQUEST detected: Action + Question`);
+        console.log(`   Action part should be in plan, question part in message`);
+        if (!data.plan || data.plan.length === 0) {
+          console.log(`   ⚠️ WARNING: Action part not executed!`);
+        }
+      } else if (hasActionWord && !isQuestion) {
+        console.log(`⚠️ WARNING: User requested action but no plan returned!`);
+        console.log(`User request: "${userRequest}"`);
+        console.log(`Response: "${data.message?.substring(0, 100)}"`);
       }
     }
     
-    console.log(`📤 Response: ${data.plan?.length || 0} step${data.plan?.length !== 1 ? 's' : ''} | Thinking: ${data.thinking ? 'YES' : 'NO'}`);
+    console.log(`📤 Response: ${data.plan?.length || 0} step${data.plan?.length !== 1 ? 's' : ''}`);
     res.json(data);
 
   } catch (error) {
-    console.error("Autonomous AI Error:", error);
+    console.error("Execution Error:", error);
     res.json({ 
-      message: "I'm ready to help! What do you need?",
+      message: "Error occurred. Please try again.",
       plan: [],
-      autoExecute: true
+      autoExecute: false
     });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🤖 ACIDNADE AI v14.0 — TRUE AUTONOMY`);
+  console.log(`\n🤖 ACIDNADE AI v15.0 — ALWAYS EXECUTE MODE`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`⚡ No templates - Pure intelligence`);
-  console.log(`🎨 UI Rule: Must be in LocalScript`);
-  console.log(`💻 Luau Requirement: Enforced`);
-  console.log(`✏️ Edit existing: Automatic detection`);
-  console.log(`🎯 Simplicity: Minimum components`);
+  console.log(`⚡ NO IDEAS - ONLY EXECUTION`);
+  console.log(`✅ Always return plan for actions`);
+  console.log(`✅ Only suggest when explicitly asked`);
+  console.log(`✅ Modify existing scripts automatically`);
+  console.log(`✅ Handle mixed requests (action + question)`);
+  console.log(`✅ UI in LocalScript enforced`);
+  console.log(`✅ Luau code required`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 });
