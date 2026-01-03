@@ -8,6 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({ origin: '*' }));
+// Increased limit to handle sending full source code
 app.use(bodyParser.json({ limit: '50mb' }));
 
 // Security
@@ -32,8 +33,9 @@ if (!process.env.API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
+// Using 2.0 Flash or 1.5 Pro is recommended for large context (code reading)
 const model = genAI.getGenerativeModel({ 
-  model: "gemini-3-flash-preview",
+  model: "gemini-1.5-flash", // Changed to stable model with large context
   generationConfig: {
     temperature: 0.9,
     topP: 0.95,
@@ -70,35 +72,52 @@ function addToCreationLog(sessionId, planData) {
   }
 }
 
+// ---------------------------------------------------------
+// 🔥 FIX: Include Source Code in Context
+// ---------------------------------------------------------
 function formatContext(context) {
   if (!context) return "Empty workspace.";
   
-  let text = `WORKSPACE:\n`;
+  let text = `WORKSPACE CONTEXT:\n`;
   
   if (context.project && context.project.Statistics) {
     const stats = context.project.Statistics;
-    text += `Scripts: ${stats.TotalScripts || 0}, UI: ${stats.TotalUI || 0}\n`;
+    text += `Stats: ${stats.TotalScripts || 0} Scripts, ${stats.TotalUI || 0} UI Elements\n`;
   }
   
+  // 1. Prioritize Selected Objects (User likely wants to modify these)
+  if (context.selectedObjects && context.selectedObjects.length > 0) {
+    text += `\nCurrently Selected Objects:\n`;
+    context.selectedObjects.forEach(item => {
+      text += `> [${item.ClassName}] ${item.Name || item.name}\n`;
+      // If the client sends 'Source', include it so AI can read it
+      if (item.Source) {
+        text += `  CURRENT CODE:\n\`\`\`lua\n${item.Source}\n\`\`\`\n`;
+      }
+    });
+  }
+  
+  // 2. Existing Scripts (For reference or modification)
   if (context.project && context.project.ScriptDetails) {
     const scripts = context.project.ScriptDetails;
     if (scripts.length > 0) {
-      text += `\nEXISTING SCRIPTS:\n`;
+      text += `\nAll Project Scripts:\n`;
+      // We limit to 5-10 to prevent token overflow, but include source if available
       scripts.slice(-10).forEach(script => {
-        text += `- ${script.Name} (${script.Type}) in ${script.Path}\n`;
+        text += `- [${script.Type}] "${script.Name}" at ${script.Path}\n`;
+        if (script.Source) {
+           // Truncate extremely long scripts just in case, or send full if model allows
+           const sourcePreview = script.Source.length > 15000 
+             ? script.Source.substring(0, 15000) + "...(truncated)" 
+             : script.Source;
+           text += `  CONTENT:\n\`\`\`lua\n${sourcePreview}\n\`\`\`\n`;
+        }
       });
     }
   }
   
-  if (context.selectedObjects && context.selectedObjects.length > 0) {
-    text += `\nSELECTED:\n`;
-    context.selectedObjects.forEach(item => {
-      text += `- ${item.Name || item.name} (${item.ClassName || item.className})\n`;
-    });
-  }
-  
   if (context.createdInstances && context.createdInstances.length > 0) {
-    text += `\nRECENTLY CREATED:\n`;
+    text += `\nRecently Created:\n`;
     context.createdInstances.slice(-5).forEach(item => {
       text += `- ${item.name} (${item.className}) at ${item.parentPath}\n`;
     });
@@ -109,11 +128,11 @@ function formatContext(context) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "17.0-EXECUTE" });
+  res.json({ status: "OK", version: "17.1-FIXED" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v17.0 - Execute Mode'));
+app.get('/', (req, res) => res.send('Acidnade AI v17.1 - Execute Mode'));
 
 // Undo endpoint
 app.post('/undo', async (req, res) => {
@@ -140,7 +159,7 @@ app.post('/undo', async (req, res) => {
       undoPlan.push({
         step: undoPlan.length + 1,
         description: `Delete ${step.name} (undoing)`,
-        type: "delete",
+        type: "delete", // Simple undo strategy
         className: step.className,
         name: step.name,
         parentPath: step.parentPath,
@@ -167,7 +186,7 @@ app.post('/undo', async (req, res) => {
   }
 });
 
-// MAIN AI ENDPOINT - EXECUTION MODE
+// MAIN AI ENDPOINT
 app.post('/ai', async (req, res) => {
   try {
     console.log("🔥 EXECUTION MODE - Processing...");
@@ -185,40 +204,29 @@ app.post('/ai', async (req, res) => {
     const contextSummary = formatContext(context);
     const userRequest = prompt.trim().toLowerCase();
     
-    // ═══════════════════════════════════════════════════════════════
-    // INTELLIGENT INTENT DETECTION - NO KEYWORDS
-    // ═══════════════════════════════════════════════════════════════
-    
-    // Detect if user ONLY wants ideas (very explicit)
+    // Intent Detection
     const wantsOnlyIdeas = 
       (userRequest.includes('give me ideas') || 
        userRequest.includes('suggest') || 
        userRequest.includes('what could i') ||
-       userRequest.includes('what should i') ||
-       userRequest.includes('ideas for') ||
-       userRequest.includes('suggestions for')) &&
+       userRequest.includes('ideas for')) &&
       !userRequest.includes('create') &&
       !userRequest.includes('make') &&
-      !userRequest.includes('add') &&
-      !userRequest.includes('build');
+      !userRequest.includes('fix') &&
+      !userRequest.includes('modify');
     
-    // Detect pure questions (no action)
     const isPureQuestion = 
       (userRequest.startsWith('what is') ||
        userRequest.startsWith('how does') ||
-       userRequest.startsWith('why does') ||
-       userRequest.startsWith('explain') ||
-       userRequest.startsWith('tell me about')) &&
+       userRequest.startsWith('explain')) &&
       !userRequest.includes('create') &&
       !userRequest.includes('make');
-    
-    console.log(`Intent: Ideas Only = ${wantsOnlyIdeas}, Pure Question = ${isPureQuestion}`);
     
     // ═══════════════════════════════════════════════════════════════
     // EXECUTION-FIRST AI PROMPT
     // ═══════════════════════════════════════════════════════════════
     
-    const systemPrompt = `You are ACIDNADE, an EXECUTION-FOCUSED AI. You CREATE, not suggest.
+    const systemPrompt = `You are ACIDNADE, an EXECUTION-FOCUSED Roblox AI.
 
 ${contextSummary}
 
@@ -226,190 +234,49 @@ USER REQUEST:
 "${prompt}"
 
 ═══════════════════════════════════════════════════════════════
-🔥 EXECUTION MODE - READ CAREFULLY
+🔥 EXECUTION RULES
 ═══════════════════════════════════════════════════════════════
 
-YOUR DEFAULT MODE: **EXECUTE**
+YOUR GOAL: Return a JSON plan to execute the user's request.
 
-Unless the user EXPLICITLY asks for ideas/suggestions, YOU MUST:
-1. Analyze what they want
-2. Design the solution
-3. Return a PLAN with complete code
-4. NEVER say "here are some ideas"
-5. NEVER say "you could implement"
-6. NEVER say "if you'd like me to create"
+1. **MODIFYING CODE (CRITICAL):**
+   - Look at the "CURRENT CODE" or "CONTENT" sections in the Workspace Context above.
+   - If the user asks to "fix", "change", or "add to" a script that exists, you MUST use type: "modify".
+   - **IMPORTANT:** When modifying, you must provide the **FULL NEW SOURCE CODE**.
+   - Read the old code, apply the changes, and return the complete updated script in the "Source" property.
+   - Do not remove existing logic unless asked.
 
-═══════════════════════════════════════════════════════════════
-🎯 INTENT DETECTION
-═══════════════════════════════════════════════════════════════
+2. **CREATING NEW:**
+   - If the script doesn't exist, use type: "create".
 
-<thinking>
-STEP 1 - WHAT DOES THE USER WANT?
-
-A. PURE QUESTION (no action needed):
-   - "what is a RemoteEvent?"
-   - "how does DataStore work?"
-   - "explain combat systems"
-   → Answer with explanation (no plan)
-
-B. WANTS IDEAS ONLY (explicit request):
-   - "give me ideas for a shop"
-   - "what are some suggestions for UI"
-   - "what could I add to my game"
-   → Give 3-5 ideas (no plan)
-
-C. **EVERYTHING ELSE = EXECUTE** (DEFAULT):
-   - "add animation to HitHandler"
-   - "create a shop system"
-   - "make UI for health bar"
-   - "improve my combat"
-   - "fix the lag in my script"
-   - Even vague like "make my game better" → EXECUTE SOMETHING
-   → Return PLAN with code
-
-STEP 2 - CHECK EXISTING WORKSPACE:
-   - Does the script they mention exist? → MODIFY it
-   - Do they want something new? → CREATE it
-   - Are they referencing selected objects? → Work with those
-
-STEP 3 - DESIGN MINIMAL SOLUTION:
-   - What's the simplest approach?
-   - Do I really need RemoteEvent? (only if client-server)
-   - Can I do this with 1 script? → Do it
-   - Can I modify existing instead of creating? → Do it
-</thinking>
+3. **UI RULES:**
+   - Create UI in LocalScripts using Instance.new().
+   - Parent to player.PlayerGui.
 
 ═══════════════════════════════════════════════════════════════
-⚡ ABSOLUTE RULES
+📝 RESPONSE FORMAT (JSON ONLY)
 ═══════════════════════════════════════════════════════════════
 
-1. 🎨 UI CREATION:
-   • Create ALL UI inside LocalScript using Instance.new()
-   • Parent to player:WaitForChild("PlayerGui")
-   • NEVER create ScreenGui/Frame as separate steps
-
-2. 💻 LUAU CODE:
-   • Complete, working Roblox Luau code
-   • Use game:GetService(), :WaitForChild(), task.wait()
-   • Add comments explaining logic
-   • Handle errors with pcall when needed
-
-3. ✏️ MODIFY vs CREATE:
-   • If script exists in EXISTING SCRIPTS → type: "modify"
-   • If it's new → type: "create"
-   • Use exact paths from workspace
-
-4. 🎯 EXECUTION PRIORITY:
-   • DEFAULT = Execute (create plan)
-   • Only give ideas if explicitly asked
-   • Never ask "would you like me to..."
-
-═══════════════════════════════════════════════════════════════
-📝 RESPONSE FORMATS
-═══════════════════════════════════════════════════════════════
-
-**EXECUTION (DEFAULT):**
 {
-  "thinking": "Brief analysis",
-  "message": "I've created/modified [what]. [How it works]",
+  "thinking": "Brief analysis of what to change",
+  "message": "I have modified [Script Name] to include [Feature].",
   "plan": [
     {
       "step": 1,
-      "description": "Clear description with visual impact",
-      "type": "create|modify|delete",
-      "className": "Script|LocalScript|ModuleScript",
-      "name": "DescriptiveName",
-      "parentPath": "game.ServiceName",
+      "type": "modify", 
+      "className": "Script", 
+      "name": "ExactScriptName",
+      "parentPath": "game.ServerScriptService",
       "properties": {
-        "Source": "-- COMPLETE WORKING CODE\\n-- With comments\\n-- Error handling"
+        "Source": "-- [[ FULL UPDATED CODE HERE ]] --\n-- Include old code + new changes"
       },
-      "reasoning": "Why this approach",
-      "visualImpact": "What user will see/experience"
+      "reasoning": "Adding requested feature to existing logic"
     }
-  ],
-  "autoExecute": true,
-  "canUndo": true
-}
-
-**IDEAS ONLY (if explicitly asked):**
-{
-  "thinking": "They want ideas",
-  "message": "Here are some ideas:\\n1. Idea one\\n2. Idea two\\n3. Idea three"
-}
-
-**QUESTIONS:**
-{
-  "thinking": "Pure question",
-  "message": "Detailed explanation of the concept"
-}
-
-═══════════════════════════════════════════════════════════════
-💡 EXAMPLES
-═══════════════════════════════════════════════════════════════
-
-REQUEST: "add hit animation to HitHandler"
-EXISTING: HitHandler (Script) in ServerScriptService
-
-✅ CORRECT:
-{
-  "message": "I've added hit animations to HitHandler! When players land hits, the character plays a punch animation and the target flashes red.",
-  "plan": [{
-    "step": 1,
-    "type": "modify",
-    "name": "HitHandler",
-    "parentPath": "game.ServerScriptService",
-    "properties": {
-      "Source": "-- [COMPLETE MODIFIED CODE WITH ANIMATIONS]"
-    }
-  }],
-  "autoExecute": true
-}
-
-❌ WRONG:
-{
-  "message": "Here are some ideas: 1. You could add animations..."
-}
-
-═══════════════════════════════════════════════════════════════
-
-REQUEST: "create a shop"
-
-✅ CORRECT:
-{
-  "message": "I've created a complete shop system with UI and server validation!",
-  "plan": [
-    {"step": 1, "type": "create", "name": "ShopUI", ...},
-    {"step": 2, "type": "create", "name": "ShopServer", ...}
   ],
   "autoExecute": true
 }
 
-❌ WRONG:
-{
-  "message": "Here are ideas for a shop: 1. Currency system..."
-}
-
-═══════════════════════════════════════════════════════════════
-
-REQUEST: "give me ideas for a shop system"
-
-✅ CORRECT:
-{
-  "message": "Shop system ideas:\\n1. Currency-based purchases\\n2. Level-gated items\\n3. Daily rotating stock"
-}
-
-═══════════════════════════════════════════════════════════════
-
-REQUEST: "what is a RemoteEvent?"
-
-✅ CORRECT:
-{
-  "message": "A RemoteEvent is Roblox's way to communicate between client and server..."
-}
-
-═══════════════════════════════════════════════════════════════
-
-NOW: Analyze the request and EXECUTE (unless it's clearly just ideas/questions).`;
+Analyze the request and the PROVIDED CODE above. EXECUTE.`;
 
     console.log("⚡ Sending to AI...");
     
@@ -447,77 +314,40 @@ NOW: Analyze the request and EXECUTE (unless it's clearly just ideas/questions).
     try {
       data = JSON.parse(response);
     } catch (parseError) {
-      console.error("JSON Parse Failed");
-      
-      const thinkingMatch = response.match(/<thinking>([\s\S]*?)<\/thinking>/);
-      const thinking = thinkingMatch ? thinkingMatch[1].trim() : null;
-      
+      console.error("JSON Parse Failed", response);
       data = {
-        thinking: thinking,
-        message: "I'll create that for you!",
+        thinking: "Failed to parse",
+        message: "I tried to create code but the format failed. Try again.",
         plan: [],
-        autoExecute: true
+        autoExecute: false
       };
     }
     
-    if (!data.message) {
-      data.message = "Done!";
-    }
-    
-    // ═══════════════════════════════════════════════════════════════
-    // FORCE EXECUTION MODE (SERVER-SIDE ENFORCEMENT)
-    // ═══════════════════════════════════════════════════════════════
-    
+    // Logic for ideas vs execution
     const shouldGiveIdeas = wantsOnlyIdeas || isPureQuestion;
-    
     if (!shouldGiveIdeas && (!data.plan || data.plan.length === 0)) {
-      // User wanted execution but AI didn't create plan
-      console.log("⚠️ AI didn't execute - forcing error message");
-      data.message = "⚠️ I should have executed that. Please rephrase or try: 'create [what you want]'";
+      data.message = "⚠️ I couldn't generate a plan. If you want to modify a script, make sure it is Selected in Studio.";
     }
     
+    // Process Plan
     if (data.plan && Array.isArray(data.plan)) {
-      // Add to creation log
-      if (data.plan.length > 0) {
-        addToCreationLog(sessionId, data);
-      }
+      if (data.plan.length > 0) addToCreationLog(sessionId, data);
       
       data.stepsTotal = data.plan.length;
-      data.progressText = `Steps: 0/${data.plan.length}`;
-      data.sequentialExecution = true;
+      data.autoExecute = data.autoExecute ?? true;
       
-      // Auto-execute by default
-      if (data.autoExecute === undefined) {
-        data.autoExecute = true;
-      }
-      
-      // Only need approval for mass deletions
+      // Safety check for mass delete
       const deletionCount = data.plan.filter(step => step.type === 'delete').length;
       if (deletionCount >= 5) {
         data.needsApproval = true;
         data.autoExecute = false;
-      } else {
-        data.needsApproval = false;
       }
       
-      // Enforce UI rule
-      const uiClasses = ['ScreenGui', 'Frame', 'TextLabel', 'TextButton', 'ImageLabel', 
-                         'ScrollingFrame', 'TextBox', 'ImageButton', 'ViewportFrame'];
+      // Block UI classes (Enforce LocalScript creation rule)
+      const uiClasses = ['ScreenGui', 'Frame', 'TextLabel', 'TextButton', 'ImageLabel', 'ScrollingFrame'];
+      data.plan = data.plan.filter(step => !uiClasses.includes(step.className));
       
-      data.plan = data.plan.filter(step => {
-        if (uiClasses.includes(step.className)) {
-          console.log(`⚠️ UI VIOLATION: Blocked ${step.className}`);
-          return false;
-        }
-        return true;
-      });
-      
-      data.stepsTotal = data.plan.length;
       data.canUndo = session.canUndo || data.plan.length > 0;
-      
-      console.log(`🔥 EXECUTED: ${data.plan.length} steps`);
-    } else {
-      console.log(`💬 Response: ${shouldGiveIdeas ? 'Ideas/Question' : 'Conversation'}`);
     }
     
     res.json(data);
@@ -533,13 +363,10 @@ NOW: Analyze the request and EXECUTE (unless it's clearly just ideas/questions).
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🔥 ACIDNADE AI v17.0 — EXECUTION MODE`);
+  console.log(`\n🔥 ACIDNADE AI v17.1 — FIXED MODIFICATION MODE`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`⚡ DEFAULT MODE: EXECUTE`);
-  console.log(`✅ Creates plans with code by default`);
-  console.log(`✅ Only gives ideas when explicitly asked`);
-  console.log(`✅ Intelligent intent detection (no keywords)`);
-  console.log(`✅ Autonomous decision making`);
-  console.log(`✅ Undo system active`);
+  console.log(`✅ Source Code Reading: ENABLED`);
+  console.log(`✅ Modification Logic: FIXED`);
+  console.log(`✅ Context Limit: 50MB`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 });
