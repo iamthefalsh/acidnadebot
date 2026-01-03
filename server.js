@@ -35,21 +35,18 @@ const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 const model = genAI.getGenerativeModel({ 
   model: "gemini-3-flash-preview",
   generationConfig: {
-    temperature: 0.7,
-    topP: 0.9,
-    topK: 40,
+    temperature: 0.9,
+    topP: 0.95,
+    topK: 64,
     maxOutputTokens: 8192,
   }
 });
-
-// Store session data
-const sessionData = new Map();
 
 // Format context
 function formatContext(context) {
   if (!context) return "Empty workspace.";
   
-  let text = `ROBLOX WORKSPACE:\n`;
+  let text = `WORKSPACE:\n`;
   
   if (context.project && context.project.Statistics) {
     const stats = context.project.Statistics;
@@ -59,9 +56,9 @@ function formatContext(context) {
   if (context.project && context.project.ScriptDetails) {
     const scripts = context.project.ScriptDetails;
     if (scripts.length > 0) {
-      text += `\nEXISTING:\n`;
-      scripts.slice(-8).forEach(script => {
-        text += `- ${script.Name} (${script.Type}) at ${script.Path}\n`;
+      text += `\nEXISTING SCRIPTS:\n`;
+      scripts.slice(-10).forEach(script => {
+        text += `- ${script.Name} (${script.Type}) in ${script.Path}\n`;
       });
     }
   }
@@ -78,106 +75,184 @@ function formatContext(context) {
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "ULTIMATE" });
+  res.json({ status: "OK", version: "14.0" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('ACIDNADE AI - LUAU EXPERT'));
+app.get('/', (req, res) => res.send('Acidnade AI v14.0 - True Autonomy'));
 
-// Main endpoint - LUAU EXPERT MODE (NO PROMPTS)
+// Main endpoint - TRUE AUTONOMY (NO TEMPLATES)
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🤖 LUAU EXPERT processing request...");
+    console.log("🤖 TRUE AUTONOMOUS AI - Processing...");
     const { prompt, context, sessionId } = req.body;
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "What do you need in your Roblox game?",
+        message: "What do you need?",
         plan: [],
         autoExecute: true
       });
     }
     
     const contextSummary = formatContext(context);
+    const userRequest = prompt.trim();
     
-    // === LUAU EXPERT SYSTEM PROMPT (NO USER PROMPT SENT) ===
-    const systemPrompt = `You are ACIDNADE, an EXTREME LUAU/ROBLOX EXPERT AI. You ONLY create complete Roblox systems.
-
-YOU ARE:
-• Specialized in Luau programming
-• Expert in Roblox Studio architecture
-• Master of game system design
-• Creator of production-ready code
+    // === TRUE AUTONOMOUS AI - NO TEMPLATES ===
+    const systemPrompt = `You are ACIDNADE, a truly autonomous AI with deep Roblox/Luau expertise.
 
 CURRENT WORKSPACE:
 ${contextSummary}
 
-⚡ LUAU EXPERT RULES (NON-NEGOTIABLE):
+USER REQUEST:
+"${userRequest}"
 
-1. 🎮 GAME ARCHITECTURE:
-   • Server Scripts → ServerScriptService
-   • Client UI Scripts → StarterPlayer.StarterPlayerScripts (MUST create UI here)
-   • Character Scripts → StarterPlayer.StarterCharacterScripts
-   • Shared Modules → ReplicatedStorage
-   • Remote Events/Functions → ReplicatedStorage
+═══════════════════════════════════════════════════════════════
+🧠 AUTONOMOUS THINKING PROCESS
+═══════════════════════════════════════════════════════════════
 
-2. 🚫 ABSOLUTE UI RULE:
-   • NEVER create ScreenGui, Frame, TextLabel, etc. directly
-   • ALWAYS create LocalScript in StarterPlayerScripts
-   • LocalScript must create ALL UI elements dynamically
-   • UI must be parented to: player:WaitForChild("PlayerGui")
+<thinking>
+STEP 1 - UNDERSTAND THE REQUEST:
+• What EXACTLY is the user asking for?
+• Are they asking to CREATE something new?
+• Are they asking to EDIT/MODIFY something existing?
+• Are they asking to DELETE something?
+• Are they asking to FIX/DEBUG something?
+• Are they just asking a QUESTION?
 
-3. 🔥 CREATION MANDATE:
-   • ALWAYS return a "plan" array with steps
-   • ALWAYS set "autoExecute": true
-   • NO "ideas" - ONLY creation
-   • Write COMPLETE Luau code with NO placeholders
+STEP 2 - ANALYZE THE CONTEXT:
+• Look at the existing scripts listed above
+• Is the thing they want to modify ALREADY THERE?
+• If yes, which script is it? What's its current location?
+• If no, what needs to be created?
 
-4. 📦 SMART COMPONENTS:
-   • Combo system → RemoteEvent + Server Script + LocalScript (UI)
-   • Shop system → ModuleScript + LocalScript (UI) + Server validation
-   • Data system → DataStoreService + Server Script + LocalScript
-   • Weapon system → Tool + Server Script + LocalScript
-   • UI system → LocalScript in StarterPlayerScripts ONLY
+STEP 3 - DECIDE THE APPROACH:
+• If EDITING existing script → Use type: "modify" with the EXACT script path
+• If CREATING new feature → Decide what components are actually needed
+• If DELETING → Use type: "delete"
+• If it's just a question → Just answer, no plan needed
 
-5. 🛡️ SECURITY:
-   • Validate everything server-side
-   • Use RemoteEvents for client-server
-   • Sanitize all inputs
-   • Handle errors gracefully
+STEP 4 - CHOOSE COMPONENTS INTELLIGENTLY:
+• Do I REALLY need a RemoteEvent for this? (Only if client-server communication)
+• Do I REALLY need a separate Script AND LocalScript? (Only if both client and server logic)
+• Can this be done with just ONE script modification?
+• What's the SIMPLEST solution?
 
-📝 RESPONSE FORMAT (MUST FOLLOW):
+STEP 5 - DETERMINE SCRIPT TYPES:
+• Script (ServerScript) → For server-side game logic
+• LocalScript → For client-side UI, input handling, effects
+• ModuleScript → For shared utilities and code
+
+STEP 6 - PLAN MINIMAL STEPS:
+• What's the MINIMUM number of steps to accomplish this?
+• Don't create unnecessary components
+• Don't create new systems if modifying existing ones will work
+</thinking>
+
+═══════════════════════════════════════════════════════════════
+⚡ ABSOLUTE REQUIREMENTS (NON-NEGOTIABLE)
+═══════════════════════════════════════════════════════════════
+
+1. 🎨 UI CREATION RULE:
+   IF you need to create UI elements (ScreenGui, Frame, TextButton, TextLabel, etc.):
+   • You MUST create them inside a LocalScript
+   • The LocalScript creates the UI dynamically using Instance.new()
+   • UI must be parented to player.PlayerGui or player:WaitForChild("PlayerGui")
+   • NEVER create UI instances as separate steps
+   • ALL UI must be in ONE LocalScript that creates everything
+
+2. 💻 LUAU CODE REQUIREMENT:
+   • ALL code must be valid Roblox Studio Luau
+   • Use proper Roblox services (game:GetService())
+   • Use :WaitForChild() for safety
+   • Use task.wait() instead of wait()
+   • Follow Roblox API conventions
+
+3. ✏️ MODIFICATION RULE:
+   IF the user wants to edit/modify/update an existing script:
+   • Use type: "modify"
+   • Use the EXACT parentPath from the existing scripts list
+   • Don't create new components unless absolutely necessary
+
+4. 🎯 SIMPLICITY RULE:
+   • Use the MINIMUM components needed
+   • Don't create RemoteEvents unless you actually need client-server communication
+   • Don't create separate scripts if one script can do the job
+   • Think: "What's the simplest way to do this?"
+
+═══════════════════════════════════════════════════════════════
+📝 RESPONSE FORMAT
+═══════════════════════════════════════════════════════════════
+
+For implementation:
 {
-  "message": "Creating your Luau system!",
+  "thinking": "Your thought process from the 6 steps above",
+  "message": "Clear explanation of what you're doing",
   "plan": [
     {
       "step": 1,
-      "description": "Create [COMPONENT] for [PURPOSE]",
-      "type": "create",
-      "className": "LocalScript/Script/ModuleScript/RemoteEvent",
-      "name": "[DESCRIPTIVE_NAME]",
-      "parentPath": "game.[CORRECT_SERVICE]",
+      "description": "Detailed description",
+      "type": "create|modify|delete",
+      "className": "Script|LocalScript|ModuleScript",
+      "name": "ScriptName",
+      "parentPath": "game.ServiceName.Path",
       "properties": {
-        "Source": "-- COMPLETE LUAU CODE\n-- No placeholders\n-- Production ready"
+        "Source": "-- Complete Luau code\\n-- No templates, just what's needed\\n-- If creating UI, do it in this LocalScript"
       },
-      "reasoning": "Technical explanation"
+      "reasoning": "Why this specific approach"
     }
   ],
-  "autoExecute": true,
-  "needsApproval": false,
-  "thinking": "Brief technical analysis"
+  "autoExecute": true
 }
 
-🔧 LUAU BEST PRACTICES:
-• Use :WaitForChild() for safety
-• Use task.wait() instead of wait()
-• Use table.create() for performance
-• Use Enum for constants
-• Implement proper error handling
+For questions/conversation:
+{
+  "thinking": "Your analysis",
+  "message": "Your answer"
+}
 
-⚡ EXECUTE IMMEDIATELY. CREATE COMPLETE LUAU SYSTEMS.`;
+═══════════════════════════════════════════════════════════════
+🎯 EXAMPLES OF AUTONOMOUS THINKING
+═══════════════════════════════════════════════════════════════
 
-    console.log("⚡ LUAU EXPERT processing...");
+Example 1: "add a hit animation to HitHandler"
+CORRECT APPROACH:
+• Existing script "HitHandler" found in ServerScriptService
+• User wants to ADD to existing script
+• Solution: MODIFY HitHandler, add animation code
+• Steps: 1 (just modify the existing script)
+
+WRONG APPROACH:
+• Create new LocalScript
+• Create new RemoteEvent
+• Create new Script
+• Steps: 3+ (overcomplicated!)
+
+Example 2: "create a shop UI"
+CORRECT APPROACH:
+• Need UI, so create LocalScript
+• LocalScript creates ALL UI elements (ScreenGui, Frame, buttons)
+• Steps: 1 (one LocalScript that creates the entire UI)
+
+WRONG APPROACH:
+• Create ScreenGui as separate step
+• Create Frame as separate step
+• Create LocalScript
+• Steps: 3+ (violates UI rule!)
+
+Example 3: "make a combo system"
+AUTONOMOUS DECISION:
+• Does this need server validation? If yes → RemoteEvent + Script + LocalScript
+• If just client-side feedback → Only LocalScript
+• Don't blindly create 3 components, THINK about what's needed
+
+═══════════════════════════════════════════════════════════════
+🚀 NOW: ANALYZE AND RESPOND
+═══════════════════════════════════════════════════════════════
+
+Think through the 6 steps carefully. Be autonomous. Be intelligent. Choose the simplest solution.`;
+
+    console.log("⚡ TRUE AUTONOMOUS processing...");
     
     let result;
     try {
@@ -185,21 +260,9 @@ ${contextSummary}
     } catch (apiError) {
       console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "Luau expert creating system...",
-        plan: [{
-          step: 1,
-          description: "Creating Luau system component",
-          type: "create",
-          className: "Script",
-          name: "LuauSystem",
-          parentPath: "game.ServerScriptService",
-          properties: {
-            Source: `-- Luau expert system created\nprint("Luau system initialized!")`
-          },
-          reasoning: "Luau expert creation"
-        }],
-        autoExecute: true,
-        needsApproval: false
+        message: "I'll help you with that!",
+        plan: [],
+        autoExecute: true
       });
     }
     
@@ -221,355 +284,96 @@ ${contextSummary}
     try {
       data = JSON.parse(response);
     } catch (parseError) {
-      console.error("JSON Parse Failed, creating default Luau system");
+      console.error("JSON Parse Failed");
       
-      // LUAU EXPERT DEFAULT CREATION
+      // Extract thinking if present
+      const thinkingMatch = response.match(/<thinking>([\s\S]*?)<\/thinking>/);
+      const thinking = thinkingMatch ? thinkingMatch[1].trim() : null;
+      
       data = {
-        message: "Luau expert creating your system!",
+        thinking: thinking,
+        message: "I understand what you need. Let me create that for you!",
         plan: [],
-        autoExecute: true,
-        needsApproval: false,
-        thinking: "Luau expert analysis complete"
+        autoExecute: true
       };
+    }
+    
+    // Ensure message exists
+    if (!data.message) {
+      data.message = "I'll handle that!";
+    }
+    
+    // Validate plans
+    if (data.plan && Array.isArray(data.plan)) {
+      data.stepsTotal = data.plan.length;
+      data.progressText = `Executing ${data.plan.length} step${data.plan.length > 1 ? 's' : ''}`;
+      data.sequentialExecution = true;
       
-      // Check for specific system types
-      const lowerPrompt = prompt.toLowerCase();
+      // Auto-execute by default
+      if (data.autoExecute === undefined) {
+        data.autoExecute = true;
+      }
       
-      // LUAU EXPERT SYSTEM DETECTION
-      if (lowerPrompt.includes("combo") || lowerPrompt.includes("hit") || lowerPrompt.includes("attack")) {
-        // Combo system
-        data.plan = [
-          {
-            step: 1,
-            description: "Create RemoteEvent for secure combo communication",
-            type: "create",
-            className: "RemoteEvent",
-            name: "ComboRemote",
-            parentPath: "game.ReplicatedStorage",
-            properties: { Source: "" },
-            reasoning: "Secure client-server communication channel"
-          },
-          {
-            step: 2,
-            description: "Create server-side combo validator and tracker",
-            type: "create",
-            className: "Script",
-            name: "ComboServer",
-            parentPath: "game.ServerScriptService",
-            properties: {
-              Source: `-- Luau expert combo server
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-
-local ComboRemote = ReplicatedStorage:WaitForChild("ComboRemote")
-
--- Combo tracking table
-local playerCombos = {}
-
--- Validator function
-local function validateAttack(player, timestamp)
-    if not player or not player:IsA("Player") then
-        return false, "Invalid player"
-    end
-    
-    -- Anti-cheat: Check if player has character
-    local character = player.Character
-    if not character then
-        return false, "No character"
-    end
-    
-    -- Timestamp validation (prevent time travel)
-    local serverTime = os.time()
-    if timestamp > serverTime + 5 or timestamp < serverTime - 10 then
-        return false, "Invalid timestamp"
-    end
-    
-    return true, "Valid"
-end
-
--- Server event handler
-ComboRemote.OnServerEvent:Connect(function(player, attackData)
-    local valid, reason = validateAttack(player, attackData.timestamp)
-    if not valid then
-        warn(string.format("Combo validation failed for %s: %s", player.Name, reason))
-        return
-    end
-    
-    -- Initialize or update combo
-    if not playerCombos[player] then
-        playerCombos[player] = {
-            count = 0,
-            lastTime = 0,
-            maxCombo = 3
-        }
-    end
-    
-    local combo = playerCombos[player]
-    local currentTime = tick()
-    
-    -- Combo logic (2 second window)
-    if currentTime - combo.lastTime <= 2 then
-        combo.count = math.min(combo.count + 1, combo.maxCombo)
-    else
-        combo.count = 1
-    end
-    
-    combo.lastTime = currentTime
-    
-    -- Notify client
-    ComboRemote:FireClient(player, {
-        combo = combo.count,
-        max = combo.maxCombo,
-        valid = true
-    })
-    
-    -- Server-side effect (damage, etc.)
-    -- Add your damage logic here
-end)`
-            },
-            reasoning: "Server validation prevents cheating, tracks combos securely"
-          },
-          {
-            step: 3,
-            description: "Create LocalScript in StarterPlayerScripts for combo input and UI",
-            type: "create",
-            className: "LocalScript",
-            name: "ComboClient",
-            parentPath: "game.StarterPlayer.StarterPlayerScripts",
-            properties: {
-              Source: `-- Luau expert combo client
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-
-local player = Players.LocalPlayer
-local ComboRemote = ReplicatedStorage:WaitForChild("ComboRemote")
-
--- ====== UI CREATION (StarterPlayerScripts RULE) ======
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Create ScreenGui (DYNAMICALLY)
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ComboUI"
-screenGui.Parent = playerGui
-
--- Combo display frame
-local comboFrame = Instance.new("Frame")
-comboFrame.Name = "ComboFrame"
-comboFrame.Size = UDim2.new(0, 200, 0, 80)
-comboFrame.Position = UDim2.new(0.5, -100, 0.1, 0)
-comboFrame.AnchorPoint = Vector2.new(0.5, 0)
-comboFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-comboFrame.BackgroundTransparency = 0.2
-comboFrame.Parent = screenGui
-
--- Combo text
-local comboText = Instance.new("TextLabel")
-comboText.Name = "ComboText"
-comboText.Size = UDim2.new(1, 0, 1, 0)
-comboText.Text = "Combo: 0/3"
-comboText.TextColor3 = Color3.fromRGB(255, 255, 255)
-comboText.Font = Enum.Font.GothamBold
-comboText.TextSize = 24
-comboText.BackgroundTransparency = 1
-comboText.Parent = comboFrame
-
--- ====== COMBO LOGIC ======
-local comboState = {
-    canAttack = true,
-    cooldown = 0.5,
-    lastAttack = 0
-}
-
--- Input handler
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    
-    if input.UserInputType == Enum.UserInputType.MouseButton1 and comboState.canAttack then
-        -- Send to server with timestamp
-        ComboRemote:FireServer({
-            timestamp = os.time(),
-            position = input.Position
-        })
-        
-        -- Local cooldown
-        comboState.canAttack = false
-        task.wait(comboState.cooldown)
-        comboState.canAttack = true
-    end
-end)
-
--- Server response handler
-ComboRemote.OnClientEvent:Connect(function(comboData)
-    if comboData.valid then
-        -- Update UI
-        comboText.Text = string.format("Combo: %d/%d", comboData.combo, comboData.max)
-        
-        -- Visual feedback
-        if comboData.combo == comboData.max then
-            comboText.TextColor3 = Color3.fromRGB(255, 215, 0) -- Gold
-        elseif comboData.combo >= 2 then
-            comboText.TextColor3 = Color3.fromRGB(100, 255, 100) -- Green
-        else
-            comboText.TextColor3 = Color3.fromRGB(255, 255, 255)
-        end
-    end
-end)
-
-print("Luau expert combo system ready!")`
-            },
-            reasoning: "Client handles input and UI creation (StarterPlayerScripts rule)"
-          }
-        ];
-      } else if (lowerPrompt.includes("shop") || lowerPrompt.includes("store") || lowerPrompt.includes("buy")) {
-        // Shop system
-        data.plan = [
-          {
-            step: 1,
-            description: "Create shop LocalScript in StarterPlayerScripts",
-            type: "create",
-            className: "LocalScript",
-            name: "ShopSystem",
-            parentPath: "game.StarterPlayer.StarterPlayerScripts",
-            properties: {
-              Source: `-- Luau expert shop system
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Create shop UI
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ShopUI"
-screenGui.Parent = playerGui
-
--- Main shop frame
-local shopFrame = Instance.new("Frame")
-shopFrame.Name = "ShopFrame"
-shopFrame.Size = UDim2.new(0, 400, 0, 500)
-shopFrame.Position = UDim2.new(0.5, -200, 0.5, -250)
-shopFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-shopFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
-shopFrame.Parent = screenGui
-
--- Title
-local title = Instance.new("TextLabel")
-title.Name = "Title"
-title.Text = "SHOP"
-title.Size = UDim2.new(1, 0, 0, 50)
-title.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
-title.TextColor3 = Color3.fromRGB(255, 255, 100)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 28
-title.Parent = shopFrame
-
-print("Luau expert shop system created!")`
-            },
-            reasoning: "Shop UI created dynamically via LocalScript in StarterPlayerScripts"
-          }
-        ];
+      // Only need approval for mass deletions
+      const deletionCount = data.plan.filter(step => step.type === 'delete').length;
+      if (deletionCount >= 5) {
+        data.needsApproval = true;
+        data.autoExecute = false;
+        data.message = `⚠️ This will delete ${deletionCount} items. Review and approve.`;
       } else {
-        // Default Luau system
-        data.plan = [
-          {
-            step: 1,
-            description: "Create Luau system component",
-            type: "create",
-            className: "Script",
-            name: "LuauSystem",
-            parentPath: "game.ServerScriptService",
-            properties: {
-              Source: `-- Luau expert system created
--- Specialized in Roblox/Luau development
-
-local Players = game:GetService("Players")
-local ServerStorage = game:GetService("ServerStorage")
-
-print("=== ACIDNADE LUAU EXPERT ===")
-print("System initialized successfully!")
-print("Luau version: 2024.1")
-print("Roblox Studio integration: ACTIVE")`
-            },
-            reasoning: "Luau expert creating core system component"
-          }
-        ];
+        data.needsApproval = false;
+      }
+      
+      // ENFORCE UI RULE: Check if any step is trying to create UI instances separately
+      let hasViolation = false;
+      data.plan = data.plan.filter(step => {
+        const isUIInstance = ['ScreenGui', 'Frame', 'TextLabel', 'TextButton', 
+                              'ImageLabel', 'ImageButton', 'ScrollingFrame',
+                              'TextBox', 'ViewportFrame'].includes(step.className);
+        
+        if (isUIInstance) {
+          console.log(`⚠️ UI VIOLATION DETECTED: Attempting to create ${step.className} as separate step`);
+          hasViolation = true;
+          return false; // Remove this step
+        }
+        return true;
+      });
+      
+      if (hasViolation) {
+        data.message = "⚠️ UI creation violation detected. UI must be created inside LocalScript. Please rephrase your request or I'll create a LocalScript that generates the UI.";
+        data.needsApproval = true;
+        data.autoExecute = false;
+      }
+      
+      // Recalculate after filtering
+      data.stepsTotal = data.plan.length;
+      
+      console.log(`🤖 Autonomous decision: ${data.plan.length} step${data.plan.length > 1 ? 's' : ''}`);
+      if (data.plan[0]) {
+        console.log(`📋 Action: ${data.plan[0].type} "${data.plan[0].name}" (${data.plan[0].className})`);
       }
     }
     
-    // ENFORCE LUAU EXPERT RULES
-    if (data.plan && Array.isArray(data.plan)) {
-      // Ensure StarterPlayerScripts rule for UI
-      data.plan = data.plan.map(step => {
-        const stepDesc = step.description?.toLowerCase() || '';
-        const isUI = stepDesc.includes('ui') || stepDesc.includes('gui') || 
-                     stepDesc.includes('interface') || stepDesc.includes('screen') ||
-                     step.className === 'ScreenGui' || step.className === 'Frame' ||
-                     step.className === 'TextLabel' || step.className === 'TextButton';
-        
-        // Convert any UI component to LocalScript in StarterPlayerScripts
-        if (isUI && step.className !== 'LocalScript') {
-          return {
-            ...step,
-            className: 'LocalScript',
-            parentPath: 'game.StarterPlayer.StarterPlayerScripts',
-            description: `${step.description} (Luau expert: UI via StarterPlayerScripts)`,
-            reasoning: "Luau expert rule: UI must be created by LocalScript in StarterPlayerScripts"
-          };
-        }
-        
-        return step;
-      });
-      
-      data.stepsTotal = data.plan.length;
-      data.progressText = `Luau expert creating ${data.plan.length} components`;
-      data.sequentialExecution = true;
-      data.autoExecute = true;
-      data.needsApproval = false;
-      
-      console.log(`⚡ LUAU EXPERT: Creating ${data.plan.length} components`);
-      console.log(`📁 First component: ${data.plan[0]?.name} in ${data.plan[0]?.parentPath}`);
-    }
-    
-    // ENSURE LUAU EXPERT MESSAGING
-    if (!data.message || data.message.includes("ideas") || data.message.includes("suggest") || data.message.includes("could")) {
-      data.message = "⚡ Luau expert creating your system!";
-    }
-    
-    // Add Luau expert signature
-    data.luauExpert = true;
-    data.architecture = "Luau expert system design";
-    data.considerations = ["Production-ready Luau", "Roblox best practices", "StarterPlayerScripts UI rule"];
-    
-    console.log(`📤 LUAU EXPERT Response: ${data.plan?.length || 0} components`);
+    console.log(`📤 Response: ${data.plan?.length || 0} step${data.plan?.length !== 1 ? 's' : ''} | Thinking: ${data.thinking ? 'YES' : 'NO'}`);
     res.json(data);
 
   } catch (error) {
-    console.error("Luau Expert Error:", error);
+    console.error("Autonomous AI Error:", error);
     res.json({ 
-      message: "⚡ Luau expert emergency creation!",
-      plan: [{
-        step: 1,
-        description: "Luau expert emergency system",
-        type: "create",
-        className: "Script",
-        name: "EmergencyLuauSystem",
-        parentPath: "game.ServerScriptService",
-        properties: {
-          Source: `-- Luau expert emergency system\nprint("Luau expert system deployed!")`
-        },
-        reasoning: "Luau expert emergency response"
-      }],
-      autoExecute: true,
-      needsApproval: false,
-      luauExpert: true
+      message: "I'm ready to help! What do you need?",
+      plan: [],
+      autoExecute: true
     });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n⚡ ACIDNADE AI - LUAU EXPERT`);
-  console.log(`🎮 Specialized in Roblox/Luau`);
-  console.log(`🚫 NO PROMPTS - JUST LUAU`);
-  console.log(`📁 StarterPlayerScripts UI rule: ACTIVE`);
-  console.log(`🔥 MAXIMUM LUAU EXPERT MODE`);
+  console.log(`\n🤖 ACIDNADE AI v14.0 — TRUE AUTONOMY`);
+  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`⚡ No templates - Pure intelligence`);
+  console.log(`🎨 UI Rule: Must be in LocalScript`);
+  console.log(`💻 Luau Requirement: Enforced`);
+  console.log(`✏️ Edit existing: Automatic detection`);
+  console.log(`🎯 Simplicity: Minimum components`);
+  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 });
