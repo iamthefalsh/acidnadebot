@@ -42,9 +42,7 @@ const model = genAI.getGenerativeModel({
   }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// SESSION MEMORY & UNDO SYSTEM
-// ═══════════════════════════════════════════════════════════════
+// Session memory
 const sessionData = new Map();
 
 function getSession(sessionId) {
@@ -52,10 +50,6 @@ function getSession(sessionId) {
     sessionData.set(sessionId, {
       history: [],
       creationLog: [],
-      modificationLog: [],
-      deletionLog: [],
-      conversationContext: [],
-      lastRequest: null,
       canUndo: false
     });
   }
@@ -71,207 +65,63 @@ function addToCreationLog(sessionId, planData) {
   });
   session.canUndo = true;
   
-  // Keep only last 10 actions
   if (session.creationLog.length > 10) {
     session.creationLog.shift();
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// DEPENDENCY DETECTION SYSTEM
-// ═══════════════════════════════════════════════════════════════
-function detectDependencies(context, plannedSteps) {
-  const warnings = [];
-  const suggestions = [];
-  
-  if (!context || !context.project) return { warnings, suggestions };
-  
-  const existingScripts = context.project.ScriptDetails || [];
-  const plannedNames = plannedSteps.map(step => step.name);
-  
-  // Check for duplicate names
-  for (const step of plannedSteps) {
-    const existsInProject = existingScripts.some(s => s.Name === step.name);
-    const duplicateInPlan = plannedNames.filter(n => n === step.name).length > 1;
-    
-    if (existsInProject) {
-      warnings.push(`⚠️ "${step.name}" already exists in project - consider modifying instead of creating`);
-    }
-    
-    if (duplicateInPlan) {
-      warnings.push(`⚠️ Plan creates multiple instances named "${step.name}"`);
-    }
-  }
-  
-  // Check for RemoteEvent dependencies
-  const needsRemoteEvent = plannedSteps.some(step => 
-    step.properties?.Source?.includes('RemoteEvent') ||
-    step.properties?.Source?.includes(':FireServer') ||
-    step.properties?.Source?.includes(':FireClient')
-  );
-  
-  const createsRemoteEvent = plannedSteps.some(step => 
-    step.className === 'RemoteEvent' || step.className === 'RemoteFunction'
-  );
-  
-  const hasRemoteEvent = existingScripts.some(s => 
-    s.Type === 'RemoteEvent' || s.Type === 'RemoteFunction'
-  );
-  
-  if (needsRemoteEvent && !createsRemoteEvent && !hasRemoteEvent) {
-    suggestions.push(`💡 This system needs RemoteEvents for client-server communication`);
-  }
-  
-  return { warnings, suggestions };
-}
-
-// ═══════════════════════════════════════════════════════════════
-// CODE OPTIMIZATION ANALYZER
-// ═══════════════════════════════════════════════════════════════
-function analyzeCodeOptimizations(planSteps) {
-  const optimizations = [];
-  
-  for (const step of planSteps) {
-    if (!step.properties?.Source) continue;
-    
-    const code = step.properties.Source;
-    
-    // Check for old wait() usage
-    if (code.includes('wait(') && !code.includes('task.wait(')) {
-      optimizations.push(`⚡ Use task.wait() instead of wait() in ${step.name}`);
-    }
-    
-    // Check for GetChildren in loops
-    if (code.includes(':GetChildren()') && code.includes('for ')) {
-      optimizations.push(`⚡ Consider caching :GetChildren() result in ${step.name}`);
-    }
-    
-    // Check for missing error handling
-    if (!code.includes('pcall') && (code.includes('HttpService') || code.includes('DataStore'))) {
-      optimizations.push(`🛡️ Add pcall error handling in ${step.name}`);
-    }
-    
-    // Check for service caching
-    if (code.match(/game:GetService\(/g)?.length > 3) {
-      optimizations.push(`📦 Cache service references at top of ${step.name}`);
-    }
-  }
-  
-  return optimizations;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// VISUAL PREVIEW GENERATOR
-// ═══════════════════════════════════════════════════════════════
-function generateVisualPreview(planSteps) {
-  const preview = {
-    type: "architecture",
-    description: "",
-    components: [],
-    estimatedComplexity: "medium"
-  };
-  
-  const scriptCount = planSteps.filter(s => s.className === 'Script').length;
-  const localScriptCount = planSteps.filter(s => s.className === 'LocalScript').length;
-  const moduleCount = planSteps.filter(s => s.className === 'ModuleScript').length;
-  const remoteCount = planSteps.filter(s => s.className === 'RemoteEvent' || s.className === 'RemoteFunction').length;
-  
-  // Generate description
-  let desc = "📊 System Architecture:\n";
-  if (scriptCount > 0) desc += `  • ${scriptCount} Server Script${scriptCount > 1 ? 's' : ''}\n`;
-  if (localScriptCount > 0) desc += `  • ${localScriptCount} LocalScript${localScriptCount > 1 ? 's' : ''}\n`;
-  if (moduleCount > 0) desc += `  • ${moduleCount} ModuleScript${moduleCount > 1 ? 's' : ''}\n`;
-  if (remoteCount > 0) desc += `  • ${remoteCount} RemoteEvent${remoteCount > 1 ? 's' : ''}\n`;
-  
-  preview.description = desc;
-  
-  // Determine complexity
-  const totalSteps = planSteps.length;
-  if (totalSteps <= 2) preview.estimatedComplexity = "simple";
-  else if (totalSteps <= 5) preview.estimatedComplexity = "medium";
-  else preview.estimatedComplexity = "complex";
-  
-  // Component breakdown
-  for (const step of planSteps) {
-    preview.components.push({
-      name: step.name,
-      type: step.className,
-      location: step.parentPath,
-      purpose: step.description?.substring(0, 60) + "..."
-    });
-  }
-  
-  return preview;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ENHANCED CONTEXT FORMATTER
-// ═══════════════════════════════════════════════════════════════
 function formatContext(context) {
   if (!context) return "Empty workspace.";
   
-  let text = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 ROBLOX STUDIO WORKSPACE ANALYSIS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  let text = `WORKSPACE:\n`;
   
   if (context.project && context.project.Statistics) {
     const stats = context.project.Statistics;
-    text += `📈 PROJECT STATISTICS:\n`;
-    text += `   Scripts: ${stats.TotalScripts || 0} | UI Elements: ${stats.TotalUI || 0}\n\n`;
+    text += `Scripts: ${stats.TotalScripts || 0}, UI: ${stats.TotalUI || 0}\n`;
   }
   
   if (context.project && context.project.ScriptDetails) {
     const scripts = context.project.ScriptDetails;
     if (scripts.length > 0) {
-      text += `📝 EXISTING SCRIPTS (${scripts.length} total):\n`;
-      scripts.slice(-10).forEach((script, i) => {
-        text += `   ${i + 1}. "${script.Name}" (${script.Type})\n`;
-        text += `      📁 Location: ${script.Path}\n`;
+      text += `\nEXISTING SCRIPTS:\n`;
+      scripts.slice(-10).forEach(script => {
+        text += `- ${script.Name} (${script.Type}) in ${script.Path}\n`;
       });
-      text += `\n`;
-    } else {
-      text += `📝 NO EXISTING SCRIPTS\n\n`;
     }
   }
   
   if (context.selectedObjects && context.selectedObjects.length > 0) {
-    text += `🎯 SELECTED OBJECTS:\n`;
-    context.selectedObjects.forEach((item, i) => {
-      text += `   ${i + 1}. "${item.Name}" (${item.ClassName})\n`;
+    text += `\nSELECTED:\n`;
+    context.selectedObjects.forEach(item => {
+      text += `- ${item.Name || item.name} (${item.ClassName || item.className})\n`;
     });
-    text += `\n`;
   }
   
   if (context.createdInstances && context.createdInstances.length > 0) {
-    text += `✨ RECENTLY CREATED:\n`;
-    context.createdInstances.slice(-5).forEach((item, i) => {
-      text += `   ${i + 1}. "${item.name}" (${item.className}) at ${item.parentPath}\n`;
+    text += `\nRECENTLY CREATED:\n`;
+    context.createdInstances.slice(-5).forEach(item => {
+      text += `- ${item.name} (${item.className}) at ${item.parentPath}\n`;
     });
-    text += `\n`;
   }
-  
-  text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   
   return text;
 }
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "16.0-ULTRA" });
+  res.json({ status: "OK", version: "17.0-EXECUTE" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v16.0 - Ultra Enhanced'));
+app.get('/', (req, res) => res.send('Acidnade AI v17.0 - Execute Mode'));
 
-// ═══════════════════════════════════════════════════════════════
-// UNDO ENDPOINT
-// ═══════════════════════════════════════════════════════════════
+// Undo endpoint
 app.post('/undo', async (req, res) => {
   try {
     const { sessionId } = req.body;
     
     if (!sessionId) {
-      return res.json({ message: "No session ID provided", canUndo: false });
+      return res.json({ message: "No session ID", canUndo: false });
     }
     
     const session = getSession(sessionId);
@@ -284,13 +134,12 @@ app.post('/undo', async (req, res) => {
     }
     
     const lastAction = session.creationLog.pop();
-    
-    // Generate deletion plan to undo the creation
     const undoPlan = [];
+    
     for (const step of lastAction.plan.plan) {
       undoPlan.push({
         step: undoPlan.length + 1,
-        description: `Delete ${step.name} (undoing previous action)`,
+        description: `Delete ${step.name} (undoing)`,
         type: "delete",
         className: step.className,
         name: step.name,
@@ -306,34 +155,27 @@ app.post('/undo', async (req, res) => {
       plan: undoPlan,
       autoExecute: false,
       needsApproval: true,
-      canUndo: session.canUndo,
-      undoInfo: {
-        actionType: lastAction.type,
-        timestamp: lastAction.timestamp,
-        itemCount: lastAction.plan.plan.length
-      }
+      canUndo: session.canUndo
     });
     
   } catch (error) {
     console.error("Undo Error:", error);
     res.json({ 
-      message: "Error processing undo request",
+      message: "Error processing undo",
       canUndo: false
     });
   }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// MAIN AI ENDPOINT - ULTRA ENHANCED
-// ═══════════════════════════════════════════════════════════════
+// MAIN AI ENDPOINT - EXECUTION MODE
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🤖 ULTRA ENHANCED AI - Processing...");
+    console.log("🔥 EXECUTION MODE - Processing...");
     const { prompt, context, sessionId } = req.body;
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "What would you like to create or modify?",
+        message: "What do you want me to create?",
         plan: [],
         autoExecute: true
       });
@@ -341,178 +183,235 @@ app.post('/ai', async (req, res) => {
     
     const session = getSession(sessionId || 'default');
     const contextSummary = formatContext(context);
-    const userRequest = prompt.trim();
+    const userRequest = prompt.trim().toLowerCase();
     
-    // Store conversation
-    session.conversationContext.push({
-      role: 'user',
-      content: userRequest,
-      timestamp: Date.now()
-    });
+    // ═══════════════════════════════════════════════════════════════
+    // INTELLIGENT INTENT DETECTION - NO KEYWORDS
+    // ═══════════════════════════════════════════════════════════════
     
-    // Keep only last 10 messages
-    if (session.conversationContext.length > 10) {
-      session.conversationContext.shift();
-    }
+    // Detect if user ONLY wants ideas (very explicit)
+    const wantsOnlyIdeas = 
+      (userRequest.includes('give me ideas') || 
+       userRequest.includes('suggest') || 
+       userRequest.includes('what could i') ||
+       userRequest.includes('what should i') ||
+       userRequest.includes('ideas for') ||
+       userRequest.includes('suggestions for')) &&
+      !userRequest.includes('create') &&
+      !userRequest.includes('make') &&
+      !userRequest.includes('add') &&
+      !userRequest.includes('build');
     
-    // === ULTRA ENHANCED AI PROMPT ===
-    const systemPrompt = `You are ACIDNADE v16.0, an ULTRA-ENHANCED AI with advanced Roblox/Luau expertise.
+    // Detect pure questions (no action)
+    const isPureQuestion = 
+      (userRequest.startsWith('what is') ||
+       userRequest.startsWith('how does') ||
+       userRequest.startsWith('why does') ||
+       userRequest.startsWith('explain') ||
+       userRequest.startsWith('tell me about')) &&
+      !userRequest.includes('create') &&
+      !userRequest.includes('make');
+    
+    console.log(`Intent: Ideas Only = ${wantsOnlyIdeas}, Pure Question = ${isPureQuestion}`);
+    
+    // ═══════════════════════════════════════════════════════════════
+    // EXECUTION-FIRST AI PROMPT
+    // ═══════════════════════════════════════════════════════════════
+    
+    const systemPrompt = `You are ACIDNADE, an EXECUTION-FOCUSED AI. You CREATE, not suggest.
 
 ${contextSummary}
 
 USER REQUEST:
-"${userRequest}"
-
-CONVERSATION HISTORY:
-${session.conversationContext.slice(-3).map(msg => `${msg.role}: ${msg.content}`).join('\n')}
+"${prompt}"
 
 ═══════════════════════════════════════════════════════════════
-🧠 AUTONOMOUS THINKING PROTOCOL
+🔥 EXECUTION MODE - READ CAREFULLY
+═══════════════════════════════════════════════════════════════
+
+YOUR DEFAULT MODE: **EXECUTE**
+
+Unless the user EXPLICITLY asks for ideas/suggestions, YOU MUST:
+1. Analyze what they want
+2. Design the solution
+3. Return a PLAN with complete code
+4. NEVER say "here are some ideas"
+5. NEVER say "you could implement"
+6. NEVER say "if you'd like me to create"
+
+═══════════════════════════════════════════════════════════════
+🎯 INTENT DETECTION
 ═══════════════════════════════════════════════════════════════
 
 <thinking>
-1. REQUEST ANALYSIS:
-   • What does the user want? (create/modify/delete/question)
-   • Are they referencing existing scripts from the workspace?
-   • Do they want ideas or execution?
+STEP 1 - WHAT DOES THE USER WANT?
 
-2. CONTEXT EVALUATION:
-   • What exists in the workspace? (check EXISTING SCRIPTS above)
-   • What was recently created? (check RECENTLY CREATED above)
-   • What objects are selected? (check SELECTED OBJECTS above)
+A. PURE QUESTION (no action needed):
+   - "what is a RemoteEvent?"
+   - "how does DataStore work?"
+   - "explain combat systems"
+   → Answer with explanation (no plan)
 
-3. INTELLIGENT DECISION:
-   • If modifying existing → Use type: "modify" with exact path
-   • If creating new → Design minimal, elegant solution
-   • If just chatting → Answer conversationally
-   
-4. DEPENDENCY CHECK:
-   • Do I need RemoteEvents? (only if client-server communication)
-   • Do I need multiple scripts? (only if truly necessary)
-   • Can this be done simpler?
+B. WANTS IDEAS ONLY (explicit request):
+   - "give me ideas for a shop"
+   - "what are some suggestions for UI"
+   - "what could I add to my game"
+   → Give 3-5 ideas (no plan)
 
-5. VISUAL PLANNING:
-   • What will this look like when complete?
-   • How will the components interact?
-   • What will the player/user see?
+C. **EVERYTHING ELSE = EXECUTE** (DEFAULT):
+   - "add animation to HitHandler"
+   - "create a shop system"
+   - "make UI for health bar"
+   - "improve my combat"
+   - "fix the lag in my script"
+   - Even vague like "make my game better" → EXECUTE SOMETHING
+   → Return PLAN with code
+
+STEP 2 - CHECK EXISTING WORKSPACE:
+   - Does the script they mention exist? → MODIFY it
+   - Do they want something new? → CREATE it
+   - Are they referencing selected objects? → Work with those
+
+STEP 3 - DESIGN MINIMAL SOLUTION:
+   - What's the simplest approach?
+   - Do I really need RemoteEvent? (only if client-server)
+   - Can I do this with 1 script? → Do it
+   - Can I modify existing instead of creating? → Do it
 </thinking>
 
 ═══════════════════════════════════════════════════════════════
-⚡ ABSOLUTE REQUIREMENTS
+⚡ ABSOLUTE RULES
 ═══════════════════════════════════════════════════════════════
 
-1. 🎨 UI CREATION RULE:
-   • ALL UI elements MUST be created inside a LocalScript
-   • Use Instance.new() for ScreenGui, Frame, TextButton, etc.
-   • Parent UI to player:WaitForChild("PlayerGui")
-   • NEVER create UI instances as separate steps
+1. 🎨 UI CREATION:
+   • Create ALL UI inside LocalScript using Instance.new()
+   • Parent to player:WaitForChild("PlayerGui")
+   • NEVER create ScreenGui/Frame as separate steps
 
-2. 💻 LUAU CODE REQUIREMENT:
-   • Valid Roblox Studio Luau only
-   • Use game:GetService() for all services
-   • Use :WaitForChild() for safety
-   • Use task.wait() instead of wait()
+2. 💻 LUAU CODE:
+   • Complete, working Roblox Luau code
+   • Use game:GetService(), :WaitForChild(), task.wait()
    • Add comments explaining logic
+   • Handle errors with pcall when needed
 
-3. ✏️ MODIFICATION RULE:
+3. ✏️ MODIFY vs CREATE:
    • If script exists in EXISTING SCRIPTS → type: "modify"
-   • Use EXACT path from the workspace
-   • Don't create new when modifying existing
+   • If it's new → type: "create"
+   • Use exact paths from workspace
 
-4. 🎯 SIMPLICITY RULE:
-   • Use minimum components needed
-   • Don't over-engineer solutions
-   • Ask: "Can this be simpler?"
-
-5. 📊 VISUAL DESCRIPTION RULE:
-   • Describe what the user will see/experience
-   • Explain visual feedback and interactions
-   • Make step descriptions vivid and specific
+4. 🎯 EXECUTION PRIORITY:
+   • DEFAULT = Execute (create plan)
+   • Only give ideas if explicitly asked
+   • Never ask "would you like me to..."
 
 ═══════════════════════════════════════════════════════════════
-📝 ENHANCED RESPONSE FORMAT
+📝 RESPONSE FORMATS
 ═══════════════════════════════════════════════════════════════
 
-For implementation:
+**EXECUTION (DEFAULT):**
 {
-  "thinking": "Your thought process from above",
-  "message": "Clear explanation with visual descriptions",
+  "thinking": "Brief analysis",
+  "message": "I've created/modified [what]. [How it works]",
   "plan": [
     {
       "step": 1,
-      "description": "🎨 VISUAL + DETAILED description of what this creates and what user will see",
+      "description": "Clear description with visual impact",
       "type": "create|modify|delete",
       "className": "Script|LocalScript|ModuleScript",
       "name": "DescriptiveName",
       "parentPath": "game.ServiceName",
       "properties": {
-        "Source": "-- Complete, production-ready Luau code\\n-- With comments\\n-- Error handling\\n-- Visual feedback"
+        "Source": "-- COMPLETE WORKING CODE\\n-- With comments\\n-- Error handling"
       },
-      "reasoning": "Technical explanation of why this approach",
-      "visualImpact": "What the player/developer will see or experience"
+      "reasoning": "Why this approach",
+      "visualImpact": "What user will see/experience"
     }
   ],
   "autoExecute": true,
-  "preview": {
-    "description": "Visual overview of the complete system",
-    "estimatedComplexity": "simple|medium|complex"
-  },
-  "optimizations": ["Performance tips and suggestions"],
-  "dependencies": {
-    "warnings": ["Any duplicate or conflict warnings"],
-    "suggestions": ["Helpful suggestions for improvement"]
-  }
+  "canUndo": true
 }
 
-For questions/conversations:
+**IDEAS ONLY (if explicitly asked):**
 {
-  "thinking": "Analysis",
-  "message": "Helpful, detailed answer"
+  "thinking": "They want ideas",
+  "message": "Here are some ideas:\\n1. Idea one\\n2. Idea two\\n3. Idea three"
+}
+
+**QUESTIONS:**
+{
+  "thinking": "Pure question",
+  "message": "Detailed explanation of the concept"
 }
 
 ═══════════════════════════════════════════════════════════════
-🎯 ENHANCED EXAMPLES
+💡 EXAMPLES
 ═══════════════════════════════════════════════════════════════
 
 REQUEST: "add hit animation to HitHandler"
 EXISTING: HitHandler (Script) in ServerScriptService
 
-CORRECT:
+✅ CORRECT:
 {
-  "message": "I'll add hit reaction animations to your HitHandler! When a player lands a hit, they'll see a quick camera shake and the hit target will flash red.",
+  "message": "I've added hit animations to HitHandler! When players land hits, the character plays a punch animation and the target flashes red.",
   "plan": [{
     "step": 1,
-    "description": "🎬 Modify HitHandler to trigger character animations and visual effects when attacks connect. Players will see their character perform a hit animation, the target will flash red briefly, and a small particle effect will appear at the impact point.",
     "type": "modify",
-    "className": "Script",
     "name": "HitHandler",
     "parentPath": "game.ServerScriptService",
     "properties": {
-      "Source": "-- Complete modified code with animations"
-    },
-    "visualImpact": "Player sees satisfying hit feedback with animations"
+      "Source": "-- [COMPLETE MODIFIED CODE WITH ANIMATIONS]"
+    }
   }],
-  "autoExecute": true,
-  "preview": {
-    "description": "Enhanced combat feel with visual and animated hit feedback",
-    "estimatedComplexity": "simple"
-  }
+  "autoExecute": true
+}
+
+❌ WRONG:
+{
+  "message": "Here are some ideas: 1. You could add animations..."
+}
+
+═══════════════════════════════════════════════════════════════
+
+REQUEST: "create a shop"
+
+✅ CORRECT:
+{
+  "message": "I've created a complete shop system with UI and server validation!",
+  "plan": [
+    {"step": 1, "type": "create", "name": "ShopUI", ...},
+    {"step": 2, "type": "create", "name": "ShopServer", ...}
+  ],
+  "autoExecute": true
+}
+
+❌ WRONG:
+{
+  "message": "Here are ideas for a shop: 1. Currency system..."
 }
 
 ═══════════════════════════════════════════════════════════════
 
 REQUEST: "give me ideas for a shop system"
 
-CORRECT:
+✅ CORRECT:
 {
-  "message": "Here are some shop system ideas:\\n\\n1. Currency-Based Shop\\n2. Level-Gated Items\\n3. Limited-Time Offers\\n4. VIP Shop Section"
+  "message": "Shop system ideas:\\n1. Currency-based purchases\\n2. Level-gated items\\n3. Daily rotating stock"
 }
 
 ═══════════════════════════════════════════════════════════════
 
-NOW: Think deeply through the protocol, then respond with enhanced, visual descriptions.`;
+REQUEST: "what is a RemoteEvent?"
 
-    console.log("⚡ Processing with ULTRA ENHANCED AI...");
+✅ CORRECT:
+{
+  "message": "A RemoteEvent is Roblox's way to communicate between client and server..."
+}
+
+═══════════════════════════════════════════════════════════════
+
+NOW: Analyze the request and EXECUTE (unless it's clearly just ideas/questions).`;
+
+    console.log("⚡ Sending to AI...");
     
     let result;
     try {
@@ -520,7 +419,7 @@ NOW: Think deeply through the protocol, then respond with enhanced, visual descr
     } catch (apiError) {
       console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "I'm ready to help! What would you like to create?",
+        message: "Error connecting to AI. Try again.",
         plan: [],
         autoExecute: true
       });
@@ -532,7 +431,7 @@ NOW: Think deeply through the protocol, then respond with enhanced, visual descr
     } catch (textError) {
       console.error("Error extracting text:", textError);
       return res.json({ 
-        message: "Error processing request.",
+        message: "Error processing response.",
         plan: [],
         autoExecute: true
       });
@@ -555,46 +454,30 @@ NOW: Think deeply through the protocol, then respond with enhanced, visual descr
       
       data = {
         thinking: thinking,
-        message: "I'll help you with that!",
+        message: "I'll create that for you!",
         plan: [],
         autoExecute: true
       };
     }
-    
-    // Store AI response
-    session.conversationContext.push({
-      role: 'assistant',
-      content: data.message,
-      timestamp: Date.now()
-    });
     
     if (!data.message) {
       data.message = "Done!";
     }
     
     // ═══════════════════════════════════════════════════════════════
-    // ENHANCED PROCESSING
+    // FORCE EXECUTION MODE (SERVER-SIDE ENFORCEMENT)
     // ═══════════════════════════════════════════════════════════════
     
+    const shouldGiveIdeas = wantsOnlyIdeas || isPureQuestion;
+    
+    if (!shouldGiveIdeas && (!data.plan || data.plan.length === 0)) {
+      // User wanted execution but AI didn't create plan
+      console.log("⚠️ AI didn't execute - forcing error message");
+      data.message = "⚠️ I should have executed that. Please rephrase or try: 'create [what you want]'";
+    }
+    
     if (data.plan && Array.isArray(data.plan)) {
-      // Generate visual preview
-      if (!data.preview) {
-        data.preview = generateVisualPreview(data.plan);
-      }
-      
-      // Detect dependencies and conflicts
-      const depCheck = detectDependencies(context, data.plan);
-      data.dependencies = {
-        warnings: depCheck.warnings,
-        suggestions: depCheck.suggestions
-      };
-      
-      // Analyze code optimizations
-      if (!data.optimizations) {
-        data.optimizations = analyzeCodeOptimizations(data.plan);
-      }
-      
-      // Add to creation log for undo
+      // Add to creation log
       if (data.plan.length > 0) {
         addToCreationLog(sessionId, data);
       }
@@ -613,79 +496,36 @@ NOW: Think deeply through the protocol, then respond with enhanced, visual descr
       if (deletionCount >= 5) {
         data.needsApproval = true;
         data.autoExecute = false;
-        data.message = `⚠️ DESTRUCTIVE: Will delete ${deletionCount} items. Review carefully.`;
       } else {
         data.needsApproval = false;
       }
       
-      // Enforce UI rule - block direct UI creation
-      let hasUIViolation = false;
+      // Enforce UI rule
       const uiClasses = ['ScreenGui', 'Frame', 'TextLabel', 'TextButton', 'ImageLabel', 
                          'ScrollingFrame', 'TextBox', 'ImageButton', 'ViewportFrame'];
       
       data.plan = data.plan.filter(step => {
         if (uiClasses.includes(step.className)) {
-          console.log(`⚠️ UI VIOLATION: Blocked ${step.className} - must be in LocalScript`);
-          hasUIViolation = true;
+          console.log(`⚠️ UI VIOLATION: Blocked ${step.className}`);
           return false;
         }
         return true;
       });
       
-      if (hasUIViolation) {
-        data.message = "⚠️ UI elements must be created inside LocalScript. I've adjusted the plan.";
-        data.dependencies.warnings.push("UI elements must be created dynamically in LocalScript");
-      }
-      
-      // Enhanced step descriptions with emojis
-      data.plan = data.plan.map(step => {
-        // Add emoji based on type
-        const typeEmoji = {
-          'Script': '📜',
-          'LocalScript': '💚',
-          'ModuleScript': '📦',
-          'RemoteEvent': '📡',
-          'RemoteFunction': '📞'
-        };
-        
-        const emoji = typeEmoji[step.className] || '📄';
-        
-        if (!step.description.startsWith(emoji)) {
-          step.description = `${emoji} ${step.description}`;
-        }
-        
-        // Add visual impact if missing
-        if (!step.visualImpact && step.type === 'create') {
-          step.visualImpact = `Creates ${step.className} "${step.name}" in ${step.parentPath}`;
-        }
-        
-        return step;
-      });
-      
       data.stepsTotal = data.plan.length;
+      data.canUndo = session.canUndo || data.plan.length > 0;
       
-      // Add undo capability
-      data.canUndo = session.canUndo;
-      
-      console.log(`🎨 Enhanced plan: ${data.plan.length} steps with visual previews`);
-      console.log(`📊 Preview: ${data.preview?.description}`);
-      console.log(`⚡ Optimizations: ${data.optimizations?.length || 0}`);
-      console.log(`⚠️ Warnings: ${data.dependencies?.warnings?.length || 0}`);
+      console.log(`🔥 EXECUTED: ${data.plan.length} steps`);
+    } else {
+      console.log(`💬 Response: ${shouldGiveIdeas ? 'Ideas/Question' : 'Conversation'}`);
     }
     
-    session.lastRequest = {
-      prompt: userRequest,
-      response: data,
-      timestamp: Date.now()
-    };
-    
-    console.log(`📤 Ultra Enhanced Response: ${data.plan?.length || 0} steps | Undo: ${data.canUndo ? 'YES' : 'NO'}`);
     res.json(data);
 
   } catch (error) {
-    console.error("Ultra Enhanced AI Error:", error);
+    console.error("Execution Error:", error);
     res.json({ 
-      message: "Error occurred. Please try again.",
+      message: "Error occurred. Try again.",
       plan: [],
       autoExecute: false
     });
@@ -693,16 +533,13 @@ NOW: Think deeply through the protocol, then respond with enhanced, visual descr
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 ACIDNADE AI v16.0 — ULTRA ENHANCED`);
+  console.log(`\n🔥 ACIDNADE AI v17.0 — EXECUTION MODE`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`✅ Undo/Rollback System: ACTIVE`);
-  console.log(`🎨 Visual Preview Generator: ENABLED`);
-  console.log(`🔍 Dependency Detection: ACTIVE`);
-  console.log(`⚡ Code Optimization Analyzer: ENABLED`);
-  console.log(`💾 Session Memory: PERSISTENT`);
-  console.log(`📊 Enhanced Context Awareness: ACTIVE`);
-  console.log(`🎯 Visual Step Descriptions: ENABLED`);
-  console.log(`🛡️ UI Rule Enforcement: STRICT`);
-  console.log(`💻 Luau Code: PRODUCTION-READY`);
+  console.log(`⚡ DEFAULT MODE: EXECUTE`);
+  console.log(`✅ Creates plans with code by default`);
+  console.log(`✅ Only gives ideas when explicitly asked`);
+  console.log(`✅ Intelligent intent detection (no keywords)`);
+  console.log(`✅ Autonomous decision making`);
+  console.log(`✅ Undo system active`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 });
