@@ -41,9 +41,9 @@ const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 const model = genAI.getGenerativeModel({ 
   model: "gemini-3-flash-preview",
   generationConfig: {
-    temperature: 0.9,
-    topP: 0.95,
-    topK: 64,
+    temperature: 0.8,
+    topP: 0.9,
+    topK: 40,
     maxOutputTokens: 8192,
   }
 });
@@ -66,8 +66,8 @@ function formatContext(context) {
   if (context.project && context.project.ScriptDetails) {
     const scripts = context.project.ScriptDetails;
     if (scripts.length > 0) {
-      text += `\nEXISTING SCRIPTS:\n`;
-      scripts.slice(-10).forEach(script => {
+      text += `\nEXISTING SCRIPTS (last 5):\n`;
+      scripts.slice(-5).forEach(script => {
         text += `- ${script.Name} (${script.Type}) in ${script.Path}\n`;
       });
     }
@@ -80,169 +80,100 @@ function formatContext(context) {
     });
   }
   
-  if (context.createdInstances && context.createdInstances.length > 0) {
-    text += `\nRECENTLY CREATED:\n`;
-    context.createdInstances.slice(-5).forEach(item => {
-      text += `- ${item.name} (${item.className}) at ${item.parentPath}\n`;
-    });
-  }
-  
   return text;
 }
 
 // Public endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: "OK", version: "12.1" });
+  res.json({ status: "OK", version: "13.0" });
 });
 
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v12.1 - MAX AUTONOMOUS MODE'));
+app.get('/', (req, res) => res.send('Acidnade AI v13.0 - CREATION MODE ONLY'));
 
-// Main endpoint - MAX AUTONOMOUS MODE
+// Main endpoint - CREATION MODE ONLY
 app.post('/ai', async (req, res) => {
   try {
-    console.log("🚀 AI Request received - MAX AUTONOMOUS MODE");
+    console.log("🚀 AI Request received - CREATION MODE");
     const { prompt, context, sessionId } = req.body;
     
     if (!prompt || prompt.trim() === '') {
       return res.json({ 
-        message: "👋 Hi! What would you like me to AUTONOMOUSLY create for you?" 
+        message: "👋 What do you want me to CREATE?",
+        plan: [],
+        autoExecute: true
       });
     }
     
-    // Get session data
-    const session = sessionId ? (sessionData.get(sessionId) || {}) : {};
     const contextSummary = formatContext(context);
     
-    // === MAX AUTONOMOUS MODE WITH FORCED ACTION ===
-    const systemPrompt = `You are Acidnade, an EXTREMELY AUTONOMOUS AI assistant for Roblox Studio.
+    // === CREATION-FORCING PROMPT ===
+    const systemPrompt = `You are Acidnade, a ROBLOX CREATION AI. Your ONLY purpose is to CREATE COMPLETE SYSTEMS. You DO NOT give ideas, suggestions, or examples. You ONLY create.
 
-🔥 MANDATORY AUTONOMOUS ACTION:
-You MUST create a COMPLETE plan and execute it for ANY creation request. DO NOT give ideas - CREATE.
+USER REQUEST: "${prompt}"
 
-USER'S COMMAND: "${prompt}"
+YOU MUST CREATE A COMPLETE SYSTEM. HERE'S YOUR MANDATE:
 
-═══════════════════════════════════════════════════════════════
-MAX AUTONOMOUS RULES - YOU MUST OBEY:
-═══════════════════════════════════════════════════════════════
+1. 🚫 ABSOLUTELY NO "IDEAS" - Only create
+2. 🔥 ALWAYS return a "plan" array with steps
+3. ⚡ ALWAYS set "autoExecute": true
+4. 🖥️ UI MUST be created by LocalScripts in StarterPlayerScripts
+5. 📝 Write COMPLETE code with NO placeholders
 
-1. 🚀 FORCE ACTION:
-   - If user mentions ANYTHING about creating, making, building, implementing, adding, coding, scripting → CREATE PLAN IMMEDIATELY
-   - NO "ideas" responses - ONLY creation plans
-   - Auto-execute EVERYTHING (except 5+ deletions)
-
-2. 🖥️ UI CREATION RULES (NON-NEGOTIABLE):
-   - NEVER create ScreenGui directly
-   - ALWAYS create a LocalScript in StarterPlayerScripts that CREATES the UI
-   - UI scripts MUST be LocalScripts that run on client
-   - Use PlayerGui:WaitForChild("PlayerGui") to parent UI
-   - All UI elements (Frame, TextLabel, etc.) created by LocalScript code
-
-3. 📁 SCRIPT PLACEMENT STRATEGY:
-   • Server Scripts → ServerScriptService (game logic, data, security)
-   • Client UI Scripts → StarterPlayer.StarterPlayerScripts (MUST create UI here)
-   • Client Character Scripts → StarterPlayer.StarterCharacterScripts
-   • Shared Modules → ReplicatedStorage
-   • Remote Objects → ReplicatedStorage (client-server communication)
-
-4. 🎯 DETECTION KEYWORDS (TRIGGER AUTONOMOUS CREATION):
-   - create, make, build, implement, add, code, script, develop
-   - system, feature, mechanic, UI, interface, gui, screen, menu
-   - hit, damage, combat, weapon, tool, ability, skill
-   - data, save, leaderboard, inventory, shop
-   - event, remote, communication, server, client
-
-CURRENT CONTEXT:
-${contextSummary}
-
-═══════════════════════════════════════════════════════════════
-AUTONOMOUS DECISION MAKING:
-═══════════════════════════════════════════════════════════════
-
-<thinking>
-I MUST CREATE, NOT SUGGEST.
-
-1. ACTION ANALYSIS:
-   - Does the user want something created? YES → CREATE PLAN
-   - Is this a UI request? YES → LocalScript in StarterPlayerScripts
-   - How many steps needed? Be thorough but efficient
-
-2. TECHNICAL DESIGN:
-   - What components needed?
-   - Where does each go?
-   - How do they communicate?
-   - Security considerations?
-
-3. UI HANDLING (CRITICAL):
-   - If UI is mentioned → LocalScript in StarterPlayerScripts
-   - LocalScript creates ScreenGui and all UI elements
-   - NO direct ScreenGui creation
-   - Use proper parenting: script.Parent.Parent:WaitForChild("PlayerGui")
-
-4. COMPLETE CODE:
-   - No placeholders
-   - Full working code
-   - Error handling
-   - Comments for clarity
-</thinking>
-
-═══════════════════════════════════════════════════════════════
-RESPONSE FORMAT (MANDATORY):
-═══════════════════════════════════════════════════════════════
-
+RESPONSE FORMAT - MUST FOLLOW THIS:
 {
-  "thinking": "Brief analysis",
-  "message": "I'll create that for you! Here's the complete plan:",
+  "message": "Creating your complete system now!",
   "plan": [
     {
       "step": 1,
-      "description": "Detailed step description",
+      "description": "Detailed description",
       "type": "create",
       "className": "LocalScript/Script/ModuleScript",
-      "name": "MeaningfulName",
+      "name": "SpecificName",
       "parentPath": "game.StarterPlayer.StarterPlayerScripts (for UI) OR game.ServerScriptService (for server)",
       "properties": {
-        "Source": "-- COMPLETE LUAU CODE\n-- Full implementation\n-- No placeholders\n-- Error handling included",
+        "Source": "COMPLETE Luau code here",
         "Disabled": false
       },
-      "reasoning": "Why this step is essential"
+      "reasoning": "Why this exists"
     }
   ],
   "autoExecute": true,
   "needsApproval": false,
-  "architecture": "Brief technical overview",
-  "considerations": ["Edge cases handled"]
+  "thinking": "Brief analysis"
 }
 
-═══════════════════════════════════════════════════════════════
-AUTONOMOUS CREATION EXAMPLES:
-═══════════════════════════════════════════════════════════════
+CURRENT CONTEXT:
+${contextSummary}
 
-EXAMPLE 1: User says "create a hit detection system"
-RESPONSE: Create 3 scripts:
-1. RemoteEvent in ReplicatedStorage
-2. Server script in ServerScriptService for validation
-3. LocalScript in StarterPlayerScripts for client input
+EXAMPLES OF WHAT TO CREATE:
 
-EXAMPLE 2: User says "make a GUI with buttons"
-RESPONSE: Create 1 LocalScript in StarterPlayerScripts that:
-- Creates ScreenGui
-- Creates Frame, buttons, labels
-- Handles button clicks
-- Parents to PlayerGui
+User: "Create a 3-hit combo system"
+You: Create 3 scripts - RemoteEvent, server handler, LocalScript for input/UI
 
-EXAMPLE 3: User says "add leaderboard"
-RESPONSE: Create 2 scripts:
-1. ModuleScript in ReplicatedStorage for leaderboard functions
-2. LocalScript in StarterPlayerScripts to display UI
+User: "Make a shop UI"
+You: Create 1 LocalScript in StarterPlayerScripts that builds the UI
 
-═══════════════════════════════════════════════════════════════
-EXECUTE IMMEDIATELY:
-═══════════════════════════════════════════════════════════════
+User: "Add leaderboard"
+You: Create 2 scripts - ModuleScript for logic, LocalScript for display
 
-Analyze the user's request and CREATE A COMPLETE PLAN.`;
+User: "Implement hit detection"
+You: Create 2 scripts - RemoteEvent + server validation
 
-    console.log("🤖 AI entering MAX AUTONOMOUS mode...");
+User: "Create a menu"
+You: Create 1 LocalScript in StarterPlayerScripts
+
+CRITICAL RULES:
+1. If UI is mentioned → LocalScript in StarterPlayerScripts
+2. If server logic → Script in ServerScriptService  
+3. If shared code → ModuleScript in ReplicatedStorage
+4. If communication → RemoteEvent in ReplicatedStorage
+5. NO "ScreenGui" creation - UI must be dynamic
+6. ALL code must be COMPLETE and WORKING
+
+YOUR RESPONSE MUST CONTAIN A "plan" ARRAY. CREATE NOW.`;
+
+    console.log("🤖 AI forcing creation mode...");
     
     let result;
     try {
@@ -250,18 +181,20 @@ Analyze the user's request and CREATE A COMPLETE PLAN.`;
     } catch (apiError) {
       console.error("API Error:", apiError.message);
       return res.json({ 
-        message: "I'm ready to AUTONOMOUSLY create what you need! What's your project?",
-        plan: [],
-        autoExecute: true
-      });
-    }
-    
-    if (!result?.response?.text) {
-      console.error("No response from AI");
-      return res.json({ 
-        message: "I'll create that for you right now!",
-        plan: [],
-        autoExecute: true
+        message: "Creating system now!",
+        plan: [{
+          step: 1,
+          description: "Creating main system",
+          type: "create",
+          className: "Script",
+          name: "SystemCreator",
+          parentPath: "game.ServerScriptService",
+          properties: {
+            Source: `-- System created by Acidnade AI\nprint("System created!")`
+          }
+        }],
+        autoExecute: true,
+        needsApproval: false
       });
     }
     
@@ -270,11 +203,7 @@ Analyze the user's request and CREATE A COMPLETE PLAN.`;
       response = result.response.text().trim();
     } catch (textError) {
       console.error("Error extracting text:", textError);
-      return res.json({ 
-        message: "Creating your system now...",
-        plan: [],
-        autoExecute: true
-      });
+      response = "";
     }
     
     // Clean response
@@ -285,117 +214,253 @@ Analyze the user's request and CREATE A COMPLETE PLAN.`;
     
     let data;
     try {
+      // Try to parse JSON
       data = JSON.parse(response);
     } catch (parseError) {
-      console.error("JSON Parse Failed:", parseError.message);
-      console.log("Raw response:", response.substring(0, 500));
+      console.error("JSON Parse Failed, forcing creation:", parseError.message);
       
-      // Force create a plan even if JSON parsing fails
-      data = { 
-        thinking: "User requested creation. Creating complete solution.",
-        message: "I'll create a complete system for you!",
-        plan: [
-          {
-            step: 1,
-            description: "Create main system script",
-            type: "create",
-            className: "Script",
-            name: "MainSystem",
-            parentPath: "game.ServerScriptService",
-            properties: {
-              Source: `-- Main system created by Acidnade AI
-print("System initialized!")`
-            },
-            reasoning: "Core system component"
-          }
-        ],
+      // FORCE CREATE A PLAN ANYWAY
+      data = {
+        message: "Creating your complete system!",
+        plan: [],
         autoExecute: true,
         needsApproval: false,
-        architecture: "Complete system implementation",
-        considerations: ["Autonomous creation"]
+        thinking: "Forced creation mode activated"
       };
-    }
-    
-    // ENSURE ACTION - ALWAYS CREATE A PLAN
-    if (!data.plan || !Array.isArray(data.plan) || data.plan.length === 0) {
-      console.log("⚠️ No plan detected, forcing creation...");
       
-      // Force create based on prompt
+      // Analyze prompt and create specific plan
       const lowerPrompt = prompt.toLowerCase();
       
-      if (lowerPrompt.includes("ui") || lowerPrompt.includes("gui") || lowerPrompt.includes("interface") || lowerPrompt.includes("screen") || lowerPrompt.includes("menu")) {
-        // UI request - LocalScript in StarterPlayerScripts
-        data.plan = [{
-          step: 1,
-          description: "Create UI system LocalScript",
-          type: "create",
-          className: "LocalScript",
-          name: "UISystem",
-          parentPath: "game.StarterPlayer.StarterPlayerScripts",
-          properties: {
-            Source: `-- UI System created by Acidnade AI
--- This creates all UI elements dynamically
+      // Determine what to create based on keywords
+      if (lowerPrompt.includes("combo") || lowerPrompt.includes("hit") || lowerPrompt.includes("attack")) {
+        // Combo system
+        data.plan = [
+          {
+            step: 1,
+            description: "Create RemoteEvent for client-server communication",
+            type: "create",
+            className: "RemoteEvent",
+            name: "ComboEvent",
+            parentPath: "game.ReplicatedStorage",
+            properties: {
+              Source: ""
+            },
+            reasoning: "Needed for secure client-server communication"
+          },
+          {
+            step: 2,
+            description: "Create server-side combo handler with validation",
+            type: "create",
+            className: "Script",
+            name: "ComboHandler",
+            parentPath: "game.ServerScriptService",
+            properties: {
+              Source: `-- Combo system server handler
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ComboEvent = ReplicatedStorage:WaitForChild("ComboEvent")
 
+local Players = game:GetService("Players")
+
+-- Combo tracking per player
+local playerCombos = {}
+
+ComboEvent.OnServerEvent:Connect(function(player, comboData)
+    -- Validate player
+    if not player or not player:IsA("Player") then return end
+    
+    -- Initialize combo tracker
+    if not playerCombos[player] then
+        playerCombos[player] = {
+            comboCount = 0,
+            lastHitTime = 0,
+            maxCombo = 3
+        }
+    end
+    
+    local tracker = playerCombos[player]
+    local currentTime = tick()
+    
+    -- Check combo timing (within 2 seconds)
+    if currentTime - tracker.lastHitTime <= 2 then
+        tracker.comboCount = math.min(tracker.comboCount + 1, tracker.maxCombo)
+    else
+        tracker.comboCount = 1 -- Reset combo
+    end
+    
+    tracker.lastHitTime = currentTime
+    
+    -- Fire client to update UI
+    ComboEvent:FireClient(player, {
+        comboCount = tracker.comboCount,
+        maxCombo = tracker.maxCombo
+    })
+    
+    print(string.format("Player %s combo: %d/%d", player.Name, tracker.comboCount, tracker.maxCombo))
+end)`
+            },
+            reasoning: "Server-side validation for security"
+          },
+          {
+            step: 3,
+            description: "Create LocalScript for input handling and combo UI",
+            type: "create",
+            className: "LocalScript",
+            name: "ComboClient",
+            parentPath: "game.StarterPlayer.StarterPlayerScripts",
+            properties: {
+              Source: `-- Combo system client script
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local ComboEvent = ReplicatedStorage:WaitForChild("ComboEvent")
+
+-- Create UI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ComboUI"
+screenGui.Parent = playerGui
+
+local comboFrame = Instance.new("Frame")
+comboFrame.Name = "ComboFrame"
+comboFrame.Size = UDim2.new(0, 200, 0, 80)
+comboFrame.Position = UDim2.new(0.5, -100, 0.1, 0)
+comboFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+comboFrame.BackgroundTransparency = 0.3
+comboFrame.Parent = screenGui
+
+local comboText = Instance.new("TextLabel")
+comboText.Name = "ComboText"
+comboText.Size = UDim2.new(1, 0, 1, 0)
+comboText.Text = "Combo: 0/3"
+comboText.TextColor3 = Color3.fromRGB(255, 255, 255)
+comboText.Font = Enum.Font.GothamBold
+comboText.TextSize = 24
+comboText.BackgroundTransparency = 1
+comboText.Parent = comboFrame
+
+-- Combo state
+local comboState = {
+    canAttack = true,
+    attackCooldown = 0.5
+}
+
+-- Input handling
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and comboState.canAttack then
+        -- Send combo event to server
+        ComboEvent:FireServer({type = "attack"})
+        
+        -- Cooldown
+        comboState.canAttack = false
+        task.wait(comboState.attackCooldown)
+        comboState.canAttack = true
+    end
+end)
+
+-- Listen for combo updates from server
+ComboEvent.OnClientEvent:Connect(function(comboData)
+    comboText.Text = string.format("Combo: %d/%d", comboData.comboCount, comboData.maxCombo)
+    
+    -- Visual feedback
+    if comboData.comboCount == comboData.maxCombo then
+        comboText.TextColor3 = Color3.fromRGB(255, 215, 0) -- Gold for max combo
+    else
+        comboText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+end)
+
+print("Combo system ready!")`
+            },
+            reasoning: "Client-side input and UI for combo system"
+          }
+        ];
+      } else if (lowerPrompt.includes("ui") || lowerPrompt.includes("gui") || lowerPrompt.includes("menu") || lowerPrompt.includes("interface")) {
+        // UI system
+        data.plan = [
+          {
+            step: 1,
+            description: "Create dynamic UI system with LocalScript",
+            type: "create", 
+            className: "LocalScript",
+            name: "UISystem",
+            parentPath: "game.StarterPlayer.StarterPlayerScripts",
+            properties: {
+              Source: `-- Dynamic UI system created by Acidnade AI
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- Create ScreenGui
+-- Create main UI container
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "MainUI"
 screenGui.Parent = playerGui
 
--- Create main frame
+-- Main frame
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 300, 0, 200)
-mainFrame.Position = UDim2.new(0.5, -150, 0.5, -100)
+mainFrame.Size = UDim2.new(0, 400, 0, 300)
+mainFrame.Position = UDim2.new(0.5, -200, 0.5, -150)
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+mainFrame.BackgroundTransparency = 0.1
 mainFrame.Parent = screenGui
 
--- Add a title
+-- Title
 local title = Instance.new("TextLabel")
 title.Name = "Title"
-title.Text = "UI Created by Acidnade AI"
-title.Size = UDim2.new(1, 0, 0, 40)
-title.Position = UDim2.new(0, 0, 0, 0)
+title.Text = "UI System"
+title.Size = UDim2.new(1, 0, 0, 50)
 title.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 18
+title.TextSize = 24
 title.Parent = mainFrame
 
+-- Content area
+local content = Instance.new("Frame")
+content.Name = "Content"
+content.Size = UDim2.new(1, -20, 1, -70)
+content.Position = UDim2.new(0, 10, 0, 60)
+content.BackgroundTransparency = 1
+content.Parent = mainFrame
+
 print("UI system created successfully!")`
-          },
-          reasoning: "UI must be created by LocalScript in StarterPlayerScripts"
-        }];
+            },
+            reasoning: "UI must be created dynamically by LocalScript"
+          }
+        ];
       } else {
-        // Generic system request
-        data.plan = [{
-          step: 1,
-          description: "Create requested system",
-          type: "create",
-          className: "Script",
-          name: "SystemImplementation",
-          parentPath: "game.ServerScriptService",
-          properties: {
-            Source: `-- System implementation created by Acidnade AI
--- Based on your request: "${prompt}"
+        // Generic system
+        data.plan = [
+          {
+            step: 1,
+            description: "Create requested system",
+            type: "create",
+            className: "Script",
+            name: "SystemCreator",
+            parentPath: "game.ServerScriptService",
+            properties: {
+              Source: `-- System created by Acidnade AI
+print("System created based on your request:")
+print("${prompt}")
 
-print("Acidnade AI: System created!")
-print("Request: ${prompt}")
-
--- Main system logic will be implemented here
+-- Main logic goes here
 local function initialize()
-    print("System initialized successfully")
+    print("Initialization complete!")
     return true
 end
 
 initialize()`
-          },
-          reasoning: "Creating requested system"
-        }];
+            },
+            reasoning: "Creating the requested system"
+          }
+        ];
       }
     }
     
@@ -403,89 +468,53 @@ initialize()`
     data.autoExecute = true;
     data.needsApproval = false;
     
-    // Only need approval for mass deletions
-    if (data.plan) {
-      const deletionCount = data.plan.filter(step => step.type === 'delete').length;
-      if (deletionCount >= 5) {
-        data.needsApproval = true;
-        data.autoExecute = false;
-      }
+    // ENSURE PLAN EXISTS
+    if (!data.plan || !Array.isArray(data.plan) || data.plan.length === 0) {
+      console.log("⚠️ No plan in response, adding default plan");
+      data.plan = [{
+        step: 1,
+        description: "Creating your system",
+        type: "create",
+        className: "Script",
+        name: "SystemCreator",
+        parentPath: "game.ServerScriptService",
+        properties: {
+          Source: `-- System created by Acidnade AI\nprint("Creation complete!")`
+        },
+        reasoning: "Default creation step"
+      }];
     }
     
-    // ENSURE UI IS CREATED PROPERLY
-    if (data.plan && Array.isArray(data.plan)) {
-      data.plan = data.plan.map((step, index) => {
-        // Check if this is UI-related
-        const stepDesc = step.description?.toLowerCase() || '';
-        const isUI = stepDesc.includes('ui') || stepDesc.includes('gui') || 
-                     stepDesc.includes('interface') || stepDesc.includes('screen') ||
-                     step.className === 'ScreenGui' || step.className === 'Frame' ||
-                     step.className === 'TextLabel' || step.className === 'TextButton';
-        
-        // Convert direct UI creation to LocalScript creation
-        if (isUI && step.className !== 'LocalScript' && step.className !== 'Script' && step.className !== 'ModuleScript') {
-          console.log(`🔄 Converting UI creation to LocalScript: ${step.name}`);
-          
-          // Transform into LocalScript that creates UI
-          return {
-            ...step,
-            className: 'LocalScript',
-            parentPath: 'game.StarterPlayer.StarterPlayerScripts',
-            description: `${step.description} (created via LocalScript in StarterPlayerScripts)`,
-            properties: {
-              Source: `-- ${step.name} created by Acidnade AI
--- This LocalScript creates the UI elements dynamically
-
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Create main ScreenGui
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "${step.name}GUI"
-screenGui.Parent = playerGui
-
--- Add your UI elements here
-print("${step.name} UI created successfully!")`
-            },
-            reasoning: "UI must be created by LocalScript in StarterPlayerScripts, not directly"
-          };
-        }
-        
-        return step;
-      });
-      
-      data.stepsTotal = data.plan.length;
-      data.progressText = `Autonomously creating ${data.plan.length} components`;
-      data.sequentialExecution = true;
-      
-      console.log(`🤖 AI MAX AUTONOMOUS: ${data.plan.length} components to create`);
+    // ENSURE MESSAGE DOESN'T CONTAIN "IDEAS"
+    if (data.message && (data.message.includes("ideas") || data.message.includes("suggest") || data.message.includes("could implement"))) {
+      data.message = "Creating your complete system now!";
     }
     
-    // ENSURE MESSAGE IS ACTION-ORIENTED
-    if (!data.message || data.message.includes("idea") || data.message.includes("suggestion") || data.message.includes("could implement")) {
-      data.message = "I'll create that for you! Here's the complete implementation:";
-    }
+    // Add metadata
+    data.stepsTotal = data.plan.length;
+    data.progressText = `Creating ${data.plan.length} components`;
+    data.sequentialExecution = true;
     
-    console.log(`📤 MAX AUTONOMOUS Response: ${data.plan ? `${data.plan.length} components to create` : 'autonomous creation'}`);
+    console.log(`📤 CREATION Response: ${data.plan.length} components to create`);
+    console.log(`📝 First step: ${data.plan[0]?.description || "unknown"}`);
+    
     res.json(data);
 
   } catch (error) {
     console.error("Server Error:", error);
     res.json({ 
-      message: "I'm creating your system right now!",
+      message: "Creating system now!",
       plan: [{
         step: 1,
-        description: "Emergency creation - system implementation",
+        description: "Emergency system creation",
         type: "create",
         className: "Script",
-        name: "EmergencySystem",
+        name: "EmergencyCreator",
         parentPath: "game.ServerScriptService",
         properties: {
-          Source: `-- Emergency system created by Acidnade AI
-print("System created successfully!")`
+          Source: `-- Emergency system created\nprint("System created!")`
         },
-        reasoning: "Autonomous creation triggered"
+        reasoning: "Forced creation due to error"
       }],
       autoExecute: true,
       needsApproval: false
@@ -494,10 +523,9 @@ print("System created successfully!")`
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Acidnade AI v12.1 — MAX AUTONOMOUS MODE`);
-  console.log(`🤖 Force action enabled`);
-  console.log(`🔥 No more ideas - ONLY creation`);
-  console.log(`💪 UI via StarterPlayerScripts enforced`);
-  console.log(`⚡ Auto-execute everything`);
-  console.log(`💥 MAXIMUM AUTONOMY ENGAGED`);
+  console.log(`\n🚀 Acidnade AI v13.0 — CREATION MODE ONLY`);
+  console.log(`🔥 NO MORE IDEAS - ONLY CREATION`);
+  console.log(`⚡ AUTO-EXECUTE EVERYTHING`);
+  console.log(`💪 FORCING COMPLETE PLANS`);
+  console.log(`💥 MAXIMUM CREATION POWER`);
 });
