@@ -96,9 +96,9 @@ function formatContext(context) {
 }
 
 // Public endpoints
-app.get('/health', (req, res) => res.json({ status: "OK", version: "18.0-IDEAS" }));
+app.get('/health', (req, res) => res.json({ status: "OK", version: "19.0-UPGRADED-FLOW" }));
 app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v18.0 - Ideas & Step-by-Step Mode'));
+app.get('/', (req, res) => res.send('Acidnade AI v19.0 - Upgraded Idea → Plan → Build Flow'));
 
 // MAIN AI ENDPOINT - TWO MODES
 app.post('/ai', async (req, res) => {
@@ -118,44 +118,47 @@ app.post('/ai', async (req, res) => {
     console.log(`🔥 Mode: ${mode}, Request: "${prompt.substring(0, 100)}..."`);
     
     if (mode === 'ideas') {
-      // MODE 1: Generate ideas only
-      const ideasPrompt = `You are ACIDNADE, a creative Roblox game AI.
+      // MODE 1: Generate ideas (3-5 depending on complexity)
+      const ideasPrompt = `You are ACIDNADE, a creative Roblox game AI that generates innovative ideas.
 
 ${contextSummary}
 
 USER REQUEST: "${prompt}"
 
 === TASK ===
-Generate 3 different implementation ideas for this request.
+Generate 3-5 distinct implementation ideas for this request.
+- For simple requests: Generate 3 ideas
+- For complex/open-ended requests: Generate 4-5 ideas
 
 === REQUIREMENTS ===
-1. Each idea must be distinct and creative
+1. Each idea MUST be completely different in approach
 2. Focus on practical Roblox implementation
 3. Consider existing scripts in the project
 4. Each idea should have:
-   - A catchy title (max 5 words)
-   - A detailed description (2-3 sentences)
-   - Key features (bullet points)
+   - A catchy, descriptive title (3-6 words max)
+   - A detailed description (2-3 sentences explaining WHAT it does)
+   - 3-5 key features (bullet points)
    - Estimated complexity: Simple/Medium/Complex
+   - A specific prompt for implementation (used when user selects this idea)
 
-=== RESPONSE FORMAT (JSON) ===
+=== RESPONSE FORMAT (JSON ONLY) ===
 {
   "type": "ideas",
-  "thinking": "Brief analysis",
-  "message": "Here are 3 ideas for your request:",
+  "thinking": "Brief analysis of the request",
+  "message": "Here are [X] ideas for your request:",
   "ideas": [
     {
       "id": 1,
       "title": "Idea Title",
-      "description": "Detailed description of what this idea does",
+      "description": "Clear description of what this idea accomplishes",
       "features": ["Feature 1", "Feature 2", "Feature 3"],
       "complexity": "Simple",
-      "prompt": "Specific prompt to implement this idea (used when selected)"
+      "prompt": "Detailed prompt to implement this exact idea"
     }
   ]
 }
 
-Generate exactly 3 ideas.`;
+⚠️ IMPORTANT: Return ONLY valid JSON, no markdown, no extra text.`;
       
       const result = await model.generateContent(ideasPrompt);
       let response = result.response.text().trim();
@@ -171,7 +174,7 @@ Generate exactly 3 ideas.`;
         data = JSON.parse(response);
         data.type = 'ideas';
         
-        // Store ideas in session for later reference
+        // Store ideas in session
         session.lastIdeas = {
           originalPrompt: prompt,
           ideas: data.ideas,
@@ -189,26 +192,26 @@ Generate exactly 3 ideas.`;
             {
               id: 1,
               title: "Basic Implementation",
-              description: "A simple, straightforward implementation of your request.",
-              features: ["Easy to understand", "Lightweight", "Good starting point"],
+              description: "A simple, straightforward implementation of your request with core functionality.",
+              features: ["Easy to understand", "Lightweight code", "Quick to implement"],
               complexity: "Simple",
-              prompt: prompt
+              prompt: `Create a basic implementation of: ${prompt}`
             },
             {
               id: 2,
               title: "Enhanced Version",
-              description: "Adds extra features and polish to the basic idea.",
-              features: ["More features", "Better UI", "Error handling"],
+              description: "An improved version with additional features, better UI, and error handling.",
+              features: ["More features", "Polished UI", "Error handling", "Better UX"],
               complexity: "Medium",
-              prompt: `${prompt} with enhanced features and better user experience`
+              prompt: `Create an enhanced version of: ${prompt} with polished features and good user experience`
             },
             {
               id: 3,
               title: "Advanced System",
-              description: "A complete system with multiple components and interactions.",
-              features: ["Multiple scripts", "Data persistence", "Advanced UI"],
+              description: "A complete, scalable system with multiple components, data persistence, and advanced features.",
+              features: ["Modular design", "Multiple scripts", "Data persistence", "Advanced UI", "Scalable"],
               complexity: "Complex",
-              prompt: `Create a complete system for: ${prompt} with modular design and scalability`
+              prompt: `Create a complete, professional system for: ${prompt} with modular architecture and scalability`
             }
           ]
         };
@@ -217,63 +220,82 @@ Generate exactly 3 ideas.`;
       res.json(data);
       
     } else if (mode === 'plan') {
-      // MODE 2: Generate detailed plan for selected idea
+      // MODE 2: Generate detailed plan with INDIVIDUAL PROMPTS PER STEP
       const ideaPrompt = selectedIdea || prompt;
       
-      const planPrompt = `You are ACIDNADE, an execution-focused Roblox AI.
+      const planPrompt = `You are ACIDNADE, an execution-focused Roblox AI that creates detailed implementation plans.
 
 ${contextSummary}
 
 === SELECTED IDEA ===
 ${ideaPrompt}
 
-=== TASK ===
-Create a detailed, step-by-step implementation plan.
+=== CRITICAL TASK ===
+Create a detailed, step-by-step implementation plan where EACH STEP HAS ITS OWN INDIVIDUAL PROMPT.
 
-=== CRITICAL RULES ===
-1. Each step MUST have its own INDIVIDUAL prompt
-2. Steps must be in logical order
-3. Each step should create/modify ONE thing
-4. For modification steps: Include FULL source code
-5. Each step should be independently executable
+=== MANDATORY RULES ===
+1. ⚠️ EACH STEP MUST HAVE ITS OWN UNIQUE, SELF-CONTAINED PROMPT
+2. ⚠️ DO NOT create one prompt for the entire plan
+3. ⚠️ Each prompt describes ONLY what to build for THAT SPECIFIC STEP
+4. Steps must be in logical dependency order
+5. Each step should create/modify ONE thing at a time
+6. For modify steps: The prompt must request the FULL modified code
+7. Use descriptive, meaningful names for all instances
 
 === STEP REQUIREMENTS ===
-For EACH step, provide:
-1. step: Number
-2. description: What this step does
-3. prompt: Detailed instruction JUST for this step (what to code/create)
+For EACH step, you MUST provide:
+1. step: Sequential number
+2. description: Brief summary (what this step does)
+3. prompt: INDIVIDUAL, DETAILED instruction for THIS STEP ONLY
+   - Example: "Create a Script in ServerScriptService called 'GameManager' that handles player join/leave events and tracks active players in a table"
+   - NOT: "Create main game logic" (too vague)
 4. type: "create", "modify", or "delete"
-5. className: Class to create (Script, LocalScript, ModuleScript, etc.)
-6. name: Name of the instance
-7. parentPath: Where to place it
-8. properties: Any properties to set (for scripts, MUST include full Source code)
+5. className: Roblox class (Script, LocalScript, ModuleScript, Part, etc.)
+6. name: Descriptive instance name
+7. parentPath: Full path (e.g., "game.ServerScriptService")
+8. properties: Object with properties to set
+   - For scripts: MUST include "Source" with full Lua code
 9. reasoning: Why this step is needed
 
-=== RESPONSE FORMAT (JSON) ===
+=== RESPONSE FORMAT (JSON ONLY) ===
 {
   "type": "plan",
-  "thinking": "Brief analysis of the full plan",
-  "message": "I'll create this in X steps:",
+  "thinking": "Brief analysis of implementation approach",
+  "message": "I'll implement this in X steps:",
   "plan": [
     {
       "step": 1,
-      "description": "Create main script",
-      "prompt": "Create a Script in ServerScriptService that handles the main logic",
+      "description": "Create main game manager",
+      "prompt": "Create a Script in ServerScriptService called 'GameManager' that handles player join/leave events and tracks active players",
       "type": "create",
       "className": "Script",
-      "name": "MainHandler",
+      "name": "GameManager",
       "parentPath": "game.ServerScriptService",
       "properties": {
-        "Source": "-- Full Lua code here"
+        "Source": "-- Full Lua code here\nlocal Players = game:GetService(\"Players\")\n..."
       },
-      "reasoning": "We need a central server-side script"
+      "reasoning": "Central server-side game state management"
+    },
+    {
+      "step": 2,
+      "description": "Create UI handler",
+      "prompt": "Create a LocalScript in StarterPlayer.StarterPlayerScripts called 'UIHandler' that creates and manages the player's UI elements",
+      "type": "create",
+      "className": "LocalScript",
+      "name": "UIHandler",
+      "parentPath": "game.StarterPlayer.StarterPlayerScripts",
+      "properties": {
+        "Source": "-- Full Lua code here\nlocal Players = game:GetService(\"Players\")\n..."
+      },
+      "reasoning": "Client-side UI management"
     }
   ],
-  "totalSteps": 1,
-  "estimatedTime": "Simple/Medium/Complex"
+  "totalSteps": 2,
+  "estimatedTime": "Medium"
 }
 
-Create a practical, executable plan.`;
+⚠️ CRITICAL: Each step's prompt must be independently executable and describe ONLY what that step should accomplish.
+⚠️ Return ONLY valid JSON, no markdown, no extra text.`;
       
       const result = await model.generateContent(planPrompt);
       let response = result.response.text().trim();
@@ -290,19 +312,29 @@ Create a practical, executable plan.`;
         data.type = 'plan';
         data.totalSteps = data.plan ? data.plan.length : 0;
         
-        // Validate each step has individual prompt
+        // Validate and ensure each step has individual prompt
         if (data.plan && Array.isArray(data.plan)) {
-          data.plan = data.plan.map((step, index) => ({
-            step: index + 1,
-            description: step.description || `Step ${index + 1}`,
-            prompt: step.prompt || step.description || `Execute step ${index + 1}`,
-            type: step.type || "create",
-            className: step.className || "Script",
-            name: step.name || `Step${index + 1}_${Date.now()}`,
-            parentPath: step.parentPath || "game.ServerScriptService",
-            properties: step.properties || {},
-            reasoning: step.reasoning || "Needed for implementation"
-          }));
+          data.plan = data.plan.map((step, index) => {
+            // Ensure prompt exists and is detailed
+            let stepPrompt = step.prompt || step.description || `Execute step ${index + 1}`;
+            
+            // If prompt is too generic, make it more specific
+            if (stepPrompt.length < 20) {
+              stepPrompt = `${step.description || 'Execute step'}: Create a ${step.className} called '${step.name}' in ${step.parentPath}`;
+            }
+            
+            return {
+              step: index + 1,
+              description: step.description || `Step ${index + 1}`,
+              prompt: stepPrompt,
+              type: step.type || "create",
+              className: step.className || "Script",
+              name: step.name || `Step${index + 1}_${Date.now()}`,
+              parentPath: step.parentPath || "game.ServerScriptService",
+              properties: step.properties || {},
+              reasoning: step.reasoning || "Needed for implementation"
+            };
+          });
         }
         
         // Store plan in session
@@ -314,50 +346,50 @@ Create a practical, executable plan.`;
         
       } catch (parseError) {
         console.error("JSON Parse Failed:", parseError.message);
-        // Fallback plan
+        // Fallback plan with individual prompts
         data = {
           type: 'plan',
-          thinking: "Creating fallback plan",
+          thinking: "Creating a structured implementation plan",
           message: "I'll implement your idea in 3 steps:",
           plan: [
             {
               step: 1,
-              description: "Create main script",
-              prompt: "Create a Script in ServerScriptService",
+              description: "Create main server script",
+              prompt: `Create a Script in ServerScriptService called 'MainScript' that serves as the core server-side logic for: ${ideaPrompt}`,
               type: "create",
               className: "Script",
               name: "MainScript",
               parentPath: "game.ServerScriptService",
               properties: {
-                Source: `-- Main script for: ${ideaPrompt}\n\nprint("Hello from Acidnade AI!")`
+                Source: `-- Main server-side script for: ${ideaPrompt}\n\nlocal Players = game:GetService("Players")\nlocal ReplicatedStorage = game:GetService("ReplicatedStorage")\n\nprint("MainScript initialized")\n\n-- Core logic here`
               },
-              reasoning: "Central server-side logic"
+              reasoning: "Central server-side game logic and state management"
             },
             {
               step: 2,
               description: "Create client-side handler",
-              prompt: "Create a LocalScript for client-side",
+              prompt: `Create a LocalScript in StarterPlayer.StarterPlayerScripts called 'ClientHandler' that manages client-side interactions for: ${ideaPrompt}`,
               type: "create",
               className: "LocalScript",
               name: "ClientHandler",
               parentPath: "game.StarterPlayer.StarterPlayerScripts",
               properties: {
-                Source: `-- Client-side handler\n\nlocal Players = game:GetService("Players")\n\n-- Client logic here`
+                Source: `-- Client-side handler for: ${ideaPrompt}\n\nlocal Players = game:GetService("Players")\nlocal ReplicatedStorage = game:GetService("ReplicatedStorage")\nlocal player = Players.LocalPlayer\n\nprint("ClientHandler initialized for", player.Name)\n\n-- Client logic here`
               },
-              reasoning: "Handle player interactions"
+              reasoning: "Handle player-side interactions and UI"
             },
             {
               step: 3,
               description: "Create configuration module",
-              prompt: "Create a ModuleScript for settings",
+              prompt: `Create a ModuleScript in ReplicatedStorage called 'Config' that stores shared configuration settings for: ${ideaPrompt}`,
               type: "create",
               className: "ModuleScript",
               name: "Config",
               parentPath: "game.ReplicatedStorage",
               properties: {
-                Source: `-- Configuration module\n\nlocal Config = {}\n\nConfig.Settings = {\n  -- Add settings here\n}\n\nreturn Config`
+                Source: `-- Configuration module for: ${ideaPrompt}\n\nlocal Config = {}\n\n-- Settings\nConfig.Settings = {\n\t-- Add configuration here\n}\n\nreturn Config`
               },
-              reasoning: "Centralized configuration"
+              reasoning: "Centralized configuration shared between client and server"
             }
           ],
           totalSteps: 3,
@@ -420,7 +452,7 @@ app.post('/undo', async (req, res) => {
       undoPlan.push({
         step: undoPlan.length + 1,
         description: `Delete ${step.name} (undoing)`,
-        prompt: `Delete ${step.name} to undo previous action`,
+        prompt: `Delete the ${step.className} named '${step.name}' from ${step.parentPath} to undo previous action`,
         type: "delete",
         className: step.className,
         name: step.name,
@@ -450,10 +482,11 @@ app.post('/undo', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🔥 ACIDNADE AI v18.0 — IDEAS & STEP-BY-STEP`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`✅ Ideas System: ENABLED`);
-  console.log(`✅ Individual Step Prompts: ENABLED`);
+  console.log(`\n🔥 ACIDNADE AI v19.0 – UPGRADED FLOW`);
+  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`✅ Ideas → Plan → Build Flow: ENABLED`);
+  console.log(`✅ Individual Step Prompts: ENFORCED`);
+  console.log(`✅ UI-Based Idea Selection: ENABLED`);
   console.log(`✅ Port: ${PORT}`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 });
