@@ -35,7 +35,7 @@ if (!process.env.API_KEY) {
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 // Using 2.0 Flash or 1.5 Pro is recommended for large context (code reading)
 const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-flash", // Changed to stable model with large context
+  model: "gemini-3-flash-preview", // Changed to stable model with large context
   generationConfig: {
     temperature: 0.9,
     topP: 0.95,
