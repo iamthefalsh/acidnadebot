@@ -126,9 +126,9 @@ You must respond with a JSON object containing:
 
 ## EXAMPLES OF CORRECT BEHAVIOR
 
-**Example 1 - Creating:**
+Example 1 - Creating:
 User: "make a red part"
-Response:
+Response JSON:
 {
   "message": "I'll create a red part in the workspace.",
   "plan": [{
@@ -147,9 +147,9 @@ Response:
   "needsApproval": false
 }
 
-**Example 2 - Modifying:**
+Example 2 - Modifying:
 User: "make it blue"
-Response:
+Response JSON:
 {
   "message": "Changing the part to blue.",
   "plan": [{
@@ -164,9 +164,9 @@ Response:
   "needsApproval": false
 }
 
-**Example 3 - Script Creation:**
+Example 3 - Script Creation:
 User: "create a coin system"
-Response:
+Response JSON:
 {
   "message": "I'll create a complete coin collection system with server script and client UI.",
   "plan": [
@@ -194,9 +194,9 @@ Response:
   "needsApproval": true
 }
 
-**Example 4 - Information Only:**
+Example 4 - Information Only:
 User: "how does RemoteEvent work?"
-Response:
+Response JSON:
 {
   "message": "RemoteEvents are used for client-server communication...",
   "plan": [],
