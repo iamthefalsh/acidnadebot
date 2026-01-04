@@ -1,10 +1,10 @@
-import express from 'express';
-import cors from 'cors';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import rateLimit from 'express-rate-limit';
-import helmet from 'helmet';
-import compression from 'compression';
-import dotenv from 'dotenv';
+const express = require('express');
+const cors = require('cors');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const compression = require('compression');
+const dotenv = require('dotenv');
 
 dotenv.config();
 
@@ -127,56 +127,56 @@ You must respond with a JSON object containing:
 When setting properties, use these EXACT formats:
 
 **Colors** - Use RGB format (0-255):
-```json
+\`\`\`json
 "Color": "255, 0, 0"
 "BackgroundColor3": "0, 255, 0"
 "TextColor3": "100, 150, 200"
-```
+\`\`\`
 
 **Named Colors** (also accepted):
 "red", "green", "blue", "yellow", "cyan", "magenta", "white", "black", "gray", "orange", "purple", "pink", "brown"
 
 **Vectors** - Use X, Y, Z format:
-```json
+\`\`\`json
 "Position": "0, 10, 0"
 "Size": "10, 5, 10"
-```
+\`\`\`
 
 **UDim2** (UI positions/sizes) - Use Scale, Offset, Scale, Offset:
-```json
+\`\`\`json
 "Position": "0.5, -100, 0.5, -50"  // Centered
 "Size": "0, 200, 0, 100"           // 200x100 pixels
-```
+\`\`\`
 
 **Enums** - Use JUST the item name (no "Enum." prefix):
-```json
+\`\`\`json
 "Material": "Neon"
 "Font": "SourceSansBold"
 "Shape": "Ball"
 "TopSurface": "Smooth"
-```
+\`\`\`
 
 **Asset IDs** - Just the number:
-```json
+\`\`\`json
 "Image": "123456789"
 "Texture": "987654321"
 "MeshId": "111222333"
-```
+\`\`\`
 
 **Booleans**:
-```json
+\`\`\`json
 "Anchored": true
 "CanCollide": false
 "Visible": true
-```
+\`\`\`
 
 **Numbers**:
-```json
+\`\`\`json
 "Transparency": 0.5
 "Reflectance": 0.3
 "TextSize": 24
 "Brightness": 2
-```
+\`\`\`
 
 ## COMMON ROBLOX PROPERTIES BY TYPE
 
@@ -380,23 +380,12 @@ async function processAIRequest(prompt, context, sessionId) {
     console.log(`[AI] Sending to Gemini with extended thinking mode...`);
     const startTime = Date.now();
 
-    // Send request with thinking mode
+    // Send request
     const result = await model.generateContent(fullPrompt);
     const response = result.response;
     const thinkingTime = Date.now() - startTime;
 
     console.log(`[AI] Response received in ${thinkingTime}ms`);
-
-    // Extract thinking process if available
-    let thinkingProcess = null;
-    if (response.candidates?.[0]?.content?.parts) {
-      const parts = response.candidates[0].content.parts;
-      const thinkingPart = parts.find(part => part.thought === true);
-      if (thinkingPart) {
-        thinkingProcess = thinkingPart.text;
-        console.log(`[AI] Extended thinking captured (${thinkingProcess.length} chars)`);
-      }
-    }
 
     // Get the main response
     const text = response.text();
@@ -409,8 +398,8 @@ async function processAIRequest(prompt, context, sessionId) {
       const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
       aiResponse = JSON.parse(cleanedText);
     } catch (parseError) {
-      console.error('[AI] JSON parse error:', parseError);
-      console.error('[AI] Raw response:', text.substring(0, 500));
+      console.error('[AI] JSON parse error:', parseError.message);
+      console.error('[AI] Raw response sample:', text.substring(0, 500));
       
       // Fallback response
       aiResponse = {
@@ -437,13 +426,8 @@ async function processAIRequest(prompt, context, sessionId) {
       thinkingTime: thinkingTime,
       model: MODEL_NAME,
       sessionId: sessionId,
-      timestamp: new Date().toISOString(),
-      hadExtendedThinking: !!thinkingProcess
+      timestamp: new Date().toISOString()
     };
-
-    if (NODE_ENV === 'development' && thinkingProcess) {
-      aiResponse.thinkingProcess = thinkingProcess.substring(0, 1000); // Include in dev mode
-    }
 
     console.log(`[AI] Generated ${aiResponse.plan.length} step(s)`);
     console.log(`[AI] Needs approval: ${aiResponse.needsApproval}`);
@@ -451,7 +435,7 @@ async function processAIRequest(prompt, context, sessionId) {
     return aiResponse;
 
   } catch (error) {
-    console.error('[AI] Error:', error);
+    console.error('[AI] Error:', error.message);
     
     // Detailed error response
     return {
@@ -472,7 +456,7 @@ async function processAIRequest(prompt, context, sessionId) {
 app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI Server',
-    version: '1.4',
+    version: '1.5',
     status: 'online',
     model: 'gemini-3-flash-preview',
     endpoints: {
@@ -480,7 +464,6 @@ app.get('/', (req, res) => {
       'GET /ping': 'Health check',
       'POST /ai': 'AI request processing (requires authentication)'
     },
-    documentation: 'https://github.com/your-repo/acidnade-ai',
     timestamp: new Date().toISOString()
   });
 });
@@ -490,7 +473,7 @@ app.get('/ping', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    version: '1.4',
+    version: '1.5',
     model: 'gemini-3-flash-preview'
   });
 });
@@ -525,7 +508,7 @@ app.post('/ai', authenticateRequest, async (req, res) => {
     res.json(aiResponse);
 
   } catch (error) {
-    console.error('[Error] Request processing failed:', error);
+    console.error('[Error] Request processing failed:', error.message);
     res.status(500).json({ 
       error: 'Internal Server Error',
       message: NODE_ENV === 'development' ? error.message : 'An error occurred',
@@ -537,7 +520,7 @@ app.post('/ai', authenticateRequest, async (req, res) => {
 
 // Error Handler
 app.use((err, req, res, next) => {
-  console.error('[Error]', err);
+  console.error('[Error]', err.message);
   res.status(500).json({ 
     error: 'Internal Server Error',
     message: NODE_ENV === 'development' ? err.message : 'Something went wrong'
@@ -562,7 +545,6 @@ app.listen(PORT, () => {
   console.log(`📡 Port: ${PORT}`);
   console.log(`🌍 Environment: ${NODE_ENV}`);
   console.log(`🤖 Model: gemini-3-flash-preview`);
-  console.log(`🧠 Extended Thinking: ENABLED`);
   console.log(`🔒 Auth: ${process.env.ACIDNADE_API_KEY ? 'CONFIGURED' : 'NOT SET'}`);
   console.log(`✅ Ready to accept requests!`);
   console.log('='.repeat(50));
