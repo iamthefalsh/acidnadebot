@@ -7,486 +7,569 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Security middleware
 app.use(cors({ origin: '*' }));
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// Security
+// API Key Authentication
 app.use((req, res, next) => {
   const clientKey = req.headers['x-acidnade-key'];
-  const serverKey = process.env.ACIDNADE_API_KEY || process.env.API_KEY;
-  
-  if (!serverKey) {
-    console.warn('⚠️ No API key set');
-    return next();
-  }
+  const serverKey = process.env.ACIDNADE_API_KEY || "acidnadesecretkey";
   
   if (clientKey !== serverKey) {
-    return res.status(403).json({ error: "Invalid API key" });
+    return res.status(403).json({ 
+      error: true,
+      message: "Invalid API key. Check your X-Acidnade-Key header."
+    });
   }
   next();
 });
 
-if (!process.env.API_KEY) {
-  console.error("ERROR: Missing API_KEY");
+// Initialize Gemini AI
+if (!process.env.GEMINI_API_KEY) {
+  console.error("ERROR: Missing GEMINI_API_KEY environment variable");
+  console.error("Set it with: export GEMINI_API_KEY=your_gemini_key_here");
   process.exit(1);
 }
 
-const genAI = new GoogleGenerativeAI(process.env.API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ 
-  model: "gemini-3-flash-preview",
+  model: "gemini-1.5-pro",
   generationConfig: {
-    temperature: 1,
+    temperature: 0.7,
     topP: 0.95,
     topK: 64,
     maxOutputTokens: 8192,
   }
 });
 
-// Session memory
+// Session management
 const sessionData = new Map();
 
 function getSession(sessionId) {
   if (!sessionData.has(sessionId)) {
     sessionData.set(sessionId, {
       history: [],
-      creationLog: [],
-      canUndo: false,
-      lastIdeas: null,
-      lastPlan: null
+      createdInstances: [],
+      modifiedInstances: [],
+      currentPlan: null,
+      stepIndex: 0,
+      thinkingSteps: []
     });
   }
   return sessionData.get(sessionId);
 }
 
-// Fixed context formatting
+// UI Classes that must be created via LocalScript
+const UI_CLASSES = [
+  'ScreenGui', 'Frame', 'TextLabel', 'TextButton', 'ImageLabel',
+  'ScrollingFrame', 'TextBox', 'ImageButton', 'ViewportFrame',
+  'BillboardGui', 'SurfaceGui', 'CanvasGroup', 'UIPadding',
+  'UICorner', 'UIStroke', 'UIGradient', 'UIListLayout'
+];
+
+// Format context for AI
 function formatContext(context) {
-  if (!context) return "No context provided.";
+  if (!context) return "No context available.";
   
-  let text = "=== WORKSPACE CONTEXT ===\n\n";
+  let text = "=== PROJECT CONTEXT ===\n\n";
   
+  // Project Statistics
   if (context.project?.Statistics) {
     const stats = context.project.Statistics;
-    text += `📊 Statistics:\n`;
-    text += `- Scripts: ${stats.TotalScripts || 0}\n`;
-    text += `- UI Elements: ${stats.TotalUI || 0}\n`;
+    text += `📊 Project Statistics:\n`;
+    text += `- Total Scripts: ${stats.TotalScripts || 0}\n`;
+    text += `- Total UI Elements: ${stats.TotalUI || 0}\n`;
     text += `- Total Instances: ${stats.TotalInstances || 0}\n\n`;
   }
   
   // Selected Objects
   if (context.selectedObjects && context.selectedObjects.length > 0) {
-    text += `🎯 SELECTED OBJECTS:\n`;
-    context.selectedObjects.forEach((item, index) => {
-      text += `${index + 1}. [${item.ClassName}] "${item.Name || item.name}"\n`;
-      text += `   Path: ${item.Path || item.path || 'Unknown'}\n`;
+    text += `🎯 Currently Selected Objects:\n`;
+    context.selectedObjects.forEach((obj, idx) => {
+      text += `${idx + 1}. [${obj.ClassName || obj.className}] "${obj.Name || obj.name}"\n`;
+      text += `   Path: ${obj.Path || obj.path || 'Unknown'}\n`;
       
-      if (item.Source && item.Source.length > 0) {
-        text += `   Current Source Code:\n`;
+      // Include source code for scripts
+      if (obj.Source && obj.Source.length > 0) {
+        text += `   Current Source Code (first 10 lines):\n`;
         text += "   ```lua\n";
-        const lines = item.Source.split('\n');
-        const preview = lines.slice(0, 20).join('\n');
-        text += preview;
-        if (lines.length > 20) text += "\n   ... (truncated)";
+        const lines = obj.Source.split('\n').slice(0, 10);
+        text += lines.join('\n');
+        if (obj.Source.split('\n').length > 10) text += "\n   ...";
         text += "\n   ```\n";
       }
       text += "\n";
     });
   }
   
+  // All Scripts
+  if (context.project?.ScriptDetails && context.project.ScriptDetails.length > 0) {
+    text += `📁 All Scripts in Project (showing 10):\n`;
+    context.project.ScriptDetails.slice(0, 10).forEach((script, idx) => {
+      text += `${idx + 1}. [${script.Type}] "${script.Name}"\n`;
+      text += `   Path: ${script.Path}\n`;
+      if (script.Preview && script.Preview.trim().length > 0) {
+        text += `   Preview: ${script.Preview.substring(0, 100)}${script.Preview.length > 100 ? '...' : ''}\n`;
+      }
+      text += "\n";
+    });
+  }
+  
+  // Recently Created
+  if (context.createdInstances && context.createdInstances.length > 0) {
+    text += `🆕 Recently Created Instances:\n`;
+    context.createdInstances.slice(-5).forEach(inst => {
+      text += `- ${inst.name} (${inst.className}) at ${inst.parentPath}\n`;
+    });
+    text += "\n";
+  }
+  
+  // Previous Steps
+  if (context.previousSteps && context.previousSteps.length > 0) {
+    text += `📝 Previous Steps in Session:\n`;
+    context.previousSteps.slice(-5).forEach((step, idx) => {
+      text += `${idx + 1}. ${step.type || 'action'}: ${step.description || 'No description'}\n`;
+    });
+    text += "\n";
+  }
+  
   return text;
 }
 
-// Public endpoints
-app.get('/health', (req, res) => res.json({ status: "OK", version: "19.0-UPGRADED-FLOW" }));
-app.get('/ping', (req, res) => res.send('PONG'));
-app.get('/', (req, res) => res.send('Acidnade AI v19.0 - Upgraded Idea → Plan → Build Flow'));
-
-// MAIN AI ENDPOINT - TWO MODES
-app.post('/ai', async (req, res) => {
-  try {
-    const { prompt, context, sessionId, mode = 'ideas', selectedIdea } = req.body;
+// Generate UI creation code for LocalScript
+function generateUICreationCode(step) {
+  const { className, name, properties = {} } = step;
+  const parentPath = step.parentPath || "game.StarterGui";
+  
+  let code = `-- UI Creation Script generated by Acidnade AI\n`;
+  code += `-- Creates a ${className} named "${name}"\n\n`;
+  
+  // Create the UI instance
+  code += `local ${name.replace(/[^a-zA-Z0-9]/g, '')} = Instance.new("${className}")\n`;
+  code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.Name = "${name}"\n\n`;
+  
+  // Apply properties
+  code += `-- Set properties\n`;
+  for (const [key, value] of Object.entries(properties)) {
+    if (key === 'Source' || key === 'Parent' || key === 'Disabled') continue;
     
-    if (!prompt || prompt.trim() === '') {
-      return res.json({ 
-        message: "What do you want me to create?",
-        type: 'error'
-      });
+    if (typeof value === 'string') {
+      // Handle Color3 strings
+      if (value.startsWith('Color3.fromRGB')) {
+        code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
+      } else if (value.startsWith('UDim2.new')) {
+        code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
+      } else {
+        code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = "${value.replace(/"/g, '\\"')}"\n`;
+      }
+    } else if (typeof value === 'number') {
+      code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
+    } else if (typeof value === 'boolean') {
+      code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
     }
-    
-    const session = getSession(sessionId || 'default');
-    const contextSummary = formatContext(context);
-    
-    console.log(`🔥 Mode: ${mode}, Request: "${prompt.substring(0, 100)}..."`);
-    
-    if (mode === 'ideas') {
-      // MODE 1: Generate ideas (3-5 depending on complexity)
-      const ideasPrompt = `You are ACIDNADE, a creative Roblox game AI that generates innovative ideas.
+  }
+  
+  // Set parent based on parentPath
+  code += `\n-- Parent the UI element\n`;
+  if (parentPath.includes("StarterGui")) {
+    code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.Parent = game.StarterGui\n`;
+  } else if (parentPath.includes("PlayerGui")) {
+    code += `local Players = game:GetService("Players")\n`;
+    code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")\n`;
+  } else {
+    code += `-- Note: Custom parent path detected\n`;
+    code += `-- ${name.replace(/[^a-zA-Z0-9]/g, '')}.Parent should be set by your game logic\n`;
+  }
+  
+  code += `\nprint("✅ UI created: ${name}")\n`;
+  return code;
+}
 
-${contextSummary}
+// Step 1: Analyze the request
+async function analyzeRequest(prompt, context) {
+  const systemPrompt = `You are ACIDNADE, an AI assistant for Roblox Studio.
+
+${formatContext(context)}
 
 USER REQUEST: "${prompt}"
 
-=== TASK ===
-Generate 3-5 distinct implementation ideas for this request.
-- For simple requests: Generate 3 ideas
-- For complex/open-ended requests: Generate 4-5 ideas
+=== ANALYSIS PHASE ===
+Analyze this request and determine:
+1. Is this a creation, modification, deletion, or explanation request?
+2. What type of objects are involved? (Scripts, UI, Models, etc.)
+3. Are there any dependencies or prerequisites?
+4. Should this be broken into multiple steps?
 
-=== REQUIREMENTS ===
-1. Each idea MUST be completely different in approach
-2. Focus on practical Roblox implementation
-3. Consider existing scripts in the project
-4. Each idea should have:
-   - A catchy, descriptive title (3-6 words max)
-   - A detailed description (2-3 sentences explaining WHAT it does)
-   - 3-5 key features (bullet points)
-   - Estimated complexity: Simple/Medium/Complex
-   - A specific prompt for implementation (used when user selects this idea)
-
-=== RESPONSE FORMAT (JSON ONLY) ===
+Return your analysis in this JSON format:
 {
-  "type": "ideas",
-  "thinking": "Brief analysis of the request",
-  "message": "Here are [X] ideas for your request:",
-  "ideas": [
+  "analysis": "Brief analysis of what the user wants",
+  "type": "create|modify|delete|explain",
+  "requiresUI": true|false,
+  "stepsNeeded": number,
+  "complexity": "simple|moderate|complex"
+}
+
+Be concise and focused.`;
+  
+  try {
+    const result = await model.generateContent(systemPrompt);
+    const response = result.response.text().trim();
+    
+    // Extract JSON
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+  } catch (error) {
+    console.error("Analysis error:", error);
+  }
+  
+  // Default fallback
+  return {
+    analysis: "Create new script",
+    type: "create",
+    requiresUI: false,
+    stepsNeeded: 1,
+    complexity: "simple"
+  };
+}
+
+// Step 2: Generate plan steps
+async function generatePlanSteps(prompt, context, analysis, sessionId) {
+  const session = getSession(sessionId);
+  const steps = [];
+  
+  // Get appropriate parent path based on type
+  function getParentPath(stepType, className) {
+    if (UI_CLASSES.includes(className)) {
+      return "game.StarterPlayer.StarterPlayerScripts";
+    } else if (className === "Script") {
+      return "game.ServerScriptService";
+    } else if (className === "LocalScript") {
+      return "game.StarterPlayer.StarterPlayerScripts";
+    } else if (className === "ModuleScript") {
+      return "game.ReplicatedStorage";
+    }
+    return "game.ServerScriptService";
+  }
+  
+  // Create step planning prompt
+  const planPrompt = `You are ACIDNADE, a Roblox Studio execution assistant.
+
+${formatContext(context)}
+
+USER REQUEST: "${prompt}"
+ANALYSIS: ${JSON.stringify(analysis)}
+
+=== PLANNING PHASE ===
+Create a step-by-step plan to fulfill this request.
+
+CRITICAL RULES:
+1. UI ELEMENTS (ScreenGui, Frame, TextLabel, etc.) MUST be created by a LocalScript, not directly.
+2. Scripts go in ServerScriptService
+3. LocalScripts go in StarterPlayerScripts or StarterGui
+4. Modules go in ReplicatedStorage
+5. Always check for existing objects before creating new ones
+
+Generate exactly ${analysis.stepsNeeded || 1} steps in this JSON format:
+{
+  "steps": [
     {
-      "id": 1,
-      "title": "Idea Title",
-      "description": "Clear description of what this idea accomplishes",
-      "features": ["Feature 1", "Feature 2", "Feature 3"],
-      "complexity": "Simple",
-      "prompt": "Detailed prompt to implement this exact idea"
+      "step": 1,
+      "type": "create|modify|delete",
+      "className": "Script|LocalScript|ModuleScript|etc.",
+      "name": "DescriptiveName",
+      "parentPath": "appropriate.path.here",
+      "properties": {
+        "Source": "Lua code here if applicable"
+      },
+      "description": "What this step does",
+      "reasoning": "Why this step is needed"
     }
   ]
 }
 
-⚠️ IMPORTANT: Return ONLY valid JSON, no markdown, no extra text.`;
+If UI elements are needed, create a LocalScript that generates them.`;
+
+  try {
+    const result = await model.generateContent(planPrompt);
+    const response = result.response.text().trim();
+    
+    // Extract JSON
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const data = JSON.parse(jsonMatch[0]);
       
-      const result = await model.generateContent(ideasPrompt);
-      let response = result.response.text().trim();
-      
-      // Clean response
-      response = response
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-      
-      let data;
-      try {
-        data = JSON.parse(response);
-        data.type = 'ideas';
-        
-        // Store ideas in session
-        session.lastIdeas = {
-          originalPrompt: prompt,
-          ideas: data.ideas,
-          timestamp: Date.now()
-        };
-        
-      } catch (parseError) {
-        console.error("JSON Parse Failed:", parseError.message);
-        // Fallback ideas
-        data = {
-          type: 'ideas',
-          thinking: "Creating fallback ideas",
-          message: "Here are 3 ideas for your request:",
-          ideas: [
-            {
-              id: 1,
-              title: "Basic Implementation",
-              description: "A simple, straightforward implementation of your request with core functionality.",
-              features: ["Easy to understand", "Lightweight code", "Quick to implement"],
-              complexity: "Simple",
-              prompt: `Create a basic implementation of: ${prompt}`
+      // Process each step
+      data.steps.forEach((step, index) => {
+        // Ensure UI elements are created via LocalScript
+        if (UI_CLASSES.includes(step.className)) {
+          console.log(`Converting UI element ${step.className} to LocalScript creation`);
+          
+          steps.push({
+            step: index + 1,
+            type: "create",
+            className: "LocalScript",
+            name: `Create${step.name}UI`,
+            parentPath: getParentPath("create", "LocalScript"),
+            properties: {
+              Source: generateUICreationCode(step),
+              Disabled: false
             },
-            {
-              id: 2,
-              title: "Enhanced Version",
-              description: "An improved version with additional features, better UI, and error handling.",
-              features: ["More features", "Polished UI", "Error handling", "Better UX"],
-              complexity: "Medium",
-              prompt: `Create an enhanced version of: ${prompt} with polished features and good user experience`
-            },
-            {
-              id: 3,
-              title: "Advanced System",
-              description: "A complete, scalable system with multiple components, data persistence, and advanced features.",
-              features: ["Modular design", "Multiple scripts", "Data persistence", "Advanced UI", "Scalable"],
-              complexity: "Complex",
-              prompt: `Create a complete, professional system for: ${prompt} with modular architecture and scalability`
-            }
-          ]
-        };
-      }
-      
-      res.json(data);
-      
-    } else if (mode === 'plan') {
-      // MODE 2: Generate detailed plan with INDIVIDUAL PROMPTS PER STEP
-      const ideaPrompt = selectedIdea || prompt;
-      
-      const planPrompt = `You are ACIDNADE, an execution-focused Roblox AI that creates detailed implementation plans.
-
-${contextSummary}
-
-=== SELECTED IDEA ===
-${ideaPrompt}
-
-=== CRITICAL TASK ===
-Create a detailed, step-by-step implementation plan where EACH STEP HAS ITS OWN INDIVIDUAL PROMPT.
-
-=== MANDATORY RULES ===
-1. ⚠️ EACH STEP MUST HAVE ITS OWN UNIQUE, SELF-CONTAINED PROMPT
-2. ⚠️ DO NOT create one prompt for the entire plan
-3. ⚠️ Each prompt describes ONLY what to build for THAT SPECIFIC STEP
-4. Steps must be in logical dependency order
-5. Each step should create/modify ONE thing at a time
-6. For modify steps: The prompt must request the FULL modified code
-7. Use descriptive, meaningful names for all instances
-
-=== STEP REQUIREMENTS ===
-For EACH step, you MUST provide:
-1. step: Sequential number
-2. description: Brief summary (what this step does)
-3. prompt: INDIVIDUAL, DETAILED instruction for THIS STEP ONLY
-   - Example: "Create a Script in ServerScriptService called 'GameManager' that handles player join/leave events and tracks active players in a table"
-   - NOT: "Create main game logic" (too vague)
-4. type: "create", "modify", or "delete"
-5. className: Roblox class (Script, LocalScript, ModuleScript, Part, etc.)
-6. name: Descriptive instance name
-7. parentPath: Full path (e.g., "game.ServerScriptService")
-8. properties: Object with properties to set
-   - For scripts: MUST include "Source" with full Lua code
-9. reasoning: Why this step is needed
-
-=== RESPONSE FORMAT (JSON ONLY) ===
-{
-  "type": "plan",
-  "thinking": "Brief analysis of implementation approach",
-  "message": "I'll implement this in X steps:",
-  "plan": [
-    {
-      "step": 1,
-      "description": "Create main game manager",
-      "prompt": "Create a Script in ServerScriptService called 'GameManager' that handles player join/leave events and tracks active players",
-      "type": "create",
-      "className": "Script",
-      "name": "GameManager",
-      "parentPath": "game.ServerScriptService",
-      "properties": {
-        "Source": "-- Full Lua code here\nlocal Players = game:GetService(\"Players\")\n..."
-      },
-      "reasoning": "Central server-side game state management"
-    },
-    {
-      "step": 2,
-      "description": "Create UI handler",
-      "prompt": "Create a LocalScript in StarterPlayer.StarterPlayerScripts called 'UIHandler' that creates and manages the player's UI elements",
-      "type": "create",
-      "className": "LocalScript",
-      "name": "UIHandler",
-      "parentPath": "game.StarterPlayer.StarterPlayerScripts",
-      "properties": {
-        "Source": "-- Full Lua code here\nlocal Players = game:GetService(\"Players\")\n..."
-      },
-      "reasoning": "Client-side UI management"
-    }
-  ],
-  "totalSteps": 2,
-  "estimatedTime": "Medium"
-}
-
-⚠️ CRITICAL: Each step's prompt must be independently executable and describe ONLY what that step should accomplish.
-⚠️ Return ONLY valid JSON, no markdown, no extra text.`;
-      
-      const result = await model.generateContent(planPrompt);
-      let response = result.response.text().trim();
-      
-      // Clean response
-      response = response
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-      
-      let data;
-      try {
-        data = JSON.parse(response);
-        data.type = 'plan';
-        data.totalSteps = data.plan ? data.plan.length : 0;
-        
-        // Validate and ensure each step has individual prompt
-        if (data.plan && Array.isArray(data.plan)) {
-          data.plan = data.plan.map((step, index) => {
-            // Ensure prompt exists and is detailed
-            let stepPrompt = step.prompt || step.description || `Execute step ${index + 1}`;
-            
-            // If prompt is too generic, make it more specific
-            if (stepPrompt.length < 20) {
-              stepPrompt = `${step.description || 'Execute step'}: Create a ${step.className} called '${step.name}' in ${step.parentPath}`;
-            }
-            
-            return {
-              step: index + 1,
-              description: step.description || `Step ${index + 1}`,
-              prompt: stepPrompt,
-              type: step.type || "create",
-              className: step.className || "Script",
-              name: step.name || `Step${index + 1}_${Date.now()}`,
-              parentPath: step.parentPath || "game.ServerScriptService",
-              properties: step.properties || {},
-              reasoning: step.reasoning || "Needed for implementation"
-            };
+            description: `Create LocalScript that generates ${step.name} UI element`,
+            reasoning: step.reasoning || "UI elements must be created by LocalScripts"
+          });
+        } else {
+          // Standard step
+          steps.push({
+            ...step,
+            step: index + 1,
+            parentPath: step.parentPath || getParentPath(step.type, step.className)
           });
         }
-        
-        // Store plan in session
-        session.lastPlan = {
-          originalIdea: ideaPrompt,
-          plan: data.plan,
-          timestamp: Date.now()
-        };
-        
-      } catch (parseError) {
-        console.error("JSON Parse Failed:", parseError.message);
-        // Fallback plan with individual prompts
-        data = {
-          type: 'plan',
-          thinking: "Creating a structured implementation plan",
-          message: "I'll implement your idea in 3 steps:",
-          plan: [
-            {
-              step: 1,
-              description: "Create main server script",
-              prompt: `Create a Script in ServerScriptService called 'MainScript' that serves as the core server-side logic for: ${ideaPrompt}`,
-              type: "create",
-              className: "Script",
-              name: "MainScript",
-              parentPath: "game.ServerScriptService",
-              properties: {
-                Source: `-- Main server-side script for: ${ideaPrompt}\n\nlocal Players = game:GetService("Players")\nlocal ReplicatedStorage = game:GetService("ReplicatedStorage")\n\nprint("MainScript initialized")\n\n-- Core logic here`
-              },
-              reasoning: "Central server-side game logic and state management"
-            },
-            {
-              step: 2,
-              description: "Create client-side handler",
-              prompt: `Create a LocalScript in StarterPlayer.StarterPlayerScripts called 'ClientHandler' that manages client-side interactions for: ${ideaPrompt}`,
-              type: "create",
-              className: "LocalScript",
-              name: "ClientHandler",
-              parentPath: "game.StarterPlayer.StarterPlayerScripts",
-              properties: {
-                Source: `-- Client-side handler for: ${ideaPrompt}\n\nlocal Players = game:GetService("Players")\nlocal ReplicatedStorage = game:GetService("ReplicatedStorage")\nlocal player = Players.LocalPlayer\n\nprint("ClientHandler initialized for", player.Name)\n\n-- Client logic here`
-              },
-              reasoning: "Handle player-side interactions and UI"
-            },
-            {
-              step: 3,
-              description: "Create configuration module",
-              prompt: `Create a ModuleScript in ReplicatedStorage called 'Config' that stores shared configuration settings for: ${ideaPrompt}`,
-              type: "create",
-              className: "ModuleScript",
-              name: "Config",
-              parentPath: "game.ReplicatedStorage",
-              properties: {
-                Source: `-- Configuration module for: ${ideaPrompt}\n\nlocal Config = {}\n\n-- Settings\nConfig.Settings = {\n\t-- Add configuration here\n}\n\nreturn Config`
-              },
-              reasoning: "Centralized configuration shared between client and server"
-            }
-          ],
-          totalSteps: 3,
-          estimatedTime: "Medium"
-        };
+      });
+      
+      // Store in session
+      session.currentPlan = steps;
+      session.thinkingSteps.push({
+        phase: "planning",
+        steps: steps.length,
+        timestamp: Date.now()
+      });
+      
+      return steps;
+    }
+  } catch (error) {
+    console.error("Plan generation error:", error);
+  }
+  
+  // Fallback simple step
+  return [{
+    step: 1,
+    type: "create",
+    className: "Script",
+    name: "NewScript",
+    parentPath: "game.ServerScriptService",
+    properties: {
+      Source: `-- Created by Acidnade AI\n-- Request: ${prompt}\n\nprint("Hello from Acidnade!")`
+    },
+    description: "Create a new script for the request",
+    reasoning: "Fallback creation"
+  }];
+}
+
+// Step 3: Validate plan
+async function validatePlan(prompt, context, steps, sessionId) {
+  const session = getSession(sessionId);
+  
+  const validationPrompt = `You are ACIDNADE, validating a Roblox Studio plan.
+
+${formatContext(context)}
+
+USER REQUEST: "${prompt}"
+PLAN STEPS: ${JSON.stringify(steps, null, 2)}
+
+=== VALIDATION PHASE ===
+Validate this plan for:
+1. Technical feasibility in Roblox Studio
+2. Proper parenting and locations
+3. Lua code syntax correctness
+4. Potential errors or issues
+
+Return validation in JSON format:
+{
+  "valid": true|false,
+  "issues": ["List any issues found"],
+  "improvements": ["Suggestions for improvement"],
+  "needsApproval": true|false,
+  "riskLevel": "low|medium|high"
+}`;
+
+  try {
+    const result = await model.generateContent(validationPrompt);
+    const response = result.response.text().trim();
+    
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const validation = JSON.parse(jsonMatch[0]);
+      
+      session.thinkingSteps.push({
+        phase: "validation",
+        valid: validation.valid,
+        issues: validation.issues,
+        timestamp: Date.now()
+      });
+      
+      return validation;
+    }
+  } catch (error) {
+    console.error("Validation error:", error);
+  }
+  
+  return {
+    valid: true,
+    issues: [],
+    improvements: [],
+    needsApproval: steps.length > 1,
+    riskLevel: "low"
+  };
+}
+
+// Main AI endpoint with multi-step thinking
+app.post('/ai', async (req, res) => {
+  try {
+    console.log("🚀 Starting multi-step AI processing...");
+    
+    const { prompt, context, sessionId } = req.body;
+    const session = getSession(sessionId || 'default');
+    
+    if (!prompt || prompt.trim() === '') {
+      return res.json({
+        message: "Please tell me what you want to create or modify.",
+        plan: [],
+        autoExecute: false,
+        thinking: "Waiting for input"
+      });
+    }
+    
+    console.log(`[${sessionId}] Step 1: Analyzing request...`);
+    
+    // Step 1: Analyze
+    const analysis = await analyzeRequest(prompt, context);
+    console.log(`Analysis: ${JSON.stringify(analysis)}`);
+    
+    // Step 2: Generate plan
+    console.log(`[${sessionId}] Step 2: Generating ${analysis.stepsNeeded} step plan...`);
+    const planSteps = await generatePlanSteps(prompt, context, analysis, sessionId);
+    
+    // Step 3: Validate plan
+    console.log(`[${sessionId}] Step 3: Validating plan...`);
+    const validation = await validatePlan(prompt, context, planSteps, sessionId);
+    
+    // Construct response
+    const response = {
+      thinking: `Analyzed request as ${analysis.type} with ${analysis.complexity} complexity. ${validation.valid ? 'Plan validated successfully.' : 'Plan has issues.'}`,
+      message: `I've created a ${planSteps.length}-step plan to ${analysis.type} ${analysis.requiresUI ? 'UI elements via LocalScripts' : 'your request'}.`,
+      plan: planSteps,
+      autoExecute: planSteps.length === 1 && validation.valid && validation.riskLevel === "low",
+      needsApproval: planSteps.length > 1 || validation.needsApproval || validation.riskLevel !== "low",
+      progressText: `Plan: ${planSteps.length} steps`,
+      validation: {
+        valid: validation.valid,
+        issues: validation.issues,
+        riskLevel: validation.riskLevel
       }
-      
-      res.json(data);
-      
-    } else {
-      res.json({
-        type: 'error',
-        message: "Invalid mode. Use 'ideas' or 'plan'."
-      });
-    }
+    };
+    
+    console.log(`[${sessionId}] ✅ Processed in 3 thinking steps. Returning plan with ${planSteps.length} steps.`);
+    
+    // Update session
+    session.history.push({
+      prompt: prompt,
+      analysis: analysis,
+      plan: planSteps,
+      timestamp: Date.now()
+    });
+    
+    res.json(response);
     
   } catch (error) {
-    console.error("AI Error:", error);
-    res.json({ 
-      type: 'error',
-      message: "Error processing request. Please try again."
+    console.error("AI endpoint error:", error);
+    res.status(500).json({
+      error: true,
+      message: "Internal server error during AI processing",
+      plan: [],
+      autoExecute: false
     });
   }
 });
 
-// Get previous ideas/plan
-app.post('/get-session', (req, res) => {
+// Execute single step
+app.post('/execute-step', async (req, res) => {
   try {
-    const { sessionId } = req.body;
+    const { step, sessionId } = req.body;
     const session = getSession(sessionId);
     
-    res.json({
-      lastIdeas: session.lastIdeas,
-      lastPlan: session.lastPlan,
-      canUndo: session.creationLog.length > 0
-    });
-  } catch (error) {
-    console.error("Session Error:", error);
-    res.json({ error: "Failed to get session" });
-  }
-});
-
-// Undo endpoint
-app.post('/undo', async (req, res) => {
-  try {
-    const { sessionId } = req.body;
-    const session = getSession(sessionId);
+    console.log(`[${sessionId}] Executing step: ${step.description}`);
     
-    if (session.creationLog.length === 0) {
-      return res.json({ 
-        message: "Nothing to undo",
-        canUndo: false
+    // Simulate execution with thinking
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Track execution
+    if (step.type === "create") {
+      session.createdInstances.push({
+        ...step,
+        timestamp: Date.now()
+      });
+    } else if (step.type === "modify") {
+      session.modifiedInstances.push({
+        ...step,
+        timestamp: Date.now()
       });
     }
     
-    const lastAction = session.creationLog.pop();
-    const undoPlan = [];
-    
-    for (const step of lastAction.plan) {
-      undoPlan.push({
-        step: undoPlan.length + 1,
-        description: `Delete ${step.name} (undoing)`,
-        prompt: `Delete the ${step.className} named '${step.name}' from ${step.parentPath} to undo previous action`,
-        type: "delete",
-        className: step.className,
-        name: step.name,
-        parentPath: step.parentPath,
-        reasoning: "Reverting previous creation"
-      });
-    }
-    
-    session.canUndo = session.creationLog.length > 0;
+    session.stepIndex++;
     
     res.json({
-      message: `Undoing last action (${lastAction.plan.length} items)`,
-      plan: undoPlan,
-      type: 'plan',
-      autoExecute: false,
-      needsApproval: true,
-      canUndo: session.canUndo
+      success: true,
+      message: `Executed: ${step.description}`,
+      step: step.step,
+      executedAt: Date.now()
     });
     
   } catch (error) {
-    console.error("Undo Error:", error);
-    res.json({ 
-      message: "Error processing undo",
-      canUndo: false
+    console.error("Step execution error:", error);
+    res.json({
+      success: false,
+      message: `Failed to execute step: ${error.message}`
     });
   }
 });
 
+// Health endpoints
+app.get('/health', (req, res) => {
+  res.json({
+    status: "OK",
+    version: "2.0-multistep",
+    sessions: sessionData.size,
+    geminiConnected: !!process.env.GEMINI_API_KEY
+  });
+});
+
+app.get('/ping', (req, res) => res.send('pong'));
+
+app.get('/session/:id', (req, res) => {
+  const session = getSession(req.params.id);
+  res.json({
+    sessionId: req.params.id,
+    history: session.history.length,
+    createdInstances: session.createdInstances.length,
+    thinkingSteps: session.thinkingSteps
+  });
+});
+
+// Clear session
+app.post('/clear-session', (req, res) => {
+  const { sessionId } = req.body;
+  if (sessionId && sessionData.has(sessionId)) {
+    sessionData.delete(sessionId);
+    res.json({ success: true, message: "Session cleared" });
+  } else {
+    res.json({ success: false, message: "Session not found" });
+  }
+});
+
+// Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🔥 ACIDNADE AI v19.0 – UPGRADED FLOW`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`✅ Ideas → Plan → Build Flow: ENABLED`);
-  console.log(`✅ Individual Step Prompts: ENFORCED`);
-  console.log(`✅ UI-Based Idea Selection: ENABLED`);
-  console.log(`✅ Port: ${PORT}`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`
+╔═══════════════════════════════════════════════════╗
+║      ACIDNADE AI SERVER v2.0 - MULTI-STEP        ║
+╠═══════════════════════════════════════════════════╣
+║ ✅ Multi-step thinking enabled                    ║
+║ ✅ UI Creation via LocalScripts enforced         ║
+║ ✅ Gemini AI Integration                         ║
+║ ✅ Port: ${PORT}${PORT < 1000 ? ' ' : ''}                                   ║
+╚═══════════════════════════════════════════════════╝
+  `);
 });
