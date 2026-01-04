@@ -102,6 +102,12 @@ You must respond with a JSON object containing:
   "reasoning": "Extended explanation of your approach and decisions"
 }
 
+**IMPORTANT**: 
+- ALWAYS include a "plan" array when the user wants you to create/modify something
+- Empty plan [] = just giving information/explanations
+- Plan with steps = actionable code that will be executed
+- The user expects you to BUILD things, not just talk about them!
+
 ## PLAN GUIDELINES
 - For UI: Create a LocalScript in StarterPlayer.StarterPlayerScripts that builds the UI programmatically
 - For game logic: Create Scripts in ServerScriptService
@@ -357,6 +363,23 @@ async function processAIRequest(prompt, context, sessionId) {
 // ROUTES
 // =====================================================
 
+// Root Route - API Info
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Acidnade AI Server',
+    version: '1.4',
+    status: 'online',
+    model: 'gemini-3-flash-preview',
+    endpoints: {
+      'GET /': 'API information',
+      'GET /ping': 'Health check',
+      'POST /ai': 'AI request processing (requires authentication)'
+    },
+    documentation: 'https://github.com/your-repo/acidnade-ai',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Health Check
 app.get('/ping', (req, res) => {
   res.json({ 
@@ -433,6 +456,7 @@ app.listen(PORT, () => {
   console.log('='.repeat(50));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🌍 Environment: ${NODE_ENV}`);
+  console.log(`🤖 Model: gemini-2.0-flash-thinking-exp-1219`);
   console.log(`🧠 Extended Thinking: ENABLED`);
   console.log(`🔒 Auth: ${process.env.ACIDNADE_API_KEY ? 'CONFIGURED' : 'NOT SET'}`);
   console.log(`✅ Ready to accept requests!`);
