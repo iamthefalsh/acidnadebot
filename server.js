@@ -1,10 +1,10 @@
-const express = require('express');
-const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const rateLimit = require('express-rate-limit');
-const helmet = require('helmet');
-const compression = require('compression');
-const dotenv = require('dotenv');
+import express from 'express';
+import cors from 'cors';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
+import compression from 'compression';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
