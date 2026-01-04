@@ -21,11 +21,16 @@ app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 
+// Trust proxy for Vercel/Railway/Render deployment
+app.set('trust proxy', 1);
+
 // Rate Limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,
-  message: { error: 'Too many requests, please try again later.' }
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use('/ai', limiter);
 
@@ -90,11 +95,14 @@ You must respond with a JSON object containing:
     {
       "type": "create" | "modify" | "delete",
       "description": "Clear description of this step",
-      "className": "Script | LocalScript | ModuleScript | etc",
-      "name": "ScriptName",
-      "parentPath": "game.ServerScriptService | game.StarterPlayer.StarterPlayerScripts | etc",
+      "className": "Script | LocalScript | ModuleScript | Part | etc",
+      "name": "ScriptName or InstanceName",
+      "parentPath": "game.ServerScriptService | game.Workspace | etc",
       "properties": {
-        "Source": "-- Lua code here"
+        "Source": "-- Lua code here (for scripts)",
+        "Color": "255, 0, 0",
+        "Material": "Neon",
+        "Size": "10, 5, 10"
       }
     }
   ],
@@ -102,11 +110,98 @@ You must respond with a JSON object containing:
   "reasoning": "Extended explanation of your approach and decisions"
 }
 
-**IMPORTANT**: 
-- ALWAYS include a "plan" array when the user wants you to create/modify something
-- Empty plan [] = just giving information/explanations
-- Plan with steps = actionable code that will be executed
-- The user expects you to BUILD things, not just talk about them!
+**CRITICAL BEHAVIOR RULES**:
+1. **ALWAYS PROVIDE A PLAN** when the user wants to create, modify, delete, or change anything
+2. **NEVER just suggest** - provide the complete executable plan
+3. **AUTO-DETECT INTENT** - Don't require specific keywords like "create" or "make"
+   - "add a red part" = CREATE plan
+   - "change it to blue" = MODIFY plan (if something is selected or recently created)
+   - "make the part bigger" = MODIFY plan with Size property
+   - "remove the script" = DELETE plan
+4. **MODIFICATIONS**: When user wants to change something:
+   - If they reference "it", "that", "the part", use recently created/selected objects
+   - ALWAYS provide a MODIFY plan with the properties to change
+   - NEVER ask "should I modify?" - JUST MODIFY IT
+5. Empty plan [] = ONLY when user asks for information/explanations, NOT when they want something done
+
+## EXAMPLES OF CORRECT BEHAVIOR
+
+**Example 1 - Creating:**
+User: "make a red part"
+Response:
+{
+  "message": "I'll create a red part in the workspace.",
+  "plan": [{
+    "type": "create",
+    "description": "Create red part",
+    "className": "Part",
+    "name": "RedPart",
+    "parentPath": "game.Workspace",
+    "properties": {
+      "Color": "255, 0, 0",
+      "Material": "Plastic",
+      "Size": "4, 1, 2",
+      "Anchored": true
+    }
+  }],
+  "needsApproval": false
+}
+
+**Example 2 - Modifying:**
+User: "make it blue"
+Response:
+{
+  "message": "Changing the part to blue.",
+  "plan": [{
+    "type": "modify",
+    "description": "Change color to blue",
+    "name": "RedPart",
+    "parentPath": "game.Workspace",
+    "properties": {
+      "Color": "0, 0, 255"
+    }
+  }],
+  "needsApproval": false
+}
+
+**Example 3 - Script Creation:**
+User: "create a coin system"
+Response:
+{
+  "message": "I'll create a complete coin collection system with server script and client UI.",
+  "plan": [
+    {
+      "type": "create",
+      "description": "Create server-side coin manager",
+      "className": "Script",
+      "name": "CoinManager",
+      "parentPath": "game.ServerScriptService",
+      "properties": {
+        "Source": "-- Server coin management script here"
+      }
+    },
+    {
+      "type": "create", 
+      "description": "Create client UI for coin display",
+      "className": "LocalScript",
+      "name": "CoinUI",
+      "parentPath": "game.StarterPlayer.StarterPlayerScripts",
+      "properties": {
+        "Source": "-- Client UI script here"
+      }
+    }
+  ],
+  "needsApproval": true
+}
+
+**Example 4 - Information Only:**
+User: "how does RemoteEvent work?"
+Response:
+{
+  "message": "RemoteEvents are used for client-server communication...",
+  "plan": [],
+  "needsApproval": false
+}
 
 ## PLAN GUIDELINES
 - For UI: Create a LocalScript in StarterPlayer.StarterPlayerScripts that builds the UI programmatically
@@ -127,56 +222,56 @@ You must respond with a JSON object containing:
 When setting properties, use these EXACT formats:
 
 **Colors** - Use RGB format (0-255):
-\`\`\`json
+```json
 "Color": "255, 0, 0"
 "BackgroundColor3": "0, 255, 0"
 "TextColor3": "100, 150, 200"
-\`\`\`
+```
 
 **Named Colors** (also accepted):
 "red", "green", "blue", "yellow", "cyan", "magenta", "white", "black", "gray", "orange", "purple", "pink", "brown"
 
 **Vectors** - Use X, Y, Z format:
-\`\`\`json
+```json
 "Position": "0, 10, 0"
 "Size": "10, 5, 10"
-\`\`\`
+```
 
 **UDim2** (UI positions/sizes) - Use Scale, Offset, Scale, Offset:
-\`\`\`json
+```json
 "Position": "0.5, -100, 0.5, -50"  // Centered
 "Size": "0, 200, 0, 100"           // 200x100 pixels
-\`\`\`
+```
 
 **Enums** - Use JUST the item name (no "Enum." prefix):
-\`\`\`json
+```json
 "Material": "Neon"
 "Font": "SourceSansBold"
 "Shape": "Ball"
 "TopSurface": "Smooth"
-\`\`\`
+```
 
 **Asset IDs** - Just the number:
-\`\`\`json
+```json
 "Image": "123456789"
 "Texture": "987654321"
 "MeshId": "111222333"
-\`\`\`
+```
 
 **Booleans**:
-\`\`\`json
+```json
 "Anchored": true
 "CanCollide": false
 "Visible": true
-\`\`\`
+```
 
 **Numbers**:
-\`\`\`json
+```json
 "Transparency": 0.5
 "Reflectance": 0.3
 "TextSize": 24
 "Brightness": 2
-\`\`\`
+```
 
 ## COMMON ROBLOX PROPERTIES BY TYPE
 
@@ -249,6 +344,7 @@ function optimizeContext(context) {
     projectStats: context.project?.Statistics || {},
     recentScripts: [],
     selectedObjects: context.selectedObjects || [],
+    lastCreated: context.lastCreated || null,
     recentChanges: [],
     chatSummary: []
   };
@@ -277,7 +373,7 @@ function optimizeContext(context) {
       }));
   }
 
-  // Summarize chat history (last 5 exchanges)
+  // Summarize chat history (last 10 exchanges)
   if (context.chatHistory) {
     optimized.chatSummary = context.chatHistory
       .slice(-10)
@@ -306,13 +402,29 @@ function buildPrompt(userPrompt, context) {
     prompt += `- Total Instances: ${optimizedContext.projectStats.TotalInstances || 0}\n\n`;
   }
 
-  // Add selected objects
+  // Add selected objects with detailed properties
   if (optimizedContext.selectedObjects?.length > 0) {
     prompt += `## CURRENTLY SELECTED\n`;
     optimizedContext.selectedObjects.forEach(obj => {
       prompt += `- ${obj.Name} (${obj.ClassName}) at ${obj.Path}\n`;
+      
+      // Add current properties if available
+      if (obj.CurrentProperties && Object.keys(obj.CurrentProperties).length > 0) {
+        prompt += `  Current properties:\n`;
+        for (const [prop, value] of Object.entries(obj.CurrentProperties)) {
+          prompt += `  - ${prop}: ${value}\n`;
+        }
+      }
     });
     prompt += `\n`;
+  }
+
+  // Add last created object info
+  if (optimizedContext.lastCreated) {
+    prompt += `## RECENTLY CREATED\n`;
+    prompt += `- ${optimizedContext.lastCreated.name} (${optimizedContext.lastCreated.className}) at ${optimizedContext.lastCreated.path}\n`;
+    prompt += `- Created ${optimizedContext.lastCreated.createdSecondsAgo} seconds ago\n`;
+    prompt += `- When user says "it", "that", or "the ${optimizedContext.lastCreated.className.toLowerCase()}", they mean this object\n\n`;
   }
 
   // Add recent changes
@@ -380,12 +492,23 @@ async function processAIRequest(prompt, context, sessionId) {
     console.log(`[AI] Sending to Gemini with extended thinking mode...`);
     const startTime = Date.now();
 
-    // Send request
+    // Send request with thinking mode
     const result = await model.generateContent(fullPrompt);
     const response = result.response;
     const thinkingTime = Date.now() - startTime;
 
     console.log(`[AI] Response received in ${thinkingTime}ms`);
+
+    // Extract thinking process if available
+    let thinkingProcess = null;
+    if (response.candidates?.[0]?.content?.parts) {
+      const parts = response.candidates[0].content.parts;
+      const thinkingPart = parts.find(part => part.thought === true);
+      if (thinkingPart) {
+        thinkingProcess = thinkingPart.text;
+        console.log(`[AI] Extended thinking captured (${thinkingProcess.length} chars)`);
+      }
+    }
 
     // Get the main response
     const text = response.text();
@@ -398,8 +521,8 @@ async function processAIRequest(prompt, context, sessionId) {
       const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
       aiResponse = JSON.parse(cleanedText);
     } catch (parseError) {
-      console.error('[AI] JSON parse error:', parseError.message);
-      console.error('[AI] Raw response sample:', text.substring(0, 500));
+      console.error('[AI] JSON parse error:', parseError);
+      console.error('[AI] Raw response:', text.substring(0, 500));
       
       // Fallback response
       aiResponse = {
@@ -426,8 +549,13 @@ async function processAIRequest(prompt, context, sessionId) {
       thinkingTime: thinkingTime,
       model: MODEL_NAME,
       sessionId: sessionId,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      hadExtendedThinking: !!thinkingProcess
     };
+
+    if (NODE_ENV === 'development' && thinkingProcess) {
+      aiResponse.thinkingProcess = thinkingProcess.substring(0, 1000); // Include in dev mode
+    }
 
     console.log(`[AI] Generated ${aiResponse.plan.length} step(s)`);
     console.log(`[AI] Needs approval: ${aiResponse.needsApproval}`);
@@ -435,7 +563,7 @@ async function processAIRequest(prompt, context, sessionId) {
     return aiResponse;
 
   } catch (error) {
-    console.error('[AI] Error:', error.message);
+    console.error('[AI] Error:', error);
     
     // Detailed error response
     return {
@@ -456,7 +584,7 @@ async function processAIRequest(prompt, context, sessionId) {
 app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI Server',
-    version: '1.5',
+    version: '1.4',
     status: 'online',
     model: 'gemini-3-flash-preview',
     endpoints: {
@@ -464,6 +592,7 @@ app.get('/', (req, res) => {
       'GET /ping': 'Health check',
       'POST /ai': 'AI request processing (requires authentication)'
     },
+    documentation: 'https://github.com/your-repo/acidnade-ai',
     timestamp: new Date().toISOString()
   });
 });
@@ -473,7 +602,7 @@ app.get('/ping', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    version: '1.5',
+    version: '1.4',
     model: 'gemini-3-flash-preview'
   });
 });
@@ -508,7 +637,7 @@ app.post('/ai', authenticateRequest, async (req, res) => {
     res.json(aiResponse);
 
   } catch (error) {
-    console.error('[Error] Request processing failed:', error.message);
+    console.error('[Error] Request processing failed:', error);
     res.status(500).json({ 
       error: 'Internal Server Error',
       message: NODE_ENV === 'development' ? error.message : 'An error occurred',
@@ -520,7 +649,7 @@ app.post('/ai', authenticateRequest, async (req, res) => {
 
 // Error Handler
 app.use((err, req, res, next) => {
-  console.error('[Error]', err.message);
+  console.error('[Error]', err);
   res.status(500).json({ 
     error: 'Internal Server Error',
     message: NODE_ENV === 'development' ? err.message : 'Something went wrong'
@@ -545,6 +674,7 @@ app.listen(PORT, () => {
   console.log(`📡 Port: ${PORT}`);
   console.log(`🌍 Environment: ${NODE_ENV}`);
   console.log(`🤖 Model: gemini-3-flash-preview`);
+  console.log(`🧠 Extended Thinking: ENABLED`);
   console.log(`🔒 Auth: ${process.env.ACIDNADE_API_KEY ? 'CONFIGURED' : 'NOT SET'}`);
   console.log(`✅ Ready to accept requests!`);
   console.log('='.repeat(50));
