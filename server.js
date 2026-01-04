@@ -123,6 +123,109 @@ You must respond with a JSON object containing:
 - Add helpful comments explaining complex logic
 - Follow Roblox coding standards
 
+## PROPERTY FORMATS (CRITICAL)
+When setting properties, use these EXACT formats:
+
+**Colors** - Use RGB format (0-255):
+```json
+"Color": "255, 0, 0"
+"BackgroundColor3": "0, 255, 0"
+"TextColor3": "100, 150, 200"
+```
+
+**Named Colors** (also accepted):
+"red", "green", "blue", "yellow", "cyan", "magenta", "white", "black", "gray", "orange", "purple", "pink", "brown"
+
+**Vectors** - Use X, Y, Z format:
+```json
+"Position": "0, 10, 0"
+"Size": "10, 5, 10"
+```
+
+**UDim2** (UI positions/sizes) - Use Scale, Offset, Scale, Offset:
+```json
+"Position": "0.5, -100, 0.5, -50"  // Centered
+"Size": "0, 200, 0, 100"           // 200x100 pixels
+```
+
+**Enums** - Use JUST the item name (no "Enum." prefix):
+```json
+"Material": "Neon"
+"Font": "SourceSansBold"
+"Shape": "Ball"
+"TopSurface": "Smooth"
+```
+
+**Asset IDs** - Just the number:
+```json
+"Image": "123456789"
+"Texture": "987654321"
+"MeshId": "111222333"
+```
+
+**Booleans**:
+```json
+"Anchored": true
+"CanCollide": false
+"Visible": true
+```
+
+**Numbers**:
+```json
+"Transparency": 0.5
+"Reflectance": 0.3
+"TextSize": 24
+"Brightness": 2
+```
+
+## COMMON ROBLOX PROPERTIES BY TYPE
+
+**Part Properties:**
+- Position (Vector3): "X, Y, Z"
+- Size (Vector3): "X, Y, Z"
+- Color (Color3): "R, G, B" (0-255)
+- Material (Enum): "Plastic", "Neon", "Metal", "Wood", "Granite", "Grass", etc.
+- Transparency (number): 0 (opaque) to 1 (invisible)
+- Anchored (boolean): true/false
+- CanCollide (boolean): true/false
+- CFrame (CFrame): "X, Y, Z"
+- BrickColor (string): "Bright red", "Bright blue", etc.
+
+**GUI Properties (Frame, TextLabel, TextButton, etc):**
+- BackgroundColor3 (Color3): "R, G, B"
+- BackgroundTransparency (number): 0-1
+- Position (UDim2): "XScale, XOffset, YScale, YOffset"
+- Size (UDim2): "XScale, XOffset, YScale, YOffset"
+- TextColor3 (Color3): "R, G, B"
+- Text (string): any text
+- TextSize (number): font size in pixels
+- Font (Enum): "SourceSans", "SourceSansBold", "Arial", "Gotham", etc.
+- TextXAlignment (Enum): "Left", "Center", "Right"
+- TextYAlignment (Enum): "Top", "Center", "Bottom"
+- Visible (boolean): true/false
+
+**ImageLabel/ImageButton Properties:**
+- Image (Content): asset ID number
+- ImageColor3 (Color3): tint color "R, G, B"
+- ImageTransparency (number): 0-1
+- ScaleType (Enum): "Stretch", "Slice", "Tile", "Fit", "Crop"
+
+**Light Properties (PointLight, SpotLight, SurfaceLight):**
+- Brightness (number): light intensity
+- Color (Color3): "R, G, B"
+- Range (number): how far light reaches
+- Shadows (boolean): true/false
+
+**Sound Properties:**
+- SoundId (Content): asset ID
+- Volume (number): 0-1
+- Playing (boolean): true/false to start/stop
+- Looped (boolean): true/false
+
+**Script Properties:**
+- Source (string): the Lua code
+- Enabled (boolean): whether script runs
+
 ## CONTEXT AWARENESS
 You receive:
 - Project snapshot (existing scripts, UI elements, structure)
@@ -256,9 +359,11 @@ async function processAIRequest(prompt, context, sessionId) {
     console.log(`[AI] Processing request for session: ${sessionId}`);
     console.log(`[AI] Prompt length: ${prompt.length} chars`);
 
-    // Initialize model with EXTENDED THINKING
+    // Initialize model with GEMINI 3 FLASH PREVIEW
+    const MODEL_NAME = "gemini-3-flash-preview";
+    
     const model = genAI.getGenerativeModel({
-      model: "gemini-3-flash-preview",
+      model: MODEL_NAME,
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
@@ -330,7 +435,7 @@ async function processAIRequest(prompt, context, sessionId) {
     // Add metadata
     aiResponse.metadata = {
       thinkingTime: thinkingTime,
-      model: "gemini-3-flash-preview",
+      model: MODEL_NAME,
       sessionId: sessionId,
       timestamp: new Date().toISOString(),
       hadExtendedThinking: !!thinkingProcess
@@ -456,7 +561,7 @@ app.listen(PORT, () => {
   console.log('='.repeat(50));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🌍 Environment: ${NODE_ENV}`);
-  console.log(`🤖 Model: gemini-2.0-flash-thinking-exp-1219`);
+  console.log(`🤖 Model: gemini-3-flash-preview`);
   console.log(`🧠 Extended Thinking: ENABLED`);
   console.log(`🔒 Auth: ${process.env.ACIDNADE_API_KEY ? 'CONFIGURED' : 'NOT SET'}`);
   console.log(`✅ Ready to accept requests!`);
