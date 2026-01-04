@@ -252,7 +252,7 @@ async function processAIRequest(prompt, context, sessionId) {
 
     // Initialize model with EXTENDED THINKING
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash-thinking-exp-1219",
+      model: "gemini-3-flash-preview",
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
@@ -363,7 +363,7 @@ app.get('/ping', (req, res) => {
     status: 'ok', 
     timestamp: new Date().toISOString(),
     version: '1.4',
-    model: 'gemini-2.0-flash-thinking-exp-1219'
+    model: 'gemini-3-flash-preview'
   });
 });
 
