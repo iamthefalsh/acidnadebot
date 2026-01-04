@@ -11,37 +11,89 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: '*' }));
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// API Key Authentication
+// Fixed: Use the exact API key from the plugin configuration
+const PLUGIN_API_KEY = "acidnadesecretkey"; // This MUST match the plugin's CONFIG.API_KEY
+
+// API Key Authentication - FIXED
 app.use((req, res, next) => {
   const clientKey = req.headers['x-acidnade-key'];
-  const serverKey = process.env.ACIDNADE_API_KEY || "acidnadesecretkey";
   
-  if (clientKey !== serverKey) {
-    return res.status(403).json({ 
+  console.log(`🔑 Received API Key: ${clientKey ? '***' + clientKey.slice(-4) : 'NOT PROVIDED'}`);
+  console.log(`🔑 Expected API Key: ***${PLUGIN_API_KEY.slice(-4)}`);
+  
+  // Allow health checks without API key
+  if (req.path === '/health' || req.path === '/ping' || req.path === '/') {
+    return next();
+  }
+  
+  if (!clientKey) {
+    console.error('❌ No API key provided in X-Acidnade-Key header');
+    return res.status(401).json({ 
       error: true,
-      message: "Invalid API key. Check your X-Acidnade-Key header."
+      message: "API key required. Set X-Acidnade-Key header to 'acidnadesecretkey'"
     });
   }
+  
+  if (clientKey !== PLUGIN_API_KEY) {
+    console.error(`❌ Invalid API key: Expected ${PLUGIN_API_KEY}, got ${clientKey}`);
+    return res.status(403).json({ 
+      error: true,
+      message: "Invalid API key. Make sure you're using 'acidnadesecretkey' in your plugin"
+    });
+  }
+  
+  console.log('✅ API key validated successfully');
   next();
 });
 
 // Initialize Gemini AI
 if (!process.env.GEMINI_API_KEY) {
-  console.error("ERROR: Missing GEMINI_API_KEY environment variable");
-  console.error("Set it with: export GEMINI_API_KEY=your_gemini_key_here");
-  process.exit(1);
+  console.error("❌ ERROR: Missing GEMINI_API_KEY environment variable");
+  console.error("💡 Get one from: https://makersuite.google.com/app/apikey");
+  console.error("💡 Then set it with: export GEMINI_API_KEY=your_key_here");
+  console.error("💡 Or create a .env file with GEMINI_API_KEY=your_key_here");
+  
+  // Create a default AI that returns placeholder responses if no key
+  console.warn("⚠️  WARNING: Running in demo mode without real AI");
+  const mockAI = {
+    generateContent: async () => ({
+      response: {
+        text: () => JSON.stringify({
+          thinking: "Running in demo mode - no Gemini API key configured",
+          message: "I'd help you create that, but I'm in demo mode. Please set GEMINI_API_KEY.",
+          plan: [{
+            step: 1,
+            type: "create",
+            className: "Script",
+            name: "ExampleScript",
+            parentPath: "game.ServerScriptService",
+            properties: {
+              Source: `-- Demo mode: No AI key configured\n-- Set GEMINI_API_KEY environment variable\n-- Get key from: https://makersuite.google.com/app/apikey\n\nprint("Hello from Acidnade AI Demo Mode!")`
+            },
+            description: "Example script (demo mode)",
+            reasoning: "Running without Gemini API key"
+          }],
+          autoExecute: false,
+          needsApproval: false
+        })
+      }
+    })
+  };
+  
+  var model = mockAI;
+} else {
+  console.log("✅ Gemini API key loaded successfully");
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  var model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-pro",
+    generationConfig: {
+      temperature: 0.7,
+      topP: 0.95,
+      topK: 64,
+      maxOutputTokens: 8192,
+    }
+  });
 }
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-pro",
-  generationConfig: {
-    temperature: 0.7,
-    topP: 0.95,
-    topK: 64,
-    maxOutputTokens: 8192,
-  }
-});
 
 // Session management
 const sessionData = new Map();
@@ -146,8 +198,9 @@ function generateUICreationCode(step) {
   code += `-- Creates a ${className} named "${name}"\n\n`;
   
   // Create the UI instance
-  code += `local ${name.replace(/[^a-zA-Z0-9]/g, '')} = Instance.new("${className}")\n`;
-  code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.Name = "${name}"\n\n`;
+  const varName = name.replace(/[^a-zA-Z0-9]/g, '_');
+  code += `local ${varName} = Instance.new("${className}")\n`;
+  code += `${varName}.Name = "${name}"\n\n`;
   
   // Apply properties
   code += `-- Set properties\n`;
@@ -157,29 +210,29 @@ function generateUICreationCode(step) {
     if (typeof value === 'string') {
       // Handle Color3 strings
       if (value.startsWith('Color3.fromRGB')) {
-        code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
+        code += `${varName}.${key} = ${value}\n`;
       } else if (value.startsWith('UDim2.new')) {
-        code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
+        code += `${varName}.${key} = ${value}\n`;
       } else {
-        code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = "${value.replace(/"/g, '\\"')}"\n`;
+        code += `${varName}.${key} = "${value.replace(/"/g, '\\"')}"\n`;
       }
     } else if (typeof value === 'number') {
-      code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
+      code += `${varName}.${key} = ${value}\n`;
     } else if (typeof value === 'boolean') {
-      code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.${key} = ${value}\n`;
+      code += `${varName}.${key} = ${value}\n`;
     }
   }
   
   // Set parent based on parentPath
   code += `\n-- Parent the UI element\n`;
   if (parentPath.includes("StarterGui")) {
-    code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.Parent = game.StarterGui\n`;
+    code += `${varName}.Parent = game.StarterGui\n`;
   } else if (parentPath.includes("PlayerGui")) {
     code += `local Players = game:GetService("Players")\n`;
-    code += `${name.replace(/[^a-zA-Z0-9]/g, '')}.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")\n`;
+    code += `${varName}.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")\n`;
   } else {
-    code += `-- Note: Custom parent path detected\n`;
-    code += `-- ${name.replace(/[^a-zA-Z0-9]/g, '')}.Parent should be set by your game logic\n`;
+    code += `-- Note: Custom parent path "${parentPath}" detected\n`;
+    code += `-- ${varName}.Parent should be set by your game logic\n`;
   }
   
   code += `\nprint("✅ UI created: ${name}")\n`;
@@ -222,7 +275,7 @@ Be concise and focused.`;
       return JSON.parse(jsonMatch[0]);
     }
   } catch (error) {
-    console.error("Analysis error:", error);
+    console.error("Analysis error:", error.message);
   }
   
   // Default fallback
@@ -311,7 +364,7 @@ If UI elements are needed, create a LocalScript that generates them.`;
             step: index + 1,
             type: "create",
             className: "LocalScript",
-            name: `Create${step.name}UI`,
+            name: `Create${step.name.replace(/[^a-zA-Z0-9]/g, '')}UI`,
             parentPath: getParentPath("create", "LocalScript"),
             properties: {
               Source: generateUICreationCode(step),
@@ -341,7 +394,7 @@ If UI elements are needed, create a LocalScript that generates them.`;
       return steps;
     }
   } catch (error) {
-    console.error("Plan generation error:", error);
+    console.error("Plan generation error:", error.message);
   }
   
   // Fallback simple step
@@ -349,10 +402,10 @@ If UI elements are needed, create a LocalScript that generates them.`;
     step: 1,
     type: "create",
     className: "Script",
-    name: "NewScript",
+    name: `NewScript_${Date.now()}`,
     parentPath: "game.ServerScriptService",
     properties: {
-      Source: `-- Created by Acidnade AI\n-- Request: ${prompt}\n\nprint("Hello from Acidnade!")`
+      Source: `-- Created by Acidnade AI\n-- Request: ${prompt}\n\nprint("Hello from Acidnade AI!")`
     },
     description: "Create a new script for the request",
     reasoning: "Fallback creation"
@@ -404,7 +457,7 @@ Return validation in JSON format:
       return validation;
     }
   } catch (error) {
-    console.error("Validation error:", error);
+    console.error("Validation error:", error.message);
   }
   
   return {
@@ -485,91 +538,70 @@ app.post('/ai', async (req, res) => {
   }
 });
 
-// Execute single step
-app.post('/execute-step', async (req, res) => {
-  try {
-    const { step, sessionId } = req.body;
-    const session = getSession(sessionId);
-    
-    console.log(`[${sessionId}] Executing step: ${step.description}`);
-    
-    // Simulate execution with thinking
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Track execution
-    if (step.type === "create") {
-      session.createdInstances.push({
-        ...step,
-        timestamp: Date.now()
-      });
-    } else if (step.type === "modify") {
-      session.modifiedInstances.push({
-        ...step,
-        timestamp: Date.now()
-      });
-    }
-    
-    session.stepIndex++;
-    
-    res.json({
-      success: true,
-      message: `Executed: ${step.description}`,
-      step: step.step,
-      executedAt: Date.now()
-    });
-    
-  } catch (error) {
-    console.error("Step execution error:", error);
-    res.json({
-      success: false,
-      message: `Failed to execute step: ${error.message}`
-    });
-  }
-});
-
 // Health endpoints
 app.get('/health', (req, res) => {
   res.json({
     status: "OK",
     version: "2.0-multistep",
     sessions: sessionData.size,
-    geminiConnected: !!process.env.GEMINI_API_KEY
+    apiKey: PLUGIN_API_KEY ? "Configured" : "Missing",
+    geminiKey: process.env.GEMINI_API_KEY ? "Configured" : "Missing (Demo Mode)"
   });
 });
 
-app.get('/ping', (req, res) => res.send('pong'));
-
-app.get('/session/:id', (req, res) => {
-  const session = getSession(req.params.id);
-  res.json({
-    sessionId: req.params.id,
-    history: session.history.length,
-    createdInstances: session.createdInstances.length,
-    thinkingSteps: session.thinkingSteps
-  });
+app.get('/ping', (req, res) => {
+  res.send('pong');
 });
 
-// Clear session
-app.post('/clear-session', (req, res) => {
-  const { sessionId } = req.body;
-  if (sessionId && sessionData.has(sessionId)) {
-    sessionData.delete(sessionId);
-    res.json({ success: true, message: "Session cleared" });
-  } else {
-    res.json({ success: false, message: "Session not found" });
-  }
+app.get('/', (req, res) => {
+  res.send(`
+    <html>
+      <head><title>Acidnade AI Server</title></head>
+      <body style="font-family: Arial, sans-serif; padding: 20px; background: #f0f0f0;">
+        <div style="max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <h1>🤖 Acidnade AI Server v2.0</h1>
+          <p><strong>Status:</strong> ✅ Running</p>
+          <p><strong>Plugin API Key:</strong> ${PLUGIN_API_KEY}</p>
+          <p><strong>AI Provider:</strong> ${process.env.GEMINI_API_KEY ? "Gemini AI" : "Demo Mode"}</p>
+          <hr>
+          <h3>Endpoints:</h3>
+          <ul>
+            <li><code>POST /ai</code> - Main AI endpoint (requires X-Acidnade-Key header)</li>
+            <li><code>GET /health</code> - Health check</li>
+            <li><code>GET /ping</code> - Simple ping</li>
+          </ul>
+          <hr>
+          <h3>Plugin Setup:</h3>
+          <p>Make sure your Acidnade plugin has <code>API_KEY = "acidnadesecretkey"</code></p>
+          <h3>Environment Variables:</h3>
+          <ul>
+            <li><code>GEMINI_API_KEY</code> - Your Google Gemini API key (optional for demo)</li>
+            <li><code>PORT</code> - Server port (default: 3000)</li>
+          </ul>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ╔═══════════════════════════════════════════════════╗
-║      ACIDNADE AI SERVER v2.0 - MULTI-STEP        ║
+║      ACIDNADE AI SERVER v2.0 - FIXED API KEY     ║
 ╠═══════════════════════════════════════════════════╣
+║ ✅ Plugin API Key: "${PLUGIN_API_KEY}"            ║
+║ ✅ Port: ${PORT}                                  ║
 ║ ✅ Multi-step thinking enabled                    ║
 ║ ✅ UI Creation via LocalScripts enforced         ║
-║ ✅ Gemini AI Integration                         ║
-║ ✅ Port: ${PORT}${PORT < 1000 ? ' ' : ''}                                   ║
 ╚═══════════════════════════════════════════════════╝
+  
+  IMPORTANT: Make sure your Acidnade plugin has:
+  CONFIG.API_KEY = "acidnadesecretkey"
+  
+  The plugin must send this header with every request:
+  X-Acidnade-Key: acidnadesecretkey
+  
+  Gemini API Key: ${process.env.GEMINI_API_KEY ? '✅ Configured' : '❌ Not configured (Demo Mode)'}
   `);
 });
