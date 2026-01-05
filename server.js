@@ -60,6 +60,7 @@ You are Acidnade AI, an expert Roblox Studio AI assistant.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Lua scripting (Script, LocalScript, ModuleScript)
 - Roblox services & APIs
+- ALL Roblox instance types (Parts, Models, Tools, Sounds, Lights, etc.)
 - Client-server architecture
 - UI systems built programmatically
 - Security & exploit prevention
@@ -77,19 +78,30 @@ The plan MUST:
 - Create a **LocalScript**
 - That LocalScript creates all UI instances
 
-### 2. SCRIPT LOCATIONS (STRICT)
+### 2. INSTANCE CREATION RULES
+- Part/Model/Tool → game.Workspace or game.ServerStorage
 - Script → game.ServerScriptService
 - LocalScript → game.StarterPlayer.StarterPlayerScripts
 - ModuleScript → game.ReplicatedStorage
+- Sound → game.Workspace or game.ServerStorage
+- Light → game.Workspace
+- Folder → Anywhere needed
+- RemoteEvent/RemoteFunction → game.ReplicatedStorage
 
 ❌ NEVER place executable scripts in ServerStorage.
 
-### 3. SECURITY
+### 3. INSTANCE SEARCH FUNCTIONALITY
+When user mentions an existing object (like "health bar", "door", "coin"):
+1. First search for existing instances with similar names
+2. If found, consider modifying it instead of creating new
+3. Reference found objects in your response
+
+### 4. SECURITY
 - Never trust client input
 - Server validates everything
 - RemoteEvents are REQUIRED for client → server communication
 
-### 4. PERFORMANCE
+### 5. PERFORMANCE
 - Avoid unnecessary loops
 - Avoid GetChildren spam
 - Prefer events and CollectionService
@@ -104,11 +116,14 @@ The plan MUST:
     {
       "type": "create | modify | delete",
       "description": "What this step does",
-      "className": "Script | LocalScript | ModuleScript",
+      "className": "Script | LocalScript | ModuleScript | Part | Model | Tool | Sound | etc.",
       "name": "DescriptiveUniqueName",
-      "parentPath": "game.ServerScriptService | game.StarterPlayer.StarterPlayerScripts | game.ReplicatedStorage",
+      "parentPath": "game.ServerScriptService | game.StarterPlayer.StarterPlayerScripts | game.Workspace | etc.",
       "properties": {
-        "Source": "-- Full Lua source code"
+        "Source": "-- Full Lua source code (for scripts)",
+        "Color": "255, 0, 0",
+        "Size": "5, 5, 5",
+        ... other properties ...
       }
     }
   ],
@@ -128,8 +143,9 @@ RULES:
 - UI requests → LocalScript ONLY
 - Server logic → Script ONLY
 - Shared logic → ModuleScript ONLY
+- Parts/Models → game.Workspace ONLY
 - No random or generic names
-- No duplicate scripts
+- No duplicate instances
 - Destructive actions → needsApproval = true
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -162,20 +178,59 @@ true / false
 24, 0.5, 100
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CONTEXT AWARENESS
+## CONTEXT AWARENESS & SEARCH
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-You may receive:
-- Existing scripts
+You will receive:
+- Existing instances (list of names, class names, and paths)
 - Selected instances
 - Project structure
 - Previous actions
 
 You MUST:
-- Modify existing scripts when relevant
-- Avoid duplicates
-- Build on prior work
-- Reference objects by exact name
+1. SEARCH FIRST: When user mentions something (like "health bar"), look for existing instances with similar names
+2. USE FOUND INSTANCES: If found, modify instead of create
+3. REFERENCE BY NAME: Use exact instance names in your plan
+4. AVOID DUPLICATES: Check existing names before creating
+
+Example user request: "Update my health bar and make it green"
+Your action: 
+1. Search for "health bar" in existing instances
+2. If found HealthBarUI, modify its color property
+3. If not found, create new
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## COMMON INSTANCE TYPES & PROPERTIES
+
+### Part
+- className: "Part"
+- parentPath: "game.Workspace"
+- properties: { "Color": "0, 255, 0", "Size": "5, 5, 5", "Position": "0, 10, 0" }
+
+### Model
+- className: "Model"
+- parentPath: "game.Workspace"
+- properties: {}
+
+### Tool
+- className: "Tool"
+- parentPath: "game.StarterPack" or "game.ServerStorage"
+- properties: { "CanBeDropped": true, "RequiresHandle": true }
+
+### Sound
+- className: "Sound"
+- parentPath: "game.Workspace"
+- properties: { "SoundId": "rbxassetid://123456", "Volume": 0.5 }
+
+### PointLight
+- className: "PointLight"
+- parentPath: "game.Workspace"
+- properties: { "Brightness": 2, "Range": 20, "Color": "255, 255, 255" }
+
+### Folder (for organization)
+- className: "Folder"
+- parentPath: "game.Workspace" or "game.ServerStorage"
+- properties: {}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 THINK CAREFULLY.
@@ -183,7 +238,7 @@ You are expected to EXECUTE, not speculate.
 `;
 
 // =====================================================
-// CONTEXT OPTIMIZER
+// ENHANCED CONTEXT OPTIMIZER WITH INSTANCE SEARCH
 // =====================================================
 function optimizeContext(context) {
   const optimized = {
@@ -191,10 +246,23 @@ function optimizeContext(context) {
     recentScripts: [],
     selectedObjects: context.selectedObjects || [],
     recentChanges: [],
-    chatSummary: []
+    chatSummary: [],
+    existingInstances: [], // NEW: All instances for search
+    foundInstances: []     // NEW: Instances found based on user query
   };
 
-  // Extract recent script info (last 10)
+  // Extract all instances for search functionality
+  if (context.project?.AllInstances) {
+    optimized.existingInstances = context.project.AllInstances
+      .map(instance => ({
+        name: instance.Name,
+        className: instance.ClassName,
+        path: instance.Path,
+        properties: instance.Properties || {}
+      }));
+  }
+
+  // Extract recent script info
   if (context.project?.ScriptDetails) {
     optimized.recentScripts = context.project.ScriptDetails
       .slice(-10)
@@ -202,7 +270,7 @@ function optimizeContext(context) {
         name: script.Name,
         type: script.Type,
         path: script.Path,
-        preview: script.Preview?.substring(0, 200) // Limit preview length
+        preview: script.Preview?.substring(0, 200)
       }));
   }
 
@@ -218,17 +286,142 @@ function optimizeContext(context) {
       }));
   }
 
-  // Summarize chat history (last 5 exchanges)
+  // Summarize chat history
   if (context.chatHistory) {
     optimized.chatSummary = context.chatHistory
       .slice(-10)
       .map(msg => ({
         role: msg.role,
-        content: msg.content?.substring(0, 500) // Limit content length
+        content: msg.content?.substring(0, 500)
       }));
   }
 
   return optimized;
+}
+
+// =====================================================
+// ENHANCED PROMPT BUILDER WITH INSTANCE SEARCH
+// =====================================================
+function buildPrompt(userPrompt, context) {
+  const optimizedContext = optimizeContext(context);
+  
+  let prompt = `## USER REQUEST\n${userPrompt}\n\n`;
+  
+  // SEARCH FOR INSTANCES MENTIONED IN USER PROMPT
+  const searchTerms = extractSearchTerms(userPrompt);
+  const foundInstances = searchInstances(searchTerms, optimizedContext.existingInstances);
+  
+  prompt += `## SEARCH RESULTS FOR "${searchTerms.join(', ')}"\n`;
+  if (foundInstances.length > 0) {
+    prompt += `Found ${foundInstances.length} matching instance(s):\n`;
+    foundInstances.forEach(instance => {
+      prompt += `- ${instance.name} (${instance.className}) at ${instance.path}\n`;
+    });
+    prompt += `\nRECOMMENDATION: Consider modifying these existing instances instead of creating new ones.\n\n`;
+  } else {
+    prompt += `No existing instances found matching your request. Will create new instances.\n\n`;
+  }
+
+  // Add project context
+  if (optimizedContext.projectStats) {
+    prompt += `## PROJECT STATE\n`;
+    prompt += `- Total Instances: ${optimizedContext.projectStats.TotalInstances || 0}\n`;
+    prompt += `- Total Scripts: ${optimizedContext.projectStats.TotalScripts || 0}\n`;
+    prompt += `- Total UI Elements: ${optimizedContext.projectStats.TotalUI || 0}\n\n`;
+  }
+
+  // Add selected objects
+  if (optimizedContext.selectedObjects?.length > 0) {
+    prompt += `## CURRENTLY SELECTED\n`;
+    optimizedContext.selectedObjects.forEach(obj => {
+      prompt += `- ${obj.Name} (${obj.ClassName}) at ${obj.Path}\n`;
+    });
+    prompt += `\n`;
+  }
+
+  // Add recent changes
+  if (optimizedContext.recentChanges?.length > 0) {
+    prompt += `## RECENT CHANGES\n`;
+    optimizedContext.recentChanges.forEach(change => {
+      prompt += `- ${change.name} (${change.type}): ${change.description || 'Created'}\n`;
+    });
+    prompt += `\n`;
+  }
+
+  // Add chat history summary
+  if (optimizedContext.chatSummary?.length > 0) {
+    prompt += `## RECENT CONVERSATION\n`;
+    optimizedContext.chatSummary.forEach(msg => {
+      const role = msg.role === 'user' ? 'User' : 'Assistant';
+      prompt += `${role}: ${msg.content}\n`;
+    });
+    prompt += `\n`;
+  }
+
+  prompt += `## INSTRUCTIONS\n`;
+  prompt += `Analyze the request and search results. If instances were found, MODIFY them instead of creating new ones.\n`;
+  prompt += `Remember: UI must be created by LocalScripts, not directly as instances!\n`;
+  prompt += `Provide specific property changes for modifications.\n\n`;
+  prompt += `Respond ONLY with valid JSON matching the required format.`;
+
+  return prompt;
+}
+
+// =====================================================
+// SEARCH FUNCTIONS
+// =====================================================
+function extractSearchTerms(userPrompt) {
+  const terms = [];
+  const lowerPrompt = userPrompt.toLowerCase();
+  
+  // Common Roblox object keywords
+  const keywords = [
+    'health', 'bar', 'gui', 'ui', 'door', 'coin', 'money', 'score',
+    'platform', 'wall', 'floor', 'light', 'sound', 'music', 'particle',
+    'button', 'lever', 'switch', 'teleporter', 'spawn', 'checkpoint',
+    'weapon', 'tool', 'gun', 'sword', 'armor', 'shield', 'powerup',
+    'enemy', 'boss', 'npc', 'player', 'character', 'vehicle', 'car',
+    'plane', 'boat', 'train', 'elevator', 'ladder', 'stairs', 'ramp'
+  ];
+  
+  keywords.forEach(keyword => {
+    if (lowerPrompt.includes(keyword)) {
+      terms.push(keyword);
+    }
+  });
+  
+  // Add any capitalized words that might be instance names
+  const words = userPrompt.split(/\s+/);
+  words.forEach(word => {
+    if (word.length > 2 && /^[A-Z][a-z]+/.test(word)) {
+      terms.push(word);
+    }
+  });
+  
+  return [...new Set(terms)]; // Remove duplicates
+}
+
+function searchInstances(terms, instances) {
+  if (!terms.length || !instances?.length) return [];
+  
+  const found = [];
+  const lowerTerms = terms.map(t => t.toLowerCase());
+  
+  instances.forEach(instance => {
+    const lowerName = instance.name.toLowerCase();
+    
+    // Check if any term matches the instance name
+    for (const term of lowerTerms) {
+      if (lowerName.includes(term) || 
+          instance.className.toLowerCase().includes(term) ||
+          instance.path.toLowerCase().includes(term)) {
+        found.push(instance);
+        break;
+      }
+    }
+  });
+  
+  return found.slice(0, 10); // Limit to 10 results
 }
 
 // =====================================================
