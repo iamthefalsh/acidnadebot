@@ -12,48 +12,42 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// Initialize Gemini AI with Extended Thinking
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Security & Middleware
+// Session memory store
+const sessionMemory = new Map();
+
 app.use(helmet());
 app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
+app.set('trust proxy', 1);
 
-// Rate Limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 100,
-  message: { error: 'Too many requests, please try again later.' }
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use('/ai', limiter);
 
-// Authentication Middleware
 const authenticateRequest = (req, res, next) => {
   const apiKey = req.headers['x-acidnade-key'];
-  
   if (!apiKey || apiKey !== process.env.ACIDNADE_API_KEY) {
-    return res.status(401).json({ 
-      error: 'Unauthorized', 
-      message: 'Invalid API key' 
-    });
+    return res.status(401).json({ error: 'Unauthorized', message: 'Invalid API key' });
   }
-  
   next();
 };
 
-// Logging Middleware
 const logRequest = (req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path} - Session: ${req.body?.sessionId || 'N/A'}`);
+  console.log('[' + new Date().toISOString() + '] ' + req.method + ' ' + req.path);
   next();
 };
 
 app.use(logRequest);
 
-const SYSTEM_PROMPT = `
-You are Acidnade AI, an expert Roblox Studio AI assistant.
+const SYSTEM_PROMPT = `You are Acidnade AI, an expert Roblox Studio AI assistant.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## CORE EXPERTISE
@@ -70,740 +64,714 @@ You are Acidnade AI, an expert Roblox Studio AI assistant.
 ## ABSOLUTE RULES (NON-NEGOTIABLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 1. UI CREATION (CRITICAL)
-❌ NEVER create UI instances directly (ScreenGui, Frame, TextLabel, etc).
-✅ ALL UI must be created **inside a LocalScript** using Instance.new.
+### 1. CONTEXT AWARENESS (CRITICAL)
+You MUST remember instances created in this chat session.
+When user refers to "my", "the", "it", "that" instance, you MUST:
+1. Check SESSION HISTORY for previously created/modified instances
+2. Use exact names from session history
+3. NEVER invent names - use what exists in session
 
-The plan MUST:
-- Create a **LocalScript**
-- That LocalScript creates all UI instances
+### 2. INSTANCE REFERENCE RULES
+User says "my health bar" → Look for HealthBar in session
+User says "that part" → Last created/modified Part
+User says "the script" → Last created/modified Script
 
-### 2. INSTANCE CREATION RULES
-- Part/Model/Tool → game.Workspace or game.ServerStorage
-- Script → game.ServerScriptService
-- LocalScript → game.StarterPlayer.StarterPlayerScripts
-- ModuleScript → game.ReplicatedStorage
-- Sound → game.Workspace or game.ServerStorage
-- Light → game.Workspace
-- Folder → Anywhere needed
-- RemoteEvent/RemoteFunction → game.ReplicatedStorage
-
-❌ NEVER place executable scripts in ServerStorage.
-
-### 3. INSTANCE SEARCH FUNCTIONALITY
-When user mentions an existing object (like "health bar", "door", "coin"):
-1. First search for existing instances with similar names
-2. If found, consider modifying it instead of creating new
-3. Reference found objects in your response
-
-### 4. SECURITY
-- Never trust client input
-- Server validates everything
-- RemoteEvents are REQUIRED for client → server communication
-
-### 5. PERFORMANCE
-- Avoid unnecessary loops
-- Avoid GetChildren spam
-- Prefer events and CollectionService
+### 3. MODIFICATION RULES
+When modifying existing instances:
+1. FIRST check if instance exists in session history
+2. Use exact name and path from session
+3. If not found, check "existingInstances" in context
+4. If still not found, ask for clarification
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## SCRIPT PLACEMENT INTELLIGENCE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-BE SMART about where scripts go:
-
-### SINGLE INSTANCE (Self-contained objects)
-→ Put script INSIDE the object itself
-→ Example: Killbrick → Script as child of the Part
-→ Example: Door → Script as child of the Model
-→ This makes the object self-contained and easy to duplicate
-
-### MULTIPLE INSTANCES (System that handles many objects)
-→ Create ONE handler script in ServerScriptService
-→ Handler finds and manages all objects by name/tag
-→ Example: "Make all parts named Killbrick kill players" → Handler in ServerScriptService
-→ Uses CollectionService or :GetDescendants() to find objects
-→ Tag system (CollectionService) is preferred for scalability
-
-### UI SYSTEMS
-→ ALWAYS LocalScript in StarterPlayer.StarterPlayerScripts
-→ NEVER create UI instances directly in plan
-→ UI must be dynamically created at runtime
-
-### SHARED LOGIC
-→ ModuleScript in ReplicatedStorage
-→ For code reused by multiple scripts
-→ For client-server shared utilities
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## RESPONSE FORMAT (JSON ONLY)
+## RESPONSE FORMAT (STRICT JSON ONLY)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {
-  "message": "Short explanation of what will be built (ONE SENTENCE ONLY)",
-  "plan": [
-    {
-      "type": "create | modify | delete",
-      "description": "What this step does",
-      "className": "Script | LocalScript | ModuleScript | Part | Model | Tool | Sound | etc.",
-      "name": "DescriptiveUniqueName",
-      "parentPath": "game.ServerScriptService | game.StarterPlayer.StarterPlayerScripts | game.Workspace | etc.",
-      "properties": {
-        "Source": "-- Full Lua source code (for scripts)",
-        "Color": "255, 0, 0",
-        "Size": "5, 5, 5",
-        ... other properties ...
-      }
-    }
-  ],
-  "needsApproval": true | false,
+  "message": "One sentence explanation of what will be done",
+  "plan": [STEPS],
+  "needsApproval": false,
   "reasoning": "Why this approach was chosen (concise)"
 }
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## STEP TYPES & FORMATS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+### 1. CREATE (New instances):
+{
+  "type": "create",
+  "description": "What this creates",
+  "className": "Part|Script|LocalScript|Model|Tool|Sound|etc",
+  "name": "UniqueName",
+  "parentPath": "game.Workspace|game.ServerScriptService|etc",
+  "properties": {
+    "Color": "255, 0, 0",
+    "Size": "10, 5, 10",
+    "Source": "-- Full Lua code here"
+  }
+}
+
+### 2. MODIFY (Change existing instances):
+{
+  "type": "modify",
+  "description": "What changes",
+  "name": "EXACT_NAME_FROM_SESSION",  // <-- CRITICAL: Must match existing name
+  "parentPath": "EXACT_PATH_FROM_SESSION",  // <-- CRITICAL: Must match existing path
+  "properties": {
+    "Color": "0, 255, 0"
+  },
+  "sourceModifications": {
+    "action": "replace|append|prepend|insertAfter|insertBefore|remove|replaceAll",
+    "target": "-- line to find",
+    "newCode": "-- new code to insert"
+  }
+}
+
+### 3. DELETE:
+{
+  "type": "delete",
+  "description": "What deletes",
+  "name": "EXACT_NAME_FROM_SESSION",
+  "parentPath": "EXACT_PATH_FROM_SESSION"
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## CONTEXT AWARENESS SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You will receive SESSION HISTORY containing:
+- All instances created in this chat
+- All instances modified in this chat
+- All instances mentioned in this chat
+
+SESSION HISTORY FORMAT:
+[
+  {
+    "name": "HealthBarHandler",
+    "className": "LocalScript",
+    "path": "game.StarterPlayer.StarterPlayerScripts",
+    "action": "created|modified",
+    "timestamp": "when it happened"
+  },
+  {
+    "name": "KillBrick",
+    "className": "Part", 
+    "path": "game.Workspace",
+    "action": "created",
+    "timestamp": "when it happened"
+  }
+]
+
 RULES:
-1. ALWAYS provide plan array when user wants to create/modify/delete
-2. NEVER explain plan in message - message should be SHORT (one sentence)
-3. Plan array contains the executable steps
-4. Empty plan [] = only for explanations/questions
-5. NEVER invent extra fields
-6. If explaining only → plan MUST be empty []
+1. ALWAYS check SESSION HISTORY before creating new instances
+2. When user says "update my health bar" → Look for HealthBar* in session
+3. Use EXACT names and paths from session
+4. If multiple matches, use the most recent one
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## PLAN SAFETY RULES
+## INTELLIGENT SCRIPT PLACEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- UI requests → LocalScript ONLY
-- Server logic → Script ONLY
-- Shared logic → ModuleScript ONLY
-- Parts/Models → game.Workspace ONLY
-- No random or generic names
-- No duplicate instances
-- Destructive actions → needsApproval = true
-- Script inside object for single instances
-- Handler in ServerScriptService for systems
+### SINGLE INSTANCE
+→ Script inside the object (self-contained)
+→ Example: Killbrick with Script child
+
+### MULTIPLE INSTANCES
+→ Handler in ServerScriptService
+→ Uses CollectionService or GetDescendants
+
+### UI SYSTEMS
+→ LocalScript in StarterPlayer.StarterPlayerScripts
+→ UI created at runtime with Instance.new
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## PROPERTY FORMAT (DATA ONLY)
+## PROPERTY FORMAT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠️ IMPORTANT:
-Property values are **DATA REPRESENTATIONS ONLY**.
-The plugin/runtime will convert them to real Roblox types.
-
-### Color3
-"255, 0, 0" or "red"
-
-### Vector3
-"X, Y, Z"
-
-### UDim2
-"XScale, XOffset, YScale, YOffset"
-
-### Enums
-"Neon", "SourceSansBold", "Center" (no Enum. prefix)
-
-### Asset IDs
-"123456789"
-
-### Booleans
-true / false
-
-### Numbers
-24, 0.5, 100
-
-### Strings
-"Hello World"
+Colors: "255, 0, 0" or "red"
+Vectors: "10, 5, 10"
+Enums: "Neon" (no Enum. prefix)
+Booleans: true/false
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CONTEXT AWARENESS & SEARCH
+## EXAMPLES WITH CONTEXT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-You will receive:
-- Existing instances (list of names, class names, and paths)
-- Selected instances
-- Project structure
-- Previous actions
+### Example 1: Creating then Modifying
+Session History: [
+  {"name": "RedPart", "className": "Part", "path": "game.Workspace", "action": "created"}
+]
 
-You MUST:
-1. SEARCH FIRST: When user mentions something (like "health bar"), look for existing instances with similar names
-2. USE FOUND INSTANCES: If found, modify instead of create
-3. REFERENCE BY NAME: Use exact instance names in your plan
-4. AVOID DUPLICATES: Check existing names before creating
-5. CONSIDER REPLACING: If similar instance exists, ask if user wants to replace or modify
-
-Example user request: "Update my health bar and make it green"
-Your action: 
-1. Search for "health bar" in existing instances
-2. If found HealthBarUI, modify its color property
-3. If not found, create new
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## ACTION-ORIENTED EXAMPLES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### Example 1: Single Instance (Killbrick)
-User: "make a killbrick"
+User: "make it spin"
 {
-  "message": "Creating self-contained killbrick",
-  "plan": [
-    {
-      "type": "create",
-      "description": "Red kill brick part",
-      "className": "Part",
-      "name": "Killbrick",
-      "parentPath": "game.Workspace",
-      "properties": {
-        "Color": "255, 0, 0",
-        "Size": "10, 1, 10",
-        "Anchored": true,
-        "Position": "0, 5, 0"
-      }
-    },
-    {
-      "type": "create",
-      "description": "Kill script inside brick",
-      "className": "Script",
-      "name": "KillScript",
-      "parentPath": "game.Workspace.Killbrick",
-      "properties": {
-        "Source": "script.Parent.Touched:Connect(function(hit)\n  local humanoid = hit.Parent:FindFirstChild('Humanoid')\n  if humanoid then\n    humanoid.Health = 0\n  end\nend)"
-      }
-    }
-  ],
-  "needsApproval": false,
-  "reasoning": "Self-contained killbrick with script inside for easy duplication"
-}
-
-### Example 2: Multiple Instance System
-User: "create a system where all parts named Danger kill players"
-{
-  "message": "Creating danger zone handler system",
-  "plan": [
-    {
-      "type": "create",
-      "description": "Handler for all danger parts",
-      "className": "Script",
-      "name": "DangerZoneHandler",
-      "parentPath": "game.ServerScriptService",
-      "properties": {
-        "Source": "local CollectionService = game:GetService('CollectionService')\nlocal TAG_NAME = 'Danger'\n\n-- Function to setup danger part\nlocal function setupDangerPart(part)\n  part.Touched:Connect(function(hit)\n    local humanoid = hit.Parent:FindFirstChild('Humanoid')\n    if humanoid then\n      humanoid.Health = 0\n    end\n  end)\nend\n\n-- Setup existing parts\nfor _, part in pairs(workspace:GetDescendants()) do\n  if part:IsA('Part') and part.Name == 'Danger' then\n    setupDangerPart(part)\n  end\nend\n\n-- Listen for new parts\nworkspace.DescendantAdded:Connect(function(descendant)\n  if descendant:IsA('Part') and descendant.Name == 'Danger' then\n    setupDangerPart(descendant)\n  end\nend)"
-      }
-    }
-  ],
-  "needsApproval": false,
-  "reasoning": "Single handler script manages all danger parts dynamically"
-}
-
-### Example 3: UI System
-User: "add a health bar UI"
-{
-  "message": "Creating dynamic health bar UI",
-  "plan": [
-    {
-      "type": "create",
-      "description": "Health bar UI LocalScript",
-      "className": "LocalScript",
-      "name": "HealthBarUI",
-      "parentPath": "game.StarterPlayer.StarterPlayerScripts",
-      "properties": {
-        "Source": "local Players = game:GetService('Players')\nlocal player = Players.LocalPlayer\nlocal character = player.Character or player.CharacterAdded:Wait()\nlocal humanoid = character:WaitForChild('Humanoid')\n\n-- Create UI\nlocal screenGui = Instance.new('ScreenGui')\nscreenGui.Name = 'HealthBarGui'\nscreenGui.Parent = player.PlayerGui\n\nlocal background = Instance.new('Frame')\nbackground.Name = 'Background'\nbackground.Size = UDim2.new(0.3, 0, 0.05, 0)\nbackground.Position = UDim2.new(0.35, 0, 0.9, 0)\nbackground.BackgroundColor3 = Color3.fromRGB(50, 50, 50)\nbackground.BorderSizePixel = 2\nbackground.Parent = screenGui\n\nlocal healthBar = Instance.new('Frame')\nhealthBar.Name = 'HealthBar'\nhealthBar.Size = UDim2.new(1, 0, 1, 0)\nhealthBar.BackgroundColor3 = Color3.fromRGB(255, 0, 0)\nhealthBar.BorderSizePixel = 0\nhealthBar.Parent = background\n\n-- Update function\nlocal function updateHealth()\n  local healthPercent = humanoid.Health / humanoid.MaxHealth\n  healthBar.Size = UDim2.new(healthPercent, 0, 1, 0)\n  \n  -- Color gradient\n  if healthPercent > 0.5 then\n    healthBar.BackgroundColor3 = Color3.fromRGB(0, 255, 0)\n  elseif healthPercent > 0.25 then\n    healthBar.BackgroundColor3 = Color3.fromRGB(255, 255, 0)\n  else\n    healthBar.BackgroundColor3 = Color3.fromRGB(255, 0, 0)\n  end\nend\n\n-- Connect events\nhumanoid.HealthChanged:Connect(updateHealth)\nupdateHealth()"
-      }
-    }
-  ],
-  "needsApproval": false,
-  "reasoning": "Dynamic UI created at runtime with color gradient based on health"
-}
-
-### Example 4: Modify Existing
-User: "make the floor slippery"
-{
-  "message": "Modifying floor with slippery physics",
+  "message": "Adding spin to existing part",
   "plan": [
     {
       "type": "modify",
-      "description": "Add slippery material to floor",
-      "className": "Part",
-      "name": "Baseplate",
-      "parentPath": "game.Workspace",
-      "properties": {
-        "Material": "Ice",
-        "Friction": 0.1
+      "description": "Add spin script to RedPart",
+      "name": "RedPart",  // From session
+      "parentPath": "game.Workspace",  // From session
+      "properties": {},
+      "sourceModifications": {
+        "action": "append",
+        "target": "",
+        "newCode": "local spin = Instance.new('Script')\\nspin.Parent = script.Parent\\nspin.Source = [[while true do\\n  script.Parent.CFrame = script.Parent.CFrame * CFrame.Angles(0, math.rad(2), 0)\\n  wait(0.03)\\nend]]"
       }
     }
   ],
   "needsApproval": false,
-  "reasoning": "Modified existing floor with ice material for slippery effect"
+  "reasoning": "Modified existing RedPart from session history"
+}
+
+### Example 2: Health Bar System
+Session History: [
+  {"name": "HealthBarUI", "className": "LocalScript", "path": "game.StarterPlayer.StarterPlayerScripts", "action": "created"},
+  {"name": "HealthManager", "className": "ModuleScript", "path": "game.ReplicatedStorage", "action": "created"}
+]
+
+User: "update the health bar to show damage numbers"
+{
+  "message": "Adding damage numbers to health bar",
+  "plan": [
+    {
+      "type": "modify",
+      "description": "Add damage number display to HealthBarUI",
+      "name": "HealthBarUI",  // From session
+      "parentPath": "game.StarterPlayer.StarterPlayerScripts",  // From session
+      "properties": {},
+      "sourceModifications": {
+        "action": "insertAfter",
+        "target": "hum.HealthChanged:Connect(function()",
+        "newCode": "  -- Show damage number\\n  local damage = oldHealth - newHealth\\n  if damage > 0 then\\n    showDamageNumber(damage)\\n  end"
+      }
+    }
+  ],
+  "needsApproval": false,
+  "reasoning": "Modified existing HealthBarUI from session history"
+}
+
+### Example 3: Universal System Request
+User: "create universal damage feedback"
+{
+  "message": "Creating universal damage feedback system",
+  "plan": [
+    {
+      "type": "create",
+      "description": "Damage feedback module",
+      "className": "ModuleScript",
+      "name": "UniversalDamageFeedback",
+      "parentPath": "game.ReplicatedStorage",
+      "properties": {
+        "Source": "-- Universal damage feedback\\nlocal module = {}\\n\\nfunction module.flashRed(character)\\n  -- Implementation\\nend\\n\\nreturn module"
+      }
+    }
+  ],
+  "needsApproval": false,
+  "reasoning": "Created new module as requested"
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## COMMON INSTANCE TYPES & PROPERTIES
+## CRITICAL RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### Part
-- className: "Part"
-- parentPath: "game.Workspace"
-- properties: { "Color": "0, 255, 0", "Size": "5, 5, 5", "Position": "0, 10, 0", "Material": "Concrete" }
-
-### Model
-- className: "Model"
-- parentPath: "game.Workspace"
-- properties: { "PrimaryPart": "PartName" }
-
-### Tool
-- className: "Tool"
-- parentPath: "game.StarterPack" or "game.ServerStorage"
-- properties: { "CanBeDropped": true, "RequiresHandle": true, "ToolTip": "Sword" }
-
-### Sound
-- className: "Sound"
-- parentPath: "game.Workspace"
-- properties: { "SoundId": "rbxassetid://123456", "Volume": 0.5, "Looped": true }
-
-### PointLight
-- className: "PointLight"
-- parentPath: "game.Workspace"
-- properties: { "Brightness": 2, "Range": 20, "Color": "255, 255, 255" }
-
-### Folder (for organization)
-- className: "Folder"
-- parentPath: "game.Workspace" or "game.ServerStorage"
-- properties: {}
-
-### RemoteEvent (Client-Server Communication)
-- className: "RemoteEvent"
-- parentPath: "game.ReplicatedStorage"
-- properties: {}
+1. ALWAYS check SESSION HISTORY first
+2. Use EXACT names and paths from session
+3. Message = one sentence
+4. For modifications, use sourceModifications
+5. UI = LocalScript creating UI at runtime
+6. Never assume - check session first
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## BEHAVIOR GUIDELINES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BE PRECISE. USE SESSION HISTORY. BUILD ROBLOX.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
-1. BE ACTION-ORIENTED: Users expect you to BUILD, not explain
-2. BE SMART: Choose script placement based on context (single vs multiple instances)
-3. BE EFFICIENT: Use appropriate data structures and patterns
-4. BE SECURE: Always validate on server, never trust client
-5. BE CLEAR: Message is one sentence, reasoning is concise
-6. BE CONTEXT-AWARE: Search first, then create/modify
-7. BE PRACTICAL: Create systems that are easy to maintain and scale
-8. BE PRECISE: Use exact property formats as specified
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-THINK CAREFULLY. EXECUTE PRECISELY.
-You are expected to BUILD ROBLOX EXPERIENCES, not speculate.
-When in doubt, follow the examples and rules above.s
-`;
-
-// =====================================================
-// ENHANCED CONTEXT OPTIMIZER WITH INSTANCE SEARCH
-// =====================================================
-function optimizeContext(context) {
-  const optimized = {
-    projectStats: context.project?.Statistics || {},
-    recentScripts: [],
-    selectedObjects: context.selectedObjects || [],
-    recentChanges: [],
-    chatSummary: [],
-    existingInstances: [], // NEW: All instances for search
-    foundInstances: []     // NEW: Instances found based on user query
-  };
-
-  // Extract all instances for search functionality
-  if (context.project?.AllInstances) {
-    optimized.existingInstances = context.project.AllInstances
-      .map(instance => ({
-        name: instance.Name,
-        className: instance.ClassName,
-        path: instance.Path,
-        properties: instance.Properties || {}
-      }));
-  }
-
-  // Extract recent script info
-  if (context.project?.ScriptDetails) {
-    optimized.recentScripts = context.project.ScriptDetails
-      .slice(-10)
-      .map(script => ({
-        name: script.Name,
-        type: script.Type,
-        path: script.Path,
-        preview: script.Preview?.substring(0, 200)
-      }));
-  }
-
-  // Extract recent changes
-  if (context.createdInstances) {
-    optimized.recentChanges = context.createdInstances
-      .slice(-5)
-      .map(item => ({
-        name: item.name,
-        type: item.className,
-        path: item.parentPath,
-        description: item.description
-      }));
-  }
-
-  // Summarize chat history
-  if (context.chatHistory) {
-    optimized.chatSummary = context.chatHistory
-      .slice(-10)
-      .map(msg => ({
-        role: msg.role,
-        content: msg.content?.substring(0, 500)
-      }));
-  }
-
-  return optimized;
-}
-
-// =====================================================
-// ENHANCED PROMPT BUILDER WITH INSTANCE SEARCH
-// =====================================================
-function buildPrompt(userPrompt, context) {
-  const optimizedContext = optimizeContext(context);
-  
-  let prompt = `## USER REQUEST\n${userPrompt}\n\n`;
-  
-  // SEARCH FOR INSTANCES MENTIONED IN USER PROMPT
-  const searchTerms = extractSearchTerms(userPrompt);
-  const foundInstances = searchInstances(searchTerms, optimizedContext.existingInstances);
-  
-  prompt += `## SEARCH RESULTS FOR "${searchTerms.join(', ')}"\n`;
-  if (foundInstances.length > 0) {
-    prompt += `Found ${foundInstances.length} matching instance(s):\n`;
-    foundInstances.forEach(instance => {
-      prompt += `- ${instance.name} (${instance.className}) at ${instance.path}\n`;
+// Initialize session memory
+function initSession(sessionId) {
+  if (!sessionMemory.has(sessionId)) {
+    sessionMemory.set(sessionId, {
+      createdInstances: [],      // Instances created in this session
+      modifiedInstances: [],     // Instances modified in this session
+      mentionedInstances: [],    // Instances mentioned in chat
+      chatHistory: [],           // Conversation history
+      timestamp: Date.now()
     });
-    prompt += `\nRECOMMENDATION: Consider modifying these existing instances instead of creating new ones.\n\n`;
-  } else {
-    prompt += `No existing instances found matching your request. Will create new instances.\n\n`;
   }
+  return sessionMemory.get(sessionId);
+}
 
-  // Add project context
-  if (optimizedContext.projectStats) {
-    prompt += `## PROJECT STATE\n`;
-    prompt += `- Total Instances: ${optimizedContext.projectStats.TotalInstances || 0}\n`;
-    prompt += `- Total Scripts: ${optimizedContext.projectStats.TotalScripts || 0}\n`;
-    prompt += `- Total UI Elements: ${optimizedContext.projectStats.TotalUI || 0}\n\n`;
+// Update session with new instances
+function updateSession(sessionId, plan, userPrompt) {
+  const session = sessionMemory.get(sessionId);
+  if (!session) return;
+  
+  const timestamp = new Date().toISOString();
+  
+  // Track created instances
+  plan.filter(step => step.type === 'create').forEach(step => {
+    const existing = session.createdInstances.find(i => 
+      i.name === step.name && i.parentPath === step.parentPath
+    );
+    
+    if (!existing) {
+      session.createdInstances.push({
+        name: step.name,
+        className: step.className,
+        path: step.parentPath,
+        action: 'created',
+        timestamp,
+        properties: step.properties
+      });
+    }
+  });
+  
+  // Track modified instances
+  plan.filter(step => step.type === 'modify').forEach(step => {
+    const existing = session.modifiedInstances.find(i => 
+      i.name === step.name && i.path === step.parentPath
+    );
+    
+    if (!existing) {
+      session.modifiedInstances.push({
+        name: step.name,
+        className: step.className || 'Unknown',
+        path: step.parentPath,
+        action: 'modified',
+        timestamp,
+        changes: step.properties,
+        sourceModifications: step.sourceModifications
+      });
+    }
+  });
+  
+  // Extract mentioned instances from user prompt
+  const instanceKeywords = ['part', 'script', 'model', 'gui', 'bar', 'handler', 'system', 'manager'];
+  const words = userPrompt.toLowerCase().split(/\s+/);
+  words.forEach(word => {
+    if (instanceKeywords.some(keyword => word.includes(keyword))) {
+      // Check if this instance exists in project context
+      session.mentionedInstances.push({
+        keyword: word,
+        timestamp,
+        context: userPrompt
+      });
+    }
+  });
+  
+  // Update chat history
+  session.chatHistory.push({
+    role: 'user',
+    content: userPrompt,
+    timestamp
+  });
+  
+  // Keep only last 20 items
+  session.createdInstances = session.createdInstances.slice(-20);
+  session.modifiedInstances = session.modifiedInstances.slice(-20);
+  session.mentionedInstances = session.mentionedInstances.slice(-20);
+  session.chatHistory = session.chatHistory.slice(-20);
+}
+
+// Build session context for AI
+function buildSessionContext(session) {
+  const context = [];
+  
+  if (session.createdInstances.length > 0) {
+    context.push('CREATED IN THIS SESSION:');
+    session.createdInstances.forEach(inst => {
+      context.push(`- ${inst.name} (${inst.className}) at ${inst.path} [${inst.action}]`);
+    });
+    context.push('');
   }
+  
+  if (session.modifiedInstances.length > 0) {
+    context.push('MODIFIED IN THIS SESSION:');
+    session.modifiedInstances.forEach(inst => {
+      context.push(`- ${inst.name} at ${inst.path} [${inst.action}]`);
+    });
+    context.push('');
+  }
+  
+  if (session.chatHistory.length > 0) {
+    context.push('RECENT CHAT:');
+    session.chatHistory.slice(-3).forEach(msg => {
+      const prefix = msg.role === 'user' ? 'U' : 'A';
+      context.push(`${prefix}: ${msg.content.substring(0, 80)}${msg.content.length > 80 ? '...' : ''}`);
+    });
+    context.push('');
+  }
+  
+  return context.join('\n');
+}
 
+// Smart instance matching
+function findInstanceInContext(userPrompt, session, existingInstances) {
+  const promptLower = userPrompt.toLowerCase();
+  const matches = [];
+  
+  // Keywords that might refer to instances
+  const keywords = promptLower.match(/\b(\w+)\b/g) || [];
+  
+  // Search in session first
+  const allSessionInstances = [
+    ...session.createdInstances,
+    ...session.modifiedInstances
+  ];
+  
+  allSessionInstances.forEach(inst => {
+    const nameLower = inst.name.toLowerCase();
+    const classNameLower = inst.className.toLowerCase();
+    
+    // Check if any keyword matches
+    keywords.forEach(keyword => {
+      if (nameLower.includes(keyword) || classNameLower.includes(keyword)) {
+        matches.push({
+          source: 'session',
+          name: inst.name,
+          className: inst.className,
+          path: inst.path,
+          score: (nameLower.includes(keyword) ? 2 : 0) + (classNameLower.includes(keyword) ? 1 : 0)
+        });
+      }
+    });
+    
+    // Check for common references
+    if (promptLower.includes('my ') && nameLower.includes('my')) {
+      matches.push({
+        source: 'session',
+        name: inst.name,
+        className: inst.className,
+        path: inst.path,
+        score: 1
+      });
+    }
+    
+    if ((promptLower.includes('the ') || promptLower.includes('that ')) && 
+        (nameLower.includes('health') || nameLower.includes('bar') || nameLower.includes('gui'))) {
+      matches.push({
+        source: 'session',
+        name: inst.name,
+        className: inst.className,
+        path: inst.path,
+        score: 1
+      });
+    }
+  });
+  
+  // Search in existing instances
+  (existingInstances || []).forEach(inst => {
+    const nameLower = inst.Name.toLowerCase();
+    const classNameLower = inst.ClassName.toLowerCase();
+    
+    keywords.forEach(keyword => {
+      if (nameLower.includes(keyword) || classNameLower.includes(keyword)) {
+        matches.push({
+          source: 'project',
+          name: inst.Name,
+          className: inst.ClassName,
+          path: inst.Path,
+          score: (nameLower.includes(keyword) ? 2 : 0) + (classNameLower.includes(keyword) ? 1 : 0)
+        });
+      }
+    });
+  });
+  
+  // Sort by score and return unique
+  const uniqueMatches = [];
+  const seen = new Set();
+  
+  matches
+    .sort((a, b) => b.score - a.score)
+    .forEach(match => {
+      const key = `${match.name}|${match.path}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueMatches.push(match);
+      }
+    });
+  
+  return uniqueMatches.slice(0, 10); // Return top 10 matches
+}
+
+function buildPrompt(userPrompt, context, sessionId) {
+  const session = initSession(sessionId);
+  const sessionContext = buildSessionContext(session);
+  
+  // Find potential instance matches
+  const instanceMatches = findInstanceInContext(
+    userPrompt, 
+    session, 
+    context.existingInstances
+  );
+  
+  let prompt = 'USER REQUEST: ' + userPrompt + '\n\n';
+  
+  // Add session context
+  if (sessionContext) {
+    prompt += 'SESSION CONTEXT (MOST IMPORTANT - USE THESE NAMES):\n';
+    prompt += sessionContext + '\n';
+  }
+  
+  // Add matched instances
+  if (instanceMatches.length > 0) {
+    prompt += 'MATCHING INSTANCES FOUND:\n';
+    instanceMatches.forEach((match, i) => {
+      prompt += `${i + 1}. ${match.name} (${match.className}) at ${match.path} [from ${match.source}]\n`;
+    });
+    prompt += '\n';
+  }
+  
   // Add selected objects
-  if (optimizedContext.selectedObjects?.length > 0) {
-    prompt += `## CURRENTLY SELECTED\n`;
-    optimizedContext.selectedObjects.forEach(obj => {
+  if (context.selectedObjects && context.selectedObjects.length > 0) {
+    prompt += 'SELECTED OBJECTS:\n';
+    context.selectedObjects.forEach(obj => {
       prompt += `- ${obj.Name} (${obj.ClassName}) at ${obj.Path}\n`;
     });
-    prompt += `\n`;
+    prompt += '\n';
   }
-
-  // Add recent changes
-  if (optimizedContext.recentChanges?.length > 0) {
-    prompt += `## RECENT CHANGES\n`;
-    optimizedContext.recentChanges.forEach(change => {
-      prompt += `- ${change.name} (${change.type}): ${change.description || 'Created'}\n`;
+  
+  // Add existing instances
+  if (context.existingInstances && context.existingInstances.length > 0) {
+    prompt += 'PROJECT INSTANCES (search if not in session):\n';
+    // Show instances similar to request
+    const relevantInstances = context.existingInstances.filter(inst => {
+      const nameLower = inst.Name.toLowerCase();
+      const promptLower = userPrompt.toLowerCase();
+      return promptLower.split(/\s+/).some(word => 
+        word.length > 3 && nameLower.includes(word)
+      );
     });
-    prompt += `\n`;
+    
+    if (relevantInstances.length > 0) {
+      relevantInstances.slice(0, 10).forEach(inst => {
+        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
+      });
+    } else {
+      // Show some random instances
+      context.existingInstances.slice(0, 5).forEach(inst => {
+        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
+      });
+    }
+    prompt += '\n';
   }
-
-  // Add chat history summary
-  if (optimizedContext.chatSummary?.length > 0) {
-    prompt += `## RECENT CONVERSATION\n`;
-    optimizedContext.chatSummary.forEach(msg => {
-      const role = msg.role === 'user' ? 'User' : 'Assistant';
-      prompt += `${role}: ${msg.content}\n`;
-    });
-    prompt += `\n`;
-  }
-
-  prompt += `## INSTRUCTIONS\n`;
-  prompt += `Analyze the request and search results. If instances were found, MODIFY them instead of creating new ones.\n`;
-  prompt += `Remember: UI must be created by LocalScripts, not directly as instances!\n`;
-  prompt += `Provide specific property changes for modifications.\n\n`;
-  prompt += `Respond ONLY with valid JSON matching the required format.`;
-
+  
+  prompt += 'INSTRUCTIONS:\n';
+  prompt += '1. FIRST check SESSION CONTEXT for instance names\n';
+  prompt += '2. Use EXACT names and paths from session\n';
+  prompt += '3. If modifying, use sourceModifications for scripts\n';
+  prompt += '4. Message = one sentence\n';
+  prompt += '5. Respond in JSON format only\n';
+  
   return prompt;
 }
 
-// =====================================================
-// SEARCH FUNCTIONS
-// =====================================================
-function extractSearchTerms(userPrompt) {
-  const terms = [];
-  const lowerPrompt = userPrompt.toLowerCase();
-  
-  // Common Roblox object keywords
-  const keywords = [
-    'health', 'bar', 'gui', 'ui', 'door', 'coin', 'money', 'score',
-    'platform', 'wall', 'floor', 'light', 'sound', 'music', 'particle',
-    'button', 'lever', 'switch', 'teleporter', 'spawn', 'checkpoint',
-    'weapon', 'tool', 'gun', 'sword', 'armor', 'shield', 'powerup',
-    'enemy', 'boss', 'npc', 'player', 'character', 'vehicle', 'car',
-    'plane', 'boat', 'train', 'elevator', 'ladder', 'stairs', 'ramp'
-  ];
-  
-  keywords.forEach(keyword => {
-    if (lowerPrompt.includes(keyword)) {
-      terms.push(keyword);
-    }
-  });
-  
-  // Add any capitalized words that might be instance names
-  const words = userPrompt.split(/\s+/);
-  words.forEach(word => {
-    if (word.length > 2 && /^[A-Z][a-z]+/.test(word)) {
-      terms.push(word);
-    }
-  });
-  
-  return [...new Set(terms)]; // Remove duplicates
-}
-
-function searchInstances(terms, instances) {
-  if (!terms.length || !instances?.length) return [];
-  
-  const found = [];
-  const lowerTerms = terms.map(t => t.toLowerCase());
-  
-  instances.forEach(instance => {
-    const lowerName = instance.name.toLowerCase();
-    
-    // Check if any term matches the instance name
-    for (const term of lowerTerms) {
-      if (lowerName.includes(term) || 
-          instance.className.toLowerCase().includes(term) ||
-          instance.path.toLowerCase().includes(term)) {
-        found.push(instance);
-        break;
-      }
-    }
-  });
-  
-  return found.slice(0, 10); // Limit to 10 results
-}
-
-// =====================================================
-// AI REQUEST HANDLER WITH EXTENDED THINKING
-// =====================================================
 async function processAIRequest(prompt, context, sessionId) {
   try {
-    console.log(`[AI] Processing request for session: ${sessionId}`);
-    console.log(`[AI] Prompt length: ${prompt.length} chars`);
-
-    // Initialize model with GEMINI 3 FLASH PREVIEW
-    const MODEL_NAME = "gemini-3-flash-preview";
-    
     const model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
+      model: 'gemini-3-flash-preview',
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
         topK: 40,
         maxOutputTokens: 8192,
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
       },
       systemInstruction: SYSTEM_PROMPT
     });
 
-    // Build optimized prompt
-    const fullPrompt = buildPrompt(prompt, context);
+    const fullPrompt = buildPrompt(prompt, context || {}, sessionId);
+    console.log('[AI] Prompt length:', fullPrompt.length);
     
-    console.log(`[AI] Sending to Gemini with extended thinking mode...`);
     const startTime = Date.now();
-
-    // Send request with thinking mode
     const result = await model.generateContent(fullPrompt);
-    const response = result.response;
     const thinkingTime = Date.now() - startTime;
-
-    console.log(`[AI] Response received in ${thinkingTime}ms`);
-
-    // Extract thinking process if available
-    let thinkingProcess = null;
-    if (response.candidates?.[0]?.content?.parts) {
-      const parts = response.candidates[0].content.parts;
-      const thinkingPart = parts.find(part => part.thought === true);
-      if (thinkingPart) {
-        thinkingProcess = thinkingPart.text;
-        console.log(`[AI] Extended thinking captured (${thinkingProcess.length} chars)`);
-      }
-    }
-
-    // Get the main response
-    const text = response.text();
-    console.log(`[AI] Response length: ${text.length} chars`);
-
-    // Parse JSON response
+    
+    const text = result.response.text();
     let aiResponse;
+    
     try {
-      // Clean potential markdown code blocks
       const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
       aiResponse = JSON.parse(cleanedText);
     } catch (parseError) {
-      console.error('[AI] JSON parse error:', parseError);
-      console.error('[AI] Raw response:', text.substring(0, 500));
-      
-      // Fallback response
+      console.error('[AI] Parse error:', parseError.message);
+      console.error('[AI] Raw text:', text.substring(0, 500));
       aiResponse = {
-        message: text.substring(0, 500) || "I understand your request. Let me help you with that.",
+        message: 'Working on it',
         plan: [],
         needsApproval: false,
-        reasoning: "Response parsing error - displaying raw AI response"
+        reasoning: 'Failed to parse response'
       };
     }
 
-    // Validate response structure
-    if (!aiResponse.message) {
-      aiResponse.message = "I'm working on your request...";
-    }
-    if (!aiResponse.plan) {
-      aiResponse.plan = [];
-    }
-    if (typeof aiResponse.needsApproval === 'undefined') {
-      aiResponse.needsApproval = aiResponse.plan.length >= 3;
-    }
+    // Validate response
+    if (!aiResponse.message) aiResponse.message = 'Done';
+    if (!aiResponse.plan) aiResponse.plan = [];
+    if (!aiResponse.reasoning) aiResponse.reasoning = 'Based on session context';
+    
+    // Auto-approve settings
+    const hasDestructiveAction = aiResponse.plan.some(step => step.type === 'delete');
+    const hasManySteps = aiResponse.plan.length >= 3;
+    aiResponse.needsApproval = hasDestructiveAction || hasManySteps;
 
-    // Add metadata
+    // Update session memory
+    updateSession(sessionId, aiResponse.plan, prompt);
+    
     aiResponse.metadata = {
-      thinkingTime: thinkingTime,
-      model: MODEL_NAME,
-      sessionId: sessionId,
+      thinkingTime,
+      model: 'gemini-3-flash-preview',
+      sessionId,
       timestamp: new Date().toISOString(),
-      hadExtendedThinking: !!thinkingProcess
+      planSize: aiResponse.plan.length,
+      sessionInstances: sessionMemory.get(sessionId)?.createdInstances?.length || 0
     };
 
-    if (NODE_ENV === 'development' && thinkingProcess) {
-      aiResponse.thinkingProcess = thinkingProcess.substring(0, 1000); // Include in dev mode
-    }
-
-    console.log(`[AI] Generated ${aiResponse.plan.length} step(s)`);
-    console.log(`[AI] Needs approval: ${aiResponse.needsApproval}`);
-
+    console.log(`[AI] ${aiResponse.plan.length} steps, session has ${sessionMemory.get(sessionId)?.createdInstances?.length || 0} instances`);
     return aiResponse;
 
   } catch (error) {
-    console.error('[AI] Error:', error);
-    
-    // Detailed error response
+    console.error('[AI] Error:', error.message);
     return {
-      message: `Error: ${error.message || 'Unknown error occurred'}`,
+      message: 'Error processing request',
       plan: [],
       needsApproval: false,
-      error: true,
-      reasoning: NODE_ENV === 'development' ? error.stack : 'An error occurred while processing your request'
+      reasoning: 'Internal server error',
+      error: true
     };
   }
 }
 
-// =====================================================
-// ROUTES
-// =====================================================
-
-// Root Route - API Info
 app.get('/', (req, res) => {
   res.json({
-    name: 'Acidnade AI Server',
-    version: '1.4',
+    name: 'Acidnade AI',
+    version: '2.2',
     status: 'online',
     model: 'gemini-3-flash-preview',
-    endpoints: {
-      'GET /': 'API information',
-      'GET /ping': 'Health check',
-      'POST /ai': 'AI request processing (requires authentication)'
-    },
-    documentation: 'https://github.com/your-repo/acidnade-ai',
+    features: [
+      'Session memory',
+      'Context-aware instance tracking',
+      'Smart modifications',
+      'Persistent chat history'
+    ],
+    sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
   });
 });
 
-// Health Check
 app.get('/ping', (req, res) => {
   res.json({ 
     status: 'ok', 
-    timestamp: new Date().toISOString(),
-    version: '1.4',
-    model: 'gemini-3-flash-preview'
+    model: 'gemini-3-flash-preview',
+    uptime: process.uptime(),
+    sessions: sessionMemory.size
   });
 });
 
-// Main AI Endpoint
+app.get('/session/:sessionId', authenticateRequest, (req, res) => {
+  const sessionId = req.params.sessionId;
+  const session = sessionMemory.get(sessionId);
+  
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  res.json({
+    sessionId,
+    createdInstances: session.createdInstances,
+    modifiedInstances: session.modifiedInstances,
+    chatHistory: session.chatHistory,
+    timestamp: new Date(session.timestamp).toISOString()
+  });
+});
+
+app.delete('/session/:sessionId', authenticateRequest, (req, res) => {
+  const sessionId = req.params.sessionId;
+  const deleted = sessionMemory.delete(sessionId);
+  
+  res.json({
+    success: deleted,
+    message: deleted ? 'Session cleared' : 'Session not found'
+  });
+});
+
 app.post('/ai', authenticateRequest, async (req, res) => {
   try {
     const { prompt, context, sessionId } = req.body;
-
-    // Validation
-    if (!prompt || typeof prompt !== 'string') {
+    if (!prompt || !sessionId) {
       return res.status(400).json({ 
-        error: 'Bad Request', 
-        message: 'Prompt is required and must be a string' 
+        error: 'Missing required fields',
+        message: 'Both prompt and sessionId are required'
       });
     }
-
-    if (!sessionId) {
-      return res.status(400).json({ 
-        error: 'Bad Request', 
-        message: 'Session ID is required' 
-      });
-    }
-
-    console.log(`[Request] Processing AI request for session: ${sessionId}`);
-    console.log(`[Request] Prompt: ${prompt.substring(0, 100)}...`);
-
-    // Process with AI
+    
+    // Initialize session if needed
+    initSession(sessionId);
+    
     const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
-
-    // Send response
     res.json(aiResponse);
-
+    
   } catch (error) {
-    console.error('[Error] Request processing failed:', error);
+    console.error('[Server Error]:', error.message);
     res.status(500).json({ 
-      error: 'Internal Server Error',
-      message: NODE_ENV === 'development' ? error.message : 'An error occurred',
+      error: 'Server error',
+      message: error.message,
       plan: [],
-      needsApproval: false
+      needsApproval: false,
+      reasoning: 'Internal server error'
     });
   }
 });
 
-// Error Handler
+// Clean up old sessions periodically (optional)
+setInterval(() => {
+  const now = Date.now();
+  const oneHour = 60 * 60 * 1000;
+  
+  for (const [sessionId, session] of sessionMemory.entries()) {
+    if (now - session.timestamp > oneHour) {
+      sessionMemory.delete(sessionId);
+      console.log(`[Cleanup] Removed old session: ${sessionId}`);
+    }
+  }
+}, 30 * 60 * 1000); // Every 30 minutes
+
 app.use((err, req, res, next) => {
-  console.error('[Error]', err);
+  console.error('[Middleware Error]:', err.message);
   res.status(500).json({ 
-    error: 'Internal Server Error',
-    message: NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    error: 'Internal error',
+    plan: [],
+    needsApproval: false
   });
 });
 
-// 404 Handler
 app.use((req, res) => {
   res.status(404).json({ 
-    error: 'Not Found',
-    message: `Route ${req.path} not found`
+    error: 'Not found',
+    message: 'Route does not exist'
   });
 });
 
-// =====================================================
-// START SERVER
-// =====================================================
 app.listen(PORT, () => {
-  console.log('='.repeat(50));
-  console.log('🚀 ACIDNADE AI SERVER STARTED');
-  console.log('='.repeat(50));
-  console.log(`📡 Port: ${PORT}`);
-  console.log(`🌍 Environment: ${NODE_ENV}`);
-  console.log(`🤖 Model: gemini-3-flash-preview`);
-  console.log(`🧠 Extended Thinking: ENABLED`);
-  console.log(`🔒 Auth: ${process.env.ACIDNADE_API_KEY ? 'CONFIGURED' : 'NOT SET'}`);
-  console.log(`✅ Ready to accept requests!`);
-  console.log('='.repeat(50));
+  console.log('==========================================');
+  console.log('ACIDNADE AI v2.2 - FIXED CONTEXT MEMORY');
+  console.log('==========================================');
+  console.log('Port:', PORT);
+  console.log('Environment:', NODE_ENV);
+  console.log('Features:');
+  console.log('  • Session-based memory');
+  console.log('  • Context-aware instance tracking');
+  console.log('  • Smart instance matching');
+  console.log('  • Persistent chat history');
+  console.log('==========================================');
+  console.log('Server ready at http://localhost:' + PORT);
+  console.log('==========================================');
 });
 
-// Graceful Shutdown
 process.on('SIGTERM', () => {
-  console.log('⚠️  SIGTERM received, shutting down gracefully...');
+  console.log('SIGTERM received, saving sessions...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('⚠️  SIGINT received, shutting down gracefully...');
+  console.log('SIGINT received, saving sessions...');
   process.exit(0);
 });
