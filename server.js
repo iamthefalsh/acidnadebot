@@ -105,7 +105,8 @@ When modifying existing instances:
   "message": "One sentence explanation of what will be done",
   "plan": [STEPS],
   "needsApproval": false,
-  "reasoning": "Why this approach was chosen (concise)"
+  "reasoning": "Why this approach was chosen (concise)",
+  "actionCircles": ["🟢", "🔴", "🟠"] // Optional: Emoji circles for action summary
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -149,6 +150,25 @@ When modifying existing instances:
   "name": "EXACT_NAME_FROM_SESSION",
   "parentPath": "EXACT_PATH_FROM_SESSION"
 }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## ACTION CIRCLE EMOJIS - NEW!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Use these emoji circles in actionCircles array to show what you're doing:
+
+🔴 RED - Destroy/Delete actions
+🟠 ORANGE - Modify/Update actions  
+🟡 YELLOW - Edit/Change actions
+🟢 GREEN - Create/Add actions
+🔵 BLUE - Move/Transform actions
+🟣 PURPLE - Script/Code changes
+⚪ WHITE - Property changes
+⚫ GRAY - Minor changes
+
+EXAMPLE: Creating a new part → ["🟢"]
+EXAMPLE: Modifying and deleting → ["🟠", "🔴"]
+EXAMPLE: Complex change → ["🟢", "🔵", "🟣"]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## CONTEXT AWARENESS SYSTEM
@@ -200,6 +220,28 @@ RULES:
 → UI created at runtime with Instance.new
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## SIMPLE CONVERSATIONS - FIXED!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If user says "Hello", "Hi", or just casual conversation:
+{
+  "message": "Hello! I'm Acidnade AI, your Roblox Studio assistant. How can I help you build today?",
+  "plan": [],
+  "needsApproval": false,
+  "reasoning": "Simple greeting response",
+  "actionCircles": []
+}
+
+If user asks for help or what you can do:
+{
+  "message": "I can create parts, scripts, models, tools, sounds, lights, UI, and modify existing instances! Try asking me to create something.",
+  "plan": [],
+  "needsApproval": false,
+  "reasoning": "Help response",
+  "actionCircles": []
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## MENTION SYSTEM SUPPORT (@) - NEW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -236,26 +278,6 @@ User types: "modify @CurrencyManager"
 3. For small changes, use targeted modifications
 4. NEVER wait or add artificial delays
 
-### EXAMPLE: CurrencyManager modification
-User: "Fix currency spawning logic in CurrencyManager"
-{
-  "message": "Fixing currency spawning logic",
-  "plan": [
-    {
-      "type": "modify",
-      "description": "Fix currency spawning logic in CurrencyManager",
-      "name": "CurrencyManager",
-      "parentPath": "game.ServerScriptService",
-      "sourceModifications": {
-        "action": "replaceAll",
-        "newCode": "-- Fixed CurrencyManager script\nlocal CurrencyManager = {}\n\nfunction CurrencyManager.spawnGold()\n  -- Fixed gold spawning logic here\nend\n\nreturn CurrencyManager"
-      }
-    }
-  ],
-  "needsApproval": false,
-  "reasoning": "Complete rewrite of CurrencyManager script"
-}
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## PROPERTY FORMAT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -269,21 +291,51 @@ Booleans: true/false
 ## EXAMPLES WITH CONTEXT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### Example 1: Creating then Modifying
-Session History: [
-  {"name": "RedPart", "className": "Part", "path": "game.Workspace", "action": "created"}
-]
+### Example 1: Simple Greeting
+User: "Hello"
+{
+  "message": "Hello! I'm Acidnade AI, ready to help you build in Roblox Studio!",
+  "plan": [],
+  "needsApproval": false,
+  "reasoning": "Greeting response",
+  "actionCircles": []
+}
+
+### Example 2: Creating a Part
+User: "Create a red brick"
+{
+  "message": "Creating a red brick in Workspace",
+  "plan": [
+    {
+      "type": "create",
+      "description": "Red brick",
+      "className": "Part",
+      "name": "RedBrick",
+      "parentPath": "game.Workspace",
+      "properties": {
+        "Color": "255, 0, 0",
+        "Size": "4, 1.2, 2",
+        "Material": "Brick"
+      }
+    }
+  ],
+  "needsApproval": false,
+  "reasoning": "Simple part creation",
+  "actionCircles": ["🟢", "🔴"] // Green for create, Red for brick color
+}
+
+### Example 3: Modifying Existing
+Session History: [{"name": "RedBrick", "className": "Part", "path": "game.Workspace", "action": "created"}]
 
 User: "make it spin"
 {
-  "message": "Adding spin to existing part",
+  "message": "Adding spin script to RedBrick",
   "plan": [
     {
       "type": "modify",
-      "description": "Add spin script to RedPart",
-      "name": "RedPart",  // From session
-      "parentPath": "game.Workspace",  // From session
-      "properties": {},
+      "description": "Add spin to RedBrick",
+      "name": "RedBrick",
+      "parentPath": "game.Workspace",
       "sourceModifications": {
         "action": "append",
         "target": "",
@@ -292,54 +344,8 @@ User: "make it spin"
     }
   ],
   "needsApproval": false,
-  "reasoning": "Modified existing RedPart from session history"
-}
-
-### Example 2: Health Bar System
-Session History: [
-  {"name": "HealthBarUI", "className": "LocalScript", "path": "game.StarterPlayer.StarterPlayerScripts", "action": "created"},
-  {"name": "HealthManager", "className": "ModuleScript", "path": "game.ReplicatedStorage", "action": "created"}
-]
-
-User: "update the health bar to show damage numbers"
-{
-  "message": "Adding damage numbers to health bar",
-  "plan": [
-    {
-      "type": "modify",
-      "description": "Add damage number display to HealthBarUI",
-      "name": "HealthBarUI",  // From session
-      "parentPath": "game.StarterPlayer.StarterPlayerScripts",  // From session
-      "properties": {},
-      "sourceModifications": {
-        "action": "insertAfter",
-        "target": "hum.HealthChanged:Connect(function()",
-        "newCode": "  -- Show damage number\\n  local damage = oldHealth - newHealth\\n  if damage > 0 then\\n    showDamageNumber(damage)\\n  end"
-      }
-    }
-  ],
-  "needsApproval": false,
-  "reasoning": "Modified existing HealthBarUI from session history"
-}
-
-### Example 3: Universal System Request
-User: "create universal damage feedback"
-{
-  "message": "Creating universal damage feedback system",
-  "plan": [
-    {
-      "type": "create",
-      "description": "Damage feedback module",
-      "className": "ModuleScript",
-      "name": "UniversalDamageFeedback",
-      "parentPath": "game.ReplicatedStorage",
-      "properties": {
-        "Source": "-- Universal damage feedback\\nlocal module = {}\\n\\nfunction module.flashRed(character)\\n  -- Implementation\\nend\\n\\nreturn module"
-      }
-    }
-  ],
-  "needsApproval": false,
-  "reasoning": "Created new module as requested"
+  "reasoning": "Modified existing RedBrick from session history",
+  "actionCircles": ["🟠", "🟣"] // Orange for modify, Purple for script
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -352,10 +358,8 @@ User: "create universal damage feedback"
 4. For modifications, use sourceModifications
 5. UI = LocalScript creating UI at runtime
 6. Never assume - check session first
-7. MENTION SYSTEM: '@' references ALL instance types everywhere
-8. MODIFICATION SPEED: Use direct replacements, no delays
-9. INSTANCE SEARCH: Search entire game for instances
-10. CODE FORMAT: Always include proper line breaks (\n)
+7. For greetings: return empty plan with friendly message
+8. For simple questions: return helpful response with empty plan
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## PERFORMANCE GUIDELINES
@@ -387,55 +391,43 @@ function updateSession(sessionId, plan, userPrompt) {
   const timestamp = new Date().toISOString();
   
   // Track created instances
-  plan.filter(step => step.type === 'create').forEach(step => {
-    const existing = session.createdInstances.find(i => 
-      i.name === step.name && i.parentPath === step.parentPath
-    );
+  if (plan && Array.isArray(plan)) {
+    plan.filter(step => step && step.type === 'create').forEach(step => {
+      const existing = session.createdInstances.find(i => 
+        i.name === step.name && i.parentPath === step.parentPath
+      );
+      
+      if (!existing) {
+        session.createdInstances.push({
+          name: step.name,
+          className: step.className,
+          path: step.parentPath,
+          action: 'created',
+          timestamp,
+          properties: step.properties
+        });
+      }
+    });
     
-    if (!existing) {
-      session.createdInstances.push({
-        name: step.name,
-        className: step.className,
-        path: step.parentPath,
-        action: 'created',
-        timestamp,
-        properties: step.properties
-      });
-    }
-  });
-  
-  // Track modified instances
-  plan.filter(step => step.type === 'modify').forEach(step => {
-    const existing = session.modifiedInstances.find(i => 
-      i.name === step.name && i.path === step.parentPath
-    );
-    
-    if (!existing) {
-      session.modifiedInstances.push({
-        name: step.name,
-        className: step.className || 'Unknown',
-        path: step.parentPath,
-        action: 'modified',
-        timestamp,
-        changes: step.properties,
-        sourceModifications: step.sourceModifications
-      });
-    }
-  });
-  
-  // Extract mentioned instances from user prompt
-  const instanceKeywords = ['part', 'script', 'model', 'gui', 'bar', 'handler', 'system', 'manager'];
-  const words = userPrompt.toLowerCase().split(/\s+/);
-  words.forEach(word => {
-    if (instanceKeywords.some(keyword => word.includes(keyword))) {
-      // Check if this instance exists in project context
-      session.mentionedInstances.push({
-        keyword: word,
-        timestamp,
-        context: userPrompt
-      });
-    }
-  });
+    // Track modified instances
+    plan.filter(step => step && step.type === 'modify').forEach(step => {
+      const existing = session.modifiedInstances.find(i => 
+        i.name === step.name && i.path === step.parentPath
+      );
+      
+      if (!existing) {
+        session.modifiedInstances.push({
+          name: step.name,
+          className: step.className || 'Unknown',
+          path: step.parentPath,
+          action: 'modified',
+          timestamp,
+          changes: step.properties,
+          sourceModifications: step.sourceModifications
+        });
+      }
+    });
+  }
   
   // Update chat history
   session.chatHistory.push({
@@ -455,27 +447,33 @@ function updateSession(sessionId, plan, userPrompt) {
 function buildSessionContext(session) {
   const context = [];
   
-  if (session.createdInstances.length > 0) {
+  if (session.createdInstances && session.createdInstances.length > 0) {
     context.push('CREATED IN THIS SESSION:');
     session.createdInstances.forEach(inst => {
-      context.push(`- ${inst.name} (${inst.className}) at ${inst.path} [${inst.action}]`);
+      if (inst && inst.name) {
+        context.push(`- ${inst.name} (${inst.className || 'Unknown'}) at ${inst.path || 'Unknown'} [${inst.action || 'created'}]`);
+      }
     });
     context.push('');
   }
   
-  if (session.modifiedInstances.length > 0) {
+  if (session.modifiedInstances && session.modifiedInstances.length > 0) {
     context.push('MODIFIED IN THIS SESSION:');
     session.modifiedInstances.forEach(inst => {
-      context.push(`- ${inst.name} at ${inst.path} [${inst.action}]`);
+      if (inst && inst.name) {
+        context.push(`- ${inst.name} at ${inst.path || 'Unknown'} [${inst.action || 'modified'}]`);
+      }
     });
     context.push('');
   }
   
-  if (session.chatHistory.length > 0) {
+  if (session.chatHistory && session.chatHistory.length > 0) {
     context.push('RECENT CHAT:');
     session.chatHistory.slice(-3).forEach(msg => {
-      const prefix = msg.role === 'user' ? 'U' : 'A';
-      context.push(`${prefix}: ${msg.content.substring(0, 80)}${msg.content.length > 80 ? '...' : ''}`);
+      if (msg && msg.content) {
+        const prefix = msg.role === 'user' ? 'U' : 'A';
+        context.push(`${prefix}: ${msg.content.substring(0, 80)}${msg.content.length > 80 ? '...' : ''}`);
+      }
     });
     context.push('');
   }
@@ -483,8 +481,10 @@ function buildSessionContext(session) {
   return context.join('\n');
 }
 
-// Smart instance matching
+// Smart instance matching with null safety
 function findInstanceInContext(userPrompt, session, existingInstances) {
+  if (!userPrompt) return [];
+  
   const promptLower = userPrompt.toLowerCase();
   const matches = [];
   
@@ -492,14 +492,17 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
   const keywords = promptLower.match(/\b(\w+)\b/g) || [];
   
   // Search in session first
-  const allSessionInstances = [
-    ...session.createdInstances,
-    ...session.modifiedInstances
-  ];
+  const allSessionInstances = [];
+  if (session) {
+    if (session.createdInstances) allSessionInstances.push(...session.createdInstances);
+    if (session.modifiedInstances) allSessionInstances.push(...session.modifiedInstances);
+  }
   
   allSessionInstances.forEach(inst => {
+    if (!inst || !inst.name) return;
+    
     const nameLower = inst.name.toLowerCase();
-    const classNameLower = inst.className.toLowerCase();
+    const classNameLower = (inst.className || '').toLowerCase();
     
     // Check if any keyword matches
     keywords.forEach(keyword => {
@@ -507,48 +510,28 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
         matches.push({
           source: 'session',
           name: inst.name,
-          className: inst.className,
-          path: inst.path,
+          className: inst.className || 'Unknown',
+          path: inst.path || 'Unknown',
           score: (nameLower.includes(keyword) ? 2 : 0) + (classNameLower.includes(keyword) ? 1 : 0)
         });
       }
     });
-    
-    // Check for common references
-    if (promptLower.includes('my ') && nameLower.includes('my')) {
-      matches.push({
-        source: 'session',
-        name: inst.name,
-        className: inst.className,
-        path: inst.path,
-        score: 1
-      });
-    }
-    
-    if ((promptLower.includes('the ') || promptLower.includes('that ')) && 
-        (nameLower.includes('health') || nameLower.includes('bar') || nameLower.includes('gui'))) {
-      matches.push({
-        source: 'session',
-        name: inst.name,
-        className: inst.className,
-        path: inst.path,
-        score: 1
-      });
-    }
   });
   
   // Search in existing instances
   (existingInstances || []).forEach(inst => {
-    const nameLower = inst.Name.toLowerCase();
-    const classNameLower = inst.ClassName.toLowerCase();
+    if (!inst || typeof inst !== 'object') return;
+    
+    const nameLower = (inst.Name || '').toLowerCase();
+    const classNameLower = (inst.ClassName || '').toLowerCase();
     
     keywords.forEach(keyword => {
       if (nameLower.includes(keyword) || classNameLower.includes(keyword)) {
         matches.push({
           source: 'project',
-          name: inst.Name,
-          className: inst.ClassName,
-          path: inst.Path,
+          name: inst.Name || 'Unknown',
+          className: inst.ClassName || 'Unknown',
+          path: inst.Path || 'Unknown',
           score: (nameLower.includes(keyword) ? 2 : 0) + (classNameLower.includes(keyword) ? 1 : 0)
         });
       }
@@ -569,7 +552,7 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
       }
     });
   
-  return uniqueMatches.slice(0, 10); // Return top 10 matches
+  return uniqueMatches.slice(0, 10);
 }
 
 function buildPrompt(userPrompt, context, sessionId) {
@@ -580,7 +563,7 @@ function buildPrompt(userPrompt, context, sessionId) {
   const instanceMatches = findInstanceInContext(
     userPrompt, 
     session, 
-    context.existingInstances
+    (context && context.existingInstances) ? context.existingInstances : []
   );
   
   let prompt = 'USER REQUEST: ' + userPrompt + '\n\n';
@@ -600,21 +583,25 @@ function buildPrompt(userPrompt, context, sessionId) {
     prompt += '\n';
   }
   
-  // Add selected objects
-  if (context.selectedObjects && context.selectedObjects.length > 0) {
+  // Add selected objects with null safety
+  if (context && context.selectedObjects && Array.isArray(context.selectedObjects) && context.selectedObjects.length > 0) {
     prompt += 'SELECTED OBJECTS:\n';
-    context.selectedObjects.forEach(obj => {
-      prompt += `- ${obj.Name} (${obj.ClassName}) at ${obj.Path}\n`;
+    const validObjects = context.selectedObjects.filter(obj => obj && typeof obj === 'object');
+    validObjects.forEach(obj => {
+      prompt += `- ${obj.Name || 'Unknown'} (${obj.ClassName || 'Unknown'}) at ${obj.Path || 'Unknown'}\n`;
     });
     prompt += '\n';
   }
   
-  // Add existing instances
-  if (context.existingInstances && context.existingInstances.length > 0) {
+  // Add existing instances with null safety
+  if (context && context.existingInstances && Array.isArray(context.existingInstances) && context.existingInstances.length > 0) {
     prompt += 'PROJECT INSTANCES (search if not in session):\n';
+    const validInstances = context.existingInstances.filter(inst => inst && typeof inst === 'object');
+    
     // Show instances similar to request
-    const relevantInstances = context.existingInstances.filter(inst => {
-      const nameLower = inst.Name.toLowerCase();
+    const relevantInstances = validInstances.filter(inst => {
+      if (!inst || !inst.Name) return false;
+      const nameLower = (inst.Name || '').toLowerCase();
       const promptLower = userPrompt.toLowerCase();
       return promptLower.split(/\s+/).some(word => 
         word.length > 3 && nameLower.includes(word)
@@ -623,23 +610,38 @@ function buildPrompt(userPrompt, context, sessionId) {
     
     if (relevantInstances.length > 0) {
       relevantInstances.slice(0, 10).forEach(inst => {
-        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
+        prompt += `- ${inst.Name || 'Unknown'} (${inst.ClassName || 'Unknown'}) at ${inst.Path || 'Unknown'}\n`;
       });
     } else {
       // Show some random instances
-      context.existingInstances.slice(0, 5).forEach(inst => {
-        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
+      validInstances.slice(0, 5).forEach(inst => {
+        prompt += `- ${inst.Name || 'Unknown'} (${inst.ClassName || 'Unknown'}) at ${inst.Path || 'Unknown'}\n`;
       });
     }
     prompt += '\n';
   }
   
-  prompt += 'INSTRUCTIONS:\n';
-  prompt += '1. FIRST check SESSION CONTEXT for instance names\n';
-  prompt += '2. Use EXACT names and paths from session\n';
-  prompt += '3. If modifying, use sourceModifications for scripts\n';
-  prompt += '4. Message = one sentence\n';
-  prompt += '5. Respond in JSON format only\n';
+  // SPECIAL CASE: Simple greetings/questions
+  const lowerPrompt = userPrompt.toLowerCase();
+  const isGreeting = ['hello', 'hi', 'hey', 'greetings'].some(word => lowerPrompt.includes(word));
+  const isHelp = ['help', 'what can you do', 'how do i', 'can you'].some(phrase => lowerPrompt.includes(phrase));
+  
+  if (isGreeting || isHelp) {
+    prompt += 'INSTRUCTIONS:\n';
+    prompt += '1. This is a simple greeting or help request\n';
+    prompt += '2. Respond with a friendly message\n';
+    prompt += '3. Return empty plan array\n';
+    prompt += '4. Include actionCircles if appropriate\n';
+    prompt += '5. Keep it helpful and encouraging\n';
+  } else {
+    prompt += 'INSTRUCTIONS:\n';
+    prompt += '1. FIRST check SESSION CONTEXT for instance names\n';
+    prompt += '2. Use EXACT names and paths from session\n';
+    prompt += '3. If modifying, use sourceModifications for scripts\n';
+    prompt += '4. Message = one sentence\n';
+    prompt += '5. Respond in JSON format only\n';
+    prompt += '6. Include actionCircles array with appropriate emojis\n';
+  }
   
   return prompt;
 }
@@ -678,7 +680,8 @@ async function processAIRequest(prompt, context, sessionId) {
         message: 'Working on it',
         plan: [],
         needsApproval: false,
-        reasoning: 'Failed to parse response'
+        reasoning: 'Failed to parse response',
+        actionCircles: []
       };
     }
 
@@ -686,9 +689,10 @@ async function processAIRequest(prompt, context, sessionId) {
     if (!aiResponse.message) aiResponse.message = 'Done';
     if (!aiResponse.plan) aiResponse.plan = [];
     if (!aiResponse.reasoning) aiResponse.reasoning = 'Based on session context';
+    if (!aiResponse.actionCircles) aiResponse.actionCircles = [];
     
     // Auto-approve settings
-    const hasDestructiveAction = aiResponse.plan.some(step => step.type === 'delete');
+    const hasDestructiveAction = aiResponse.plan.some(step => step && step.type === 'delete');
     const hasManySteps = aiResponse.plan.length >= 3;
     aiResponse.needsApproval = hasDestructiveAction || hasManySteps;
 
@@ -714,6 +718,7 @@ async function processAIRequest(prompt, context, sessionId) {
       plan: [],
       needsApproval: false,
       reasoning: 'Internal server error',
+      actionCircles: [],
       error: true
     };
   }
@@ -722,14 +727,15 @@ async function processAIRequest(prompt, context, sessionId) {
 app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI',
-    version: '2.2',
+    version: '2.3',
     status: 'online',
     model: 'gemini-3-flash-preview',
     features: [
       'Session memory',
       'Context-aware instance tracking',
       'Smart modifications',
-      'Persistent chat history'
+      'Persistent chat history',
+      'Action circle emojis'
     ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
@@ -755,10 +761,10 @@ app.get('/session/:sessionId', authenticateRequest, (req, res) => {
   
   res.json({
     sessionId,
-    createdInstances: session.createdInstances,
-    modifiedInstances: session.modifiedInstances,
-    chatHistory: session.chatHistory,
-    timestamp: new Date(session.timestamp).toISOString()
+    createdInstances: session.createdInstances || [],
+    modifiedInstances: session.modifiedInstances || [],
+    chatHistory: session.chatHistory || [],
+    timestamp: new Date(session.timestamp || Date.now()).toISOString()
   });
 });
 
@@ -795,7 +801,8 @@ app.post('/ai', authenticateRequest, async (req, res) => {
       message: error.message,
       plan: [],
       needsApproval: false,
-      reasoning: 'Internal server error'
+      reasoning: 'Internal server error',
+      actionCircles: []
     });
   }
 });
@@ -806,7 +813,7 @@ setInterval(() => {
   const oneHour = 60 * 60 * 1000;
   
   for (const [sessionId, session] of sessionMemory.entries()) {
-    if (now - session.timestamp > oneHour) {
+    if (now - (session.timestamp || now) > oneHour) {
       sessionMemory.delete(sessionId);
       console.log(`[Cleanup] Removed old session: ${sessionId}`);
     }
@@ -818,7 +825,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ 
     error: 'Internal error',
     plan: [],
-    needsApproval: false
+    needsApproval: false,
+    actionCircles: []
   });
 });
 
@@ -831,17 +839,16 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v2.2 - FIXED CONTEXT MEMORY');
+  console.log('ACIDNADE AI v2.3 - FIXED NULL ERRORS');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
   console.log('Features:');
   console.log('  • Session-based memory');
-  console.log('  • Context-aware instance tracking');
-  console.log('  • Smart instance matching');
+  console.log('  • Null-safe context handling');
+  console.log('  • Action circle emojis');
+  console.log('  • Enhanced greeting system');
   console.log('  • Persistent chat history');
-  console.log('  • Enhanced mention system');
-  console.log('  • Fast script modifications');
   console.log('==========================================');
   console.log('Server ready at http://localhost:' + PORT);
   console.log('==========================================');
