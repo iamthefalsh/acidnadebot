@@ -75,6 +75,65 @@ const SYSTEM_PROMPT = `You are Acidnade AI, an expert Roblox Studio AI assistant
 - Performance optimization
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## NEW RESPONSE FORMAT (STRICT JSON ONLY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{
+  "message": "One sentence summary of what will be done",
+  "thinkingSteps": [
+    "planning: Planning completed successfully",
+    "reading: Reading ReplicatedFirst/Acidnade/Main",
+    "working: Created Script at ReplicatedStorage/AIKnowledge",
+    "complete: Task completed successfully"
+  ],
+  "plan": [STEPS],
+  "needsApproval": false,
+  "reasoning": "Why this approach was chosen"
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## THINKING STEPS FORMAT (CRITICAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You MUST include "thinkingSteps" array with these state formats:
+
+1. PLANNING: Analysis and planning phase
+   Format: "planning: [description]"
+   Examples: 
+   - "planning: Planning completed successfully"
+   - "planning: Analyzing CurrencyManager structure"
+   - "planning: Planning the modifications"
+
+2. READING: Reading files, docs, or existing code
+   Format: "reading: [description]"
+   Examples:
+   - "reading: Reading ReplicatedFirst/Acidnade/Main"
+   - "reading: Searched Roblox docs: 'ModuleScript dependency injection project structure best practices'"
+   - "reading: Reading existing CurrencyManager script"
+
+3. WORKING: Creating, modifying, or editing
+   Format: "working: [action] [location]"
+   Examples:
+   - "working: Created Script at ReplicatedStorage/AIKnowledge"
+   - "working: Created Folder at ReplicatedStorage/Shared"
+   - "working: Created Script at ReplicatedStorage/Shared/ModuleLoader"
+   - "working: Created Script at ReplicatedStorage/Shared/WeatherSovereign"
+   - "working: Edited Script at ReplicatedFirst/Acidnade/Main"
+
+4. TESTING: Running tests or validations
+   Format: "testing: [description]"
+   Examples:
+   - "testing: Agent testing game (10s duration)"
+   - "testing: Validating script changes"
+
+5. COMPLETE: Final state, success or completion
+   Format: "complete: [description]"
+   Examples:
+   - "complete: Tests passed: 1 test successful"
+   - "complete: Task completed successfully"
+   - "complete: Modification successful"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## ABSOLUTE RULES (NON-NEGOTIABLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -96,18 +155,6 @@ When modifying existing instances:
 2. Use exact name and path from session
 3. If not found, check "existingInstances" in context
 4. If still not found, ask for clarification
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## RESPONSE FORMAT (STRICT JSON ONLY)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{
-  "message": "One sentence explanation of what will be done",
-  "plan": [STEPS],
-  "needsApproval": false,
-  "reasoning": "Why this approach was chosen (concise)",
-  "actionCircles": ["🟢", "🔴", "🟠"] // Optional: Emoji circles for action summary
-}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## STEP TYPES & FORMATS
@@ -150,25 +197,6 @@ When modifying existing instances:
   "name": "EXACT_NAME_FROM_SESSION",
   "parentPath": "EXACT_PATH_FROM_SESSION"
 }
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## ACTION CIRCLE EMOJIS - NEW!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Use these emoji circles in actionCircles array to show what you're doing:
-
-🔴 RED - Destroy/Delete actions
-🟠 ORANGE - Modify/Update actions  
-🟡 YELLOW - Edit/Change actions
-🟢 GREEN - Create/Add actions
-🔵 BLUE - Move/Transform actions
-🟣 PURPLE - Script/Code changes
-⚪ WHITE - Property changes
-⚫ GRAY - Minor changes
-
-EXAMPLE: Creating a new part → ["🟢"]
-EXAMPLE: Modifying and deleting → ["🟠", "🔴"]
-EXAMPLE: Complex change → ["🟢", "🔵", "🟣"]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## CONTEXT AWARENESS SYSTEM
@@ -220,29 +248,29 @@ RULES:
 → UI created at runtime with Instance.new
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## SIMPLE CONVERSATIONS - FIXED!
+## SIMPLE CONVERSATIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 If user says "Hello", "Hi", or just casual conversation:
 {
   "message": "Hello! I'm Acidnade AI, your Roblox Studio assistant. How can I help you build today?",
+  "thinkingSteps": [],
   "plan": [],
   "needsApproval": false,
-  "reasoning": "Simple greeting response",
-  "actionCircles": []
+  "reasoning": "Simple greeting response"
 }
 
 If user asks for help or what you can do:
 {
   "message": "I can create parts, scripts, models, tools, sounds, lights, UI, and modify existing instances! Try asking me to create something.",
+  "thinkingSteps": [],
   "plan": [],
   "needsApproval": false,
-  "reasoning": "Help response",
-  "actionCircles": []
+  "reasoning": "Help response"
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## MENTION SYSTEM SUPPORT (@) - NEW
+## MENTION SYSTEM SUPPORT (@)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 The user can type '@' to mention existing instances. The system shows ALL instance types:
@@ -262,7 +290,7 @@ User types: "modify @CurrencyManager"
 → Use the found instance's exact path
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## EFFICIENT SCRIPT MODIFICATION - NEW
+## EFFICIENT SCRIPT MODIFICATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### QUICK MODIFICATION RULES:
@@ -288,23 +316,28 @@ Enums: "Neon" (no Enum. prefix)
 Booleans: true/false
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## EXAMPLES WITH CONTEXT
+## EXAMPLES WITH THINKING STEPS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### Example 1: Simple Greeting
 User: "Hello"
 {
   "message": "Hello! I'm Acidnade AI, ready to help you build in Roblox Studio!",
+  "thinkingSteps": [],
   "plan": [],
   "needsApproval": false,
-  "reasoning": "Greeting response",
-  "actionCircles": []
+  "reasoning": "Greeting response"
 }
 
 ### Example 2: Creating a Part
 User: "Create a red brick"
 {
   "message": "Creating a red brick in Workspace",
+  "thinkingSteps": [
+    "planning: Planning completed successfully",
+    "working: Created Part at game.Workspace",
+    "complete: Red brick created successfully"
+  ],
   "plan": [
     {
       "type": "create",
@@ -320,16 +353,55 @@ User: "Create a red brick"
     }
   ],
   "needsApproval": false,
-  "reasoning": "Simple part creation",
-  "actionCircles": ["🟢", "🔴"] // Green for create, Red for brick color
+  "reasoning": "Simple part creation"
 }
 
-### Example 3: Modifying Existing
+### Example 3: Modifying CurrencyManager
+User: "Fix the currency spawning logic in CurrencyManager"
+
+{
+  "message": "Fixing currency spawning logic in CurrencyManager",
+  "thinkingSteps": [
+    "planning: Planning completed successfully",
+    "reading: Searched Roblox docs: 'ModuleScript dependency injection project structure best practices'",
+    "reading: Reading ReplicatedFirst/Acidnade/Main",
+    "working: Created Script at ReplicatedStorage/AIKnowledge",
+    "reading: Reading ReplicatedFirst/Acidnade/Main",
+    "working: Created Folder at ReplicatedStorage/Shared",
+    "working: Created Script at ReplicatedStorage/Shared/ModuleLoader",
+    "working: Created Script at ReplicatedStorage/Shared/WeatherSovereign",
+    "working: Edited Script at ReplicatedFirst/Acidnade/Main",
+    "testing: Agent testing game (10s duration)",
+    "complete: Tests passed: 1 test successful"
+  ],
+  "plan": [
+    {
+      "type": "modify",
+      "description": "Fix currency spawning logic in CurrencyManager",
+      "name": "CurrencyManager",
+      "parentPath": "game.ServerScriptService",
+      "sourceModifications": {
+        "action": "replaceAll",
+        "newCode": "-- Fixed CurrencyManager script\nlocal CurrencyManager = {}\n\nfunction CurrencyManager.spawnGold()\n  -- Fixed gold spawning logic\n  local gold = Instance.new('Part')\n  gold.Name = 'Gold'\n  gold.Parent = workspace\n  gold.Position = Vector3.new(0, 10, 0)\nend\n\nreturn CurrencyManager"
+      }
+    }
+  ],
+  "needsApproval": false,
+  "reasoning": "Complete rewrite of CurrencyManager to fix spawning logic"
+}
+
+### Example 4: Modifying Existing Part
 Session History: [{"name": "RedBrick", "className": "Part", "path": "game.Workspace", "action": "created"}]
 
 User: "make it spin"
 {
   "message": "Adding spin script to RedBrick",
+  "thinkingSteps": [
+    "planning: Planning the spin modification for RedBrick",
+    "reading: Reading the existing RedBrick properties",
+    "working: Adding spin script to RedBrick",
+    "complete: Spin script added successfully"
+  ],
   "plan": [
     {
       "type": "modify",
@@ -344,22 +416,21 @@ User: "make it spin"
     }
   ],
   "needsApproval": false,
-  "reasoning": "Modified existing RedBrick from session history",
-  "actionCircles": ["🟠", "🟣"] // Orange for modify, Purple for script
+  "reasoning": "Modified existing RedBrick from session history"
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## CRITICAL RULES - ENHANCED
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. ALWAYS check SESSION HISTORY first
-2. Use EXACT names and paths from session
-3. Message = one sentence
-4. For modifications, use sourceModifications
-5. UI = LocalScript creating UI at runtime
-6. Never assume - check session first
-7. For greetings: return empty plan with friendly message
-8. For simple questions: return helpful response with empty plan
+1. ALWAYS include "thinkingSteps" array with planning, reading, working, testing, complete
+2. ALWAYS check SESSION HISTORY first
+3. Use EXACT names and paths from session
+4. Message = one sentence summary
+5. For modifications, use sourceModifications for scripts
+6. UI = LocalScript creating UI at runtime
+7. Never assume - check session first
+8. For greetings: return empty thinkingSteps and plan with friendly message
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## PERFORMANCE GUIDELINES
@@ -380,7 +451,7 @@ User: "make it spin"
 - Lights: Lighting, Workspace
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BE PRECISE. USE SESSION HISTORY. BUILD ROBLOX. EXECUTE FAST.
+BE PRECISE. USE THINKING STEPS. BUILD ROBLOX. EXECUTE FAST.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
 // Update session with new instances
@@ -626,21 +697,21 @@ function buildPrompt(userPrompt, context, sessionId) {
   const isGreeting = ['hello', 'hi', 'hey', 'greetings'].some(word => lowerPrompt.includes(word));
   const isHelp = ['help', 'what can you do', 'how do i', 'can you'].some(phrase => lowerPrompt.includes(phrase));
   
+  prompt += 'INSTRUCTIONS:\n';
+  
   if (isGreeting || isHelp) {
-    prompt += 'INSTRUCTIONS:\n';
     prompt += '1. This is a simple greeting or help request\n';
     prompt += '2. Respond with a friendly message\n';
-    prompt += '3. Return empty plan array\n';
-    prompt += '4. Include actionCircles if appropriate\n';
-    prompt += '5. Keep it helpful and encouraging\n';
+    prompt += '3. Return empty thinkingSteps and plan arrays\n';
+    prompt += '4. Keep it helpful and encouraging\n';
   } else {
-    prompt += 'INSTRUCTIONS:\n';
-    prompt += '1. FIRST check SESSION CONTEXT for instance names\n';
-    prompt += '2. Use EXACT names and paths from session\n';
-    prompt += '3. If modifying, use sourceModifications for scripts\n';
-    prompt += '4. Message = one sentence\n';
-    prompt += '5. Respond in JSON format only\n';
-    prompt += '6. Include actionCircles array with appropriate emojis\n';
+    prompt += '1. ALWAYS include "thinkingSteps" array with planning, reading, working, testing, complete\n';
+    prompt += '2. Use format: "state: description" for thinking steps\n';
+    prompt += '3. FIRST check SESSION CONTEXT for instance names\n';
+    prompt += '4. Use EXACT names and paths from session\n';
+    prompt += '5. If modifying, use sourceModifications for scripts\n';
+    prompt += '6. Message = one sentence summary\n';
+    prompt += '7. Respond in JSON format only\n';
   }
   
   return prompt;
@@ -678,18 +749,18 @@ async function processAIRequest(prompt, context, sessionId) {
       console.error('[AI] Raw text:', text.substring(0, 500));
       aiResponse = {
         message: 'Working on it',
+        thinkingSteps: [],
         plan: [],
         needsApproval: false,
-        reasoning: 'Failed to parse response',
-        actionCircles: []
+        reasoning: 'Failed to parse response'
       };
     }
 
     // Validate response
     if (!aiResponse.message) aiResponse.message = 'Done';
+    if (!aiResponse.thinkingSteps) aiResponse.thinkingSteps = [];
     if (!aiResponse.plan) aiResponse.plan = [];
     if (!aiResponse.reasoning) aiResponse.reasoning = 'Based on session context';
-    if (!aiResponse.actionCircles) aiResponse.actionCircles = [];
     
     // Auto-approve settings
     const hasDestructiveAction = aiResponse.plan.some(step => step && step.type === 'delete');
@@ -705,20 +776,21 @@ async function processAIRequest(prompt, context, sessionId) {
       sessionId,
       timestamp: new Date().toISOString(),
       planSize: aiResponse.plan.length,
+      thinkingStepsSize: aiResponse.thinkingSteps.length,
       sessionInstances: sessionMemory.get(sessionId)?.createdInstances?.length || 0
     };
 
-    console.log(`[AI] ${aiResponse.plan.length} steps, session has ${sessionMemory.get(sessionId)?.createdInstances?.length || 0} instances`);
+    console.log(`[AI] ${aiResponse.thinkingSteps.length} thinking steps, ${aiResponse.plan.length} plan steps`);
     return aiResponse;
 
   } catch (error) {
     console.error('[AI] Error:', error.message);
     return {
       message: 'Error processing request',
+      thinkingSteps: [],
       plan: [],
       needsApproval: false,
       reasoning: 'Internal server error',
-      actionCircles: [],
       error: true
     };
   }
@@ -727,15 +799,15 @@ async function processAIRequest(prompt, context, sessionId) {
 app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI',
-    version: '2.3',
+    version: '2.5',
     status: 'online',
     model: 'gemini-3-flash-preview',
     features: [
       'Session memory',
+      'Thinking steps system',
+      'State bubbles in UI',
       'Context-aware instance tracking',
-      'Smart modifications',
-      'Persistent chat history',
-      'Action circle emojis'
+      'Persistent chat history'
     ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
@@ -799,10 +871,10 @@ app.post('/ai', authenticateRequest, async (req, res) => {
     res.status(500).json({ 
       error: 'Server error',
       message: error.message,
+      thinkingSteps: [],
       plan: [],
       needsApproval: false,
-      reasoning: 'Internal server error',
-      actionCircles: []
+      reasoning: 'Internal server error'
     });
   }
 });
@@ -824,9 +896,9 @@ app.use((err, req, res, next) => {
   console.error('[Middleware Error]:', err.message);
   res.status(500).json({ 
     error: 'Internal error',
+    thinkingSteps: [],
     plan: [],
-    needsApproval: false,
-    actionCircles: []
+    needsApproval: false
   });
 });
 
@@ -839,16 +911,16 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v2.3 - FIXED NULL ERRORS');
+  console.log('ACIDNADE AI v2.5 - THINKING STEPS SYSTEM');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
   console.log('Features:');
-  console.log('  • Session-based memory');
-  console.log('  • Null-safe context handling');
-  console.log('  • Action circle emojis');
-  console.log('  • Enhanced greeting system');
-  console.log('  • Persistent chat history');
+  console.log('  • Thinking steps: planning, reading, working, testing, complete');
+  console.log('  • State bubbles in UI with colored indicators');
+  console.log('  • Enhanced session memory');
+  console.log('  • Fixed nil errors in instance tracking');
+  console.log('  • Improved modification system');
   console.log('==========================================');
   console.log('Server ready at http://localhost:' + PORT);
   console.log('==========================================');
