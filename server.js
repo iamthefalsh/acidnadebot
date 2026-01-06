@@ -82,9 +82,10 @@ const SYSTEM_PROMPT = `You are Acidnade AI, an expert Roblox Studio AI assistant
   "message": "One sentence summary of what will be done",
   "thinkingSteps": [
     "planning: Planning completed successfully",
-    "reading: Reading ReplicatedFirst/Acidnade/Main",
-    "working: Created Script at ReplicatedStorage/AIKnowledge",
-    "complete: Task completed successfully"
+    "reading: Reading CurrencyManager at game.ServerScriptService",
+    "working: Fixing CurrencyManager spawning logic",
+    "testing: Testing currency spawning",
+    "complete: Currency spawning logic fixed successfully"
   ],
   "plan": [STEPS],
   "needsApproval": false,
@@ -100,25 +101,24 @@ You MUST include "thinkingSteps" array with these state formats:
 1. PLANNING: Analysis and planning phase
    Format: "planning: [description]"
    Examples: 
-   - "planning: Planning completed successfully"
-   - "planning: Analyzing CurrencyManager structure"
+   - "planning: Planning the CurrencyManager fix"
+   - "planning: Analyzing CurrencyManager source code"
    - "planning: Planning the modifications"
 
 2. READING: Reading files, docs, or existing code
    Format: "reading: [description]"
    Examples:
-   - "reading: Reading ReplicatedFirst/Acidnade/Main"
-   - "reading: Searched Roblox docs: 'ModuleScript dependency injection project structure best practices'"
+   - "reading: Reading CurrencyManager at game.ServerScriptService"
+   - "reading: Searched Roblox docs: 'ModuleScript dependency injection'"
    - "reading: Reading existing CurrencyManager script"
+   - "reading: Reading source code provided by user"
 
 3. WORKING: Creating, modifying, or editing
    Format: "working: [action] [location]"
    Examples:
    - "working: Created Script at ReplicatedStorage/AIKnowledge"
    - "working: Created Folder at ReplicatedStorage/Shared"
-   - "working: Created Script at ReplicatedStorage/Shared/ModuleLoader"
-   - "working: Created Script at ReplicatedStorage/Shared/WeatherSovereign"
-   - "working: Edited Script at ReplicatedFirst/Acidnade/Main"
+   - "working: Fixing CurrencyManager spawning logic"
 
 4. TESTING: Running tests or validations
    Format: "testing: [description]"
@@ -134,15 +134,34 @@ You MUST include "thinkingSteps" array with these state formats:
    - "complete: Modification successful"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## AUTOMATIC CODE READING SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+### WHEN YOU HAVE SOURCE CODE:
+When the system provides source code for an instance (like CurrencyManager):
+1. READ the source code in your "thinkingSteps" 
+2. Example: "reading: Reading CurrencyManager at game.ServerScriptService"
+3. Analyze what needs to be fixed
+4. DON'T ask for code - you already have it!
+5. Provide a plan to fix the issues
+
+### WHEN NO SOURCE CODE:
+If user asks to modify a script but source code isn't provided:
+1. Check if it's in matched instances
+2. If yes, assume we can read it automatically
+3. Add "reading: Reading [instance] at [path]" in thinking steps
+4. Provide fix based on common patterns for that type of script
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## ABSOLUTE RULES (NON-NEGOTIABLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 1. CONTEXT AWARENESS (CRITICAL)
-You MUST remember instances created in this chat session.
-When user refers to "my", "the", "it", "that" instance, you MUST:
-1. Check SESSION HISTORY for previously created/modified instances
-2. Use exact names from session history
-3. NEVER invent names - use what exists in session
+### 1. AUTOMATIC CODE READING
+When user says "fix my [script] in [location]":
+1. Check MATCHED INSTANCES for exact match
+2. If found, READ the code automatically
+3. NEVER ask "Could you please share the current code"
+4. Assume you can read any found script
 
 ### 2. INSTANCE REFERENCE RULES
 User says "my health bar" → Look for HealthBar in session
@@ -150,12 +169,12 @@ User says "that part" → Last created/modified Part
 User says "the script" → Last created/modified Script
 
 ### 3. MODIFICATION RULES
-When modifying existing instances:
-1. FIRST check if instance exists in session history
-2. Use exact name and path from session
-3. If not found, check "existingInstances" in context
-4. If still not found, check MATCHED INSTANCES in prompt
-5. If still not found, ask for clarification
+When modifying existing scripts:
+1. FIRST check if instance exists in matched instances
+2. Use exact name and path from matches
+3. READ the source code automatically
+4. Provide fix based on what you read
+5. NEVER ask for code if instance is found
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## STEP TYPES & FORMATS
@@ -185,8 +204,8 @@ When modifying existing instances:
     "Color": "0, 255, 0"
   },
   "sourceModifications": {
-    "action": "replace|append|prepend|insertAfter|insertBefore|remove|replaceAll",
-    "target": "-- line to find",
+    "action": "replaceAll|append|prepend|insertAfter|insertBefore|remove|replace",
+    "target": "-- line to find (optional)",
     "newCode": "-- new code to insert"
   }
 }
@@ -213,32 +232,13 @@ You will also receive MATCHED INSTANCES containing:
 - These are likely what the user is referring to
 - USE THESE EXACT NAMES AND PATHS
 
-SESSION HISTORY FORMAT:
-[
-  {
-    "name": "HealthBarHandler",
-    "className": "LocalScript",
-    "path": "game.StarterPlayer.StarterPlayerScripts",
-    "action": "created|modified",
-    "timestamp": "when it happened"
-  },
-  {
-    "name": "KillBrick",
-    "className": "Part", 
-    "path": "game.Workspace",
-    "action": "created",
-    "timestamp": "when it happened"
-  }
-]
-
-RULES:
-1. ALWAYS check SESSION HISTORY before creating new instances
-2. When user says "update my health bar" → Look for HealthBar* in session
-3. Use EXACT names and paths from session
-4. If multiple matches, use the most recent one
+You may receive SOURCE CODE containing:
+- The actual Lua source code of matched instances
+- READ THIS CODE in your thinking steps
+- Use it to understand what needs fixing
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## MATCHED INSTANCES SYSTEM (NEW)
+## MATCHED INSTANCES SYSTEM
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 You will see MATCHED INSTANCES in the prompt. These are instances found by the system:
@@ -249,17 +249,16 @@ EXAMPLE:
 EXACT MATCHES (VERY LIKELY WHAT USER WANTS):
 1. 🎯 CurrencyManager (ModuleScript) at game.ServerScriptService [project_exact]
 
-KEYWORD MATCHES (CHECK THESE):
-1. 🔎 GoldSpawner (Script) at game.ServerScriptService [project_keyword]
-2. 🔎 CurrencyHandler (ModuleScript) at game.ReplicatedStorage [session_keyword]
+📜 SOURCE CODE AVAILABLE FOR MATCHED INSTANCES
 
 INSTRUCTION: When user mentions an instance (like "CurrencyManager"), check the EXACT MATCHES first.
-If found, use that exact name and path for modifications.
+If found, READ the code and provide fix WITHOUT asking for it.
 
 IMPORTANT:
 1. If there are EXACT MATCHES, ALWAYS use those for modifications
-2. Don't ask for clarification if exact matches exist
-3. Use the path exactly as shown (e.g., game.ServerScriptService)
+2. READ the source code in thinking steps
+3. Never ask for clarification if exact matches exist
+4. Use the path exactly as shown (e.g., game.ServerScriptService)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## INTELLIGENT SCRIPT PLACEMENT
@@ -359,8 +358,8 @@ User: "Hello"
   "reasoning": "Greeting response"
 }
 
-### Example 2: Modifying CurrencyManager (with matched instances)
-User: "Fix the currency spawning logic"
+### Example 2: Modifying CurrencyManager (with automatic reading)
+User: "Fix the currency spawning logic in CurrencyManager"
 
 MATCHED INSTANCES:
 EXACT MATCHES:
@@ -371,16 +370,16 @@ EXACT MATCHES:
   "thinkingSteps": [
     "planning: Planning the CurrencyManager modifications",
     "reading: Reading CurrencyManager at game.ServerScriptService",
-    "working: Modifying CurrencyManager script",
-    "testing: Testing currency spawning logic",
+    "working: Fixing currency spawning logic",
+    "testing: Testing currency spawning",
     "complete: Currency spawning logic fixed successfully"
   ],
   "plan": [
     {
       "type": "modify",
       "description": "Fix currency spawning logic",
-      "name": "CurrencyManager",  // <-- From EXACT MATCHES
-      "parentPath": "game.ServerScriptService",  // <-- From EXACT MATCHES
+      "name": "CurrencyManager",
+      "parentPath": "game.ServerScriptService",
       "sourceModifications": {
         "action": "replaceAll",
         "newCode": "-- Fixed CurrencyManager with improved spawning logic\nlocal CurrencyManager = {}\n\nfunction CurrencyManager.spawnGold()\n    -- Improved gold spawning with validation\n    if not workspace:FindFirstChild('GoldSpawnArea') then\n        warn('GoldSpawnArea not found!')\n        return\n    end\n    \n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\n    gold.Position = workspace.GoldSpawnArea.Position + Vector3.new(\n        math.random(-10, 10),\n        5,\n        math.random(-10, 10)\n    )\nend\n\nreturn CurrencyManager"
@@ -388,36 +387,38 @@ EXACT MATCHES:
     }
   ],
   "needsApproval": false,
-  "reasoning": "Found exact match for CurrencyManager in ServerScriptService, modifying existing instance"
+  "reasoning": "Found exact match for CurrencyManager in ServerScriptService, reading and fixing it"
 }
 
-### Example 3: Modifying Existing Part
-Session History: [{"name": "RedBrick", "className": "Part", "path": "game.Workspace", "action": "created"}]
+### Example 3: User asks to fix script (NO CODE ASKING)
+User: "can you fix my CurrencyManager script in ServerScriptService?"
 
-User: "make it spin"
+MATCHED INSTANCES:
+EXACT MATCHES:
+1. 🎯 CurrencyManager (ModuleScript) at game.ServerScriptService [project_exact]
+
 {
-  "message": "Adding spin script to RedBrick",
+  "message": "Reading and fixing your CurrencyManager script in ServerScriptService",
   "thinkingSteps": [
-    "planning: Planning the spin modification for RedBrick",
-    "reading: Reading the existing RedBrick properties",
-    "working: Adding spin script to RedBrick",
-    "complete: Spin script added successfully"
+    "planning: Planning CurrencyManager fix",
+    "reading: Reading CurrencyManager at game.ServerScriptService",
+    "working: Fixing CurrencyManager script issues",
+    "complete: CurrencyManager fixed successfully"
   ],
   "plan": [
     {
       "type": "modify",
-      "description": "Add spin to RedBrick",
-      "name": "RedBrick",
-      "parentPath": "game.Workspace",
+      "description": "Fix CurrencyManager script",
+      "name": "CurrencyManager",
+      "parentPath": "game.ServerScriptService",
       "sourceModifications": {
-        "action": "append",
-        "target": "",
-        "newCode": "local spin = Instance.new('Script')\\nspin.Parent = script.Parent\\nspin.Source = [[while true do\\n  script.Parent.CFrame = script.Parent.CFrame * CFrame.Angles(0, math.rad(2), 0)\\n  wait(0.03)\\nend]]"
+        "action": "replaceAll",
+        "newCode": "-- Fixed CurrencyManager script\nlocal CurrencyManager = {}\n\nfunction CurrencyManager.spawnGold()\n    -- Proper gold spawning logic\n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\n    gold.Position = Vector3.new(0, 10, 0)\nend\n\nreturn CurrencyManager"
       }
     }
   ],
   "needsApproval": false,
-  "reasoning": "Modified existing RedBrick from session history"
+  "reasoning": "User asked to fix CurrencyManager, found exact match in ServerScriptService, reading and fixing automatically"
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -425,9 +426,9 @@ User: "make it spin"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. ALWAYS include "thinkingSteps" array with planning, reading, working, testing, complete
-2. ALWAYS check SESSION HISTORY first
-3. Check MATCHED INSTANCES for exact matches
-4. Use EXACT names and paths from matches
+2. ALWAYS check MATCHED INSTANCES for exact matches
+3. READ the code automatically when instance is found
+4. NEVER ask "Could you please share the current code" if instance is found
 5. Message = one sentence summary
 6. For modifications, use sourceModifications for scripts
 7. Never ask for clarification if exact matches exist
@@ -452,7 +453,7 @@ User: "make it spin"
 - Lights: Lighting, Workspace
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BE PRECISE. USE THINKING STEPS. BUILD ROBLOX. EXECUTE FAST.
+AUTOMATIC CODE READING. NO ASKING FOR CODE. BUILD ROBLOX. EXECUTE FAST.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
 // Update session with new instances
@@ -554,7 +555,7 @@ function buildSessionContext(session) {
 }
 
 // Enhanced instance finding with path priority and exact matching
-function findInstanceInContext(userPrompt, session, existingInstances) {
+function findInstanceInContext(userPrompt, session, existingInstances, sourceCodes = {}) {
   if (!userPrompt) return [];
   
   const promptLower = userPrompt.toLowerCase();
@@ -607,9 +608,10 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
           name: inst.name,
           className: inst.className || 'Unknown',
           path: inst.path || 'Unknown',
-          score: 15, // Very high score for exact match
+          score: 20, // Very high score for exact match
           exactMatch: true,
-          matchType: 'exact_name'
+          matchType: 'exact_name',
+          hasSourceCode: sourceCodes[inst.path] ? true : false
         });
       }
     });
@@ -625,9 +627,10 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
           name: inst.Name || 'Unknown',
           className: inst.ClassName || 'Unknown',
           path: inst.Path || 'Unknown',
-          score: 14, // High score for exact match
+          score: 19, // High score for exact match
           exactMatch: true,
-          matchType: 'exact_name'
+          matchType: 'exact_name',
+          hasSourceCode: sourceCodes[inst.Path] ? true : false
         });
       }
     });
@@ -654,34 +657,40 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
       
       // Exact name match
       if (nameLower === keyword) {
-        score += 12;
+        score += 15;
         matchType = 'exact_name';
       }
       // Name contains keyword
       else if (nameLower.includes(keyword)) {
-        score += 6;
+        score += 7;
       }
       
       // Class name contains keyword
       if (classNameLower.includes(keyword)) {
-        score += 4;
+        score += 5;
       }
       
       // Path contains keyword
       if (pathLower.includes(keyword)) {
-        score += 3;
+        score += 4;
       }
       
       // Boost if it's in the mentioned location
       if (mentionedLocation && pathLower.includes(mentionedLocation.toLowerCase())) {
-        score += 8;
+        score += 10;
         matchType = 'location_match';
       }
       
       // Boost for script-related keywords
       if (['script', 'module', 'local', 'handler', 'manager', 'controller'].includes(keyword) &&
           classNameLower.includes('script')) {
-        score += 5;
+        score += 6;
+      }
+      
+      // Boost for "fix" or "modify" keywords when it's a script
+      if (['fix', 'modify', 'edit', 'change', 'update'].includes(keyword) &&
+          classNameLower.includes('script')) {
+        score += 8;
       }
       
       if (score > 0) {
@@ -692,7 +701,8 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
           path: inst.path || 'Unknown',
           score: score,
           exactMatch: matchType === 'exact_name',
-          matchType: matchType
+          matchType: matchType,
+          hasSourceCode: sourceCodes[inst.path] ? true : false
         });
       }
     });
@@ -710,34 +720,40 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
       
       // Exact name match
       if (nameLower === keyword) {
-        score += 12;
+        score += 15;
         matchType = 'exact_name';
       }
       // Name contains keyword
       else if (nameLower.includes(keyword)) {
-        score += 6;
+        score += 7;
       }
       
       // Class name contains keyword
       if (classNameLower.includes(keyword)) {
-        score += 4;
+        score += 5;
       }
       
       // Path contains keyword
       if (pathLower.includes(keyword)) {
-        score += 3;
+        score += 4;
       }
       
       // Boost if it's in the mentioned location
       if (mentionedLocation && pathLower.includes(mentionedLocation.toLowerCase())) {
-        score += 8;
+        score += 10;
         matchType = 'location_match';
       }
       
       // Boost for script-related keywords
       if (['script', 'module', 'local', 'handler', 'manager', 'controller'].includes(keyword) &&
           classNameLower.includes('script')) {
-        score += 5;
+        score += 6;
+      }
+      
+      // Boost for "fix" or "modify" keywords when it's a script
+      if (['fix', 'modify', 'edit', 'change', 'update'].includes(keyword) &&
+          classNameLower.includes('script')) {
+        score += 8;
       }
       
       if (score > 0) {
@@ -748,7 +764,8 @@ function findInstanceInContext(userPrompt, session, existingInstances) {
           path: inst.Path || 'Unknown',
           score: score,
           exactMatch: matchType === 'exact_name',
-          matchType: matchType
+          matchType: matchType,
+          hasSourceCode: sourceCodes[inst.Path] ? true : false
         });
       }
     });
@@ -775,11 +792,15 @@ function buildPrompt(userPrompt, context, sessionId) {
   const session = initSession(sessionId);
   const sessionContext = buildSessionContext(session);
   
+  // Extract source codes from context if available
+  const sourceCodes = context?.sourceCodes || {};
+  
   // Find potential instance matches
   const instanceMatches = findInstanceInContext(
     userPrompt, 
     session, 
-    (context && context.existingInstances) ? context.existingInstances : []
+    (context && context.existingInstances) ? context.existingInstances : [],
+    sourceCodes
   );
   
   let prompt = 'USER REQUEST: ' + userPrompt + '\n\n';
@@ -802,26 +823,42 @@ function buildPrompt(userPrompt, context, sessionId) {
       prompt += '\n🎯 EXACT MATCHES (VERY LIKELY WHAT USER WANTS):\n';
       exactMatches.forEach((match, i) => {
         const emoji = match.matchType === 'exact_name' ? '🎯' : '📍';
-        prompt += `${i + 1}. ${emoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
+        const codeEmoji = match.hasSourceCode ? '📜' : '';
+        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
       });
       prompt += '\n';
+      
+      // Add source code for exact matches if available
+      exactMatches.forEach((match, i) => {
+        if (match.hasSourceCode && sourceCodes[match.path]) {
+          prompt += `📜 SOURCE CODE FOR ${match.name} at ${match.path}:\n`;
+          prompt += '```lua\n';
+          prompt += sourceCodes[match.path].substring(0, 2000); // Limit code length
+          if (sourceCodes[match.path].length > 2000) {
+            prompt += '\n... (truncated)';
+          }
+          prompt += '\n```\n\n';
+        }
+      });
     }
     
     if (keywordMatches.length > 0) {
       prompt += '\n🔎 KEYWORD MATCHES (CHECK THESE):\n';
       keywordMatches.forEach((match, i) => {
         const emoji = match.matchType === 'location_match' ? '📍' : '🔎';
-        prompt += `${i + 1}. ${emoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
+        const codeEmoji = match.hasSourceCode ? '📜' : '';
+        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
       });
       prompt += '\n';
     }
     
     // Add special instructions
-    prompt += '📋 INSTRUCTIONS FOR USING MATCHED INSTANCES:\n';
+    prompt += '📋 IMPORTANT INSTRUCTIONS:\n';
     prompt += '1. If there are EXACT MATCHES, ALWAYS use those for modifications\n';
-    prompt += '2. Use the exact name and path shown above\n';
-    prompt += '3. Don\'t ask for clarification if exact matches exist\n';
-    prompt += '4. For modifications, use type: "modify" with the exact name/path\n\n';
+    prompt += '2. READ the source code automatically (shown above)\n';
+    prompt += '3. NEVER ask "Could you please share the current code" if instance is found\n';
+    prompt += '4. Include "reading: Reading [instance] at [path]" in thinking steps\n';
+    prompt += '5. Provide fix based on the source code you read\n\n';
   } else {
     prompt += '⚠️ NO INSTANCE MATCHES FOUND\n';
     prompt += 'You may need to ask for clarification about which instance to modify.\n\n';
@@ -880,7 +917,7 @@ function buildPrompt(userPrompt, context, sessionId) {
   const isGreeting = ['hello', 'hi', 'hey', 'greetings'].some(word => lowerPrompt.includes(word));
   const isHelp = ['help', 'what can you do', 'how do i', 'can you'].some(phrase => lowerPrompt.includes(phrase));
   
-  prompt += 'INSTRUCTIONS:\n';
+  prompt += 'FINAL INSTRUCTIONS:\n';
   
   if (isGreeting || isHelp) {
     prompt += '1. This is a simple greeting or help request\n';
@@ -890,11 +927,12 @@ function buildPrompt(userPrompt, context, sessionId) {
   } else {
     prompt += '1. ALWAYS include "thinkingSteps" array with planning, reading, working, testing, complete\n';
     prompt += '2. Use format: "state: description" for thinking steps\n';
-    prompt += '3. FIRST check SESSION CONTEXT and MATCHED INSTANCES\n';
-    prompt += '4. Use EXACT names and paths from matches\n';
-    prompt += '5. If modifying, use sourceModifications for scripts\n';
-    prompt += '6. Message = one sentence summary\n';
-    prompt += '7. Respond in JSON format only\n';
+    prompt += '3. READ the source code automatically when available\n';
+    prompt += '4. NEVER ask for code if instance is found\n';
+    prompt += '5. Use EXACT names and paths from matches\n';
+    prompt += '6. If modifying, use sourceModifications for scripts\n';
+    prompt += '7. Message = one sentence summary\n';
+    prompt += '8. Respond in JSON format only\n';
   }
   
   return prompt;
@@ -919,15 +957,18 @@ async function processAIRequest(prompt, context, sessionId) {
     
     // Log instance matches for debugging
     const session = initSession(sessionId);
+    const sourceCodes = context?.sourceCodes || {};
     const instanceMatches = findInstanceInContext(
       prompt, 
       session, 
-      (context && context.existingInstances) ? context.existingInstances : []
+      (context && context.existingInstances) ? context.existingInstances : [],
+      sourceCodes
     );
     
     console.log(`[AI] Found ${instanceMatches.length} instance matches for prompt: "${prompt.substring(0, 50)}..."`);
     if (instanceMatches.length > 0) {
-      console.log(`[AI] Top match: ${instanceMatches[0].name} at ${instanceMatches[0].path} (score: ${instanceMatches[0].score}, type: ${instanceMatches[0].matchType})`);
+      console.log(`[AI] Top match: ${instanceMatches[0].name} at ${instanceMatches[0].path}`);
+      console.log(`[AI] Has source code: ${instanceMatches[0].hasSourceCode}`);
     }
     
     const startTime = Date.now();
@@ -974,7 +1015,8 @@ async function processAIRequest(prompt, context, sessionId) {
       planSize: aiResponse.plan.length,
       thinkingStepsSize: aiResponse.thinkingSteps.length,
       sessionInstances: sessionMemory.get(sessionId)?.createdInstances?.length || 0,
-      instanceMatches: instanceMatches.length
+      instanceMatches: instanceMatches.length,
+      sourceCodesProvided: Object.keys(sourceCodes).length
     };
 
     console.log(`[AI] Response: ${aiResponse.thinkingSteps.length} thinking steps, ${aiResponse.plan.length} plan steps`);
@@ -996,17 +1038,17 @@ async function processAIRequest(prompt, context, sessionId) {
 app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI',
-    version: '2.5',
+    version: '2.6',
     status: 'online',
     model: 'gemini-3-flash-preview',
     features: [
+      'Automatic code reading',
+      'No asking for code',
       'Enhanced instance matching',
       'Exact name detection',
       'Location-aware search',
       'Session memory',
-      'Thinking steps system',
-      'State bubbles in UI',
-      'Context-aware instance tracking'
+      'Thinking steps system'
     ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
@@ -1110,16 +1152,15 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v2.5 - ENHANCED INSTANCE FINDING');
+  console.log('ACIDNADE AI v2.6 - AUTOMATIC CODE READING');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
   console.log('Features:');
-  console.log('  • Exact instance name matching');
-  console.log('  • Location-aware search (ServerScriptService, Workspace, etc.)');
-  console.log('  • Enhanced scoring system');
-  console.log('  • Clear instance match display');
-  console.log('  • Smart path detection');
+  console.log('  • NO ASKING FOR CODE - reads automatically');
+  console.log('  • Source code display in prompts');
+  console.log('  • Enhanced instance matching');
+  console.log('  • Automatic code analysis');
   console.log('==========================================');
   console.log('Server ready at http://localhost:' + PORT);
   console.log('==========================================');
