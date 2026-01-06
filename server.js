@@ -153,6 +153,37 @@ If user asks to modify a script but source code isn't provided:
 4. Provide fix based on common patterns for that type of script
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## CRITICAL: CODE MODIFICATION RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+### 1. NEVER USE REPLACEALL UNLESS ABSOLUTELY NECESSARY
+- Use "replaceAll" ONLY when user explicitly says "rewrite completely" or "replace everything"
+- NEVER use "replaceAll" for simple fixes or adding functionality
+- Preserve existing code - don't delete working functionality
+
+### 2. TARGET MULTIPLE LINES WHEN NEEDED
+You can target multiple lines in one modification:
+- Use exact line patterns for multi-line targets
+- Example targeting 3 lines:
+  "target": "contentLabel.Text = text\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular",
+  "newCode": "contentLabel.Text = text or ''\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular"
+
+### 3. USE SPECIFIC MODIFICATION TYPES:
+- "append": Add new code at the end of script
+- "prepend": Add new code at the beginning
+- "insertAfter": Insert code after a specific line
+- "insertBefore": Insert code before a specific line
+- "replace": Replace a specific line or block
+- "remove": Remove specific lines
+- "replaceAll": ONLY for complete rewrites
+
+### 4. PRESERVE EXISTING STRUCTURE:
+- Keep comments and documentation
+- Maintain indentation and formatting
+- Don't remove helper functions unless they're broken
+- Add new functionality without removing old
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## ABSOLUTE RULES (NON-NEGOTIABLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -198,14 +229,14 @@ When modifying existing scripts:
 {
   "type": "modify",
   "description": "What changes",
-  "name": "EXACT_NAME_FROM_MATCHES",  // <-- USE NAME FROM MATCHED INSTANCES
-  "parentPath": "EXACT_PATH_FROM_MATCHES",  // <-- USE PATH FROM MATCHED INSTANCES
+  "name": "EXACT_NAME_FROM_MATCHES",
+  "parentPath": "EXACT_PATH_FROM_MATCHES",
   "properties": {
     "Color": "0, 255, 0"
   },
   "sourceModifications": {
-    "action": "replaceAll|append|prepend|insertAfter|insertBefore|remove|replace",
-    "target": "-- line to find (optional)",
+    "action": "append|prepend|insertAfter|insertBefore|remove|replace|replaceAll",
+    "target": "-- line or block to find (optional)",
     "newCode": "-- new code to insert"
   }
 }
@@ -216,6 +247,52 @@ When modifying existing scripts:
   "description": "What deletes",
   "name": "EXACT_NAME_FROM_MATCHES",
   "parentPath": "EXACT_PATH_FROM_MATCHES"
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## MULTI-LINE TARGETING EXAMPLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+### Example 1: Replace multiple specific lines
+User wants to fix TextLabel properties in existing code:
+
+Existing code block:
+		local contentLabel = Instance.new("TextLabel")
+		contentLabel.Size = UDim2.new(1, -20, 0, 0)
+		contentLabel.Position = UDim2.new(0, 10, 0, 35)
+		contentLabel.AutomaticSize = Enum.AutomaticSize.Y
+		contentLabel.Text = text
+		contentLabel.TextColor3 = THEME.Colors.Text
+		contentLabel.Font = THEME.Fonts.Regular
+		contentLabel.TextSize = THEME.Sizes.Body
+		contentLabel.TextWrapped = true
+		contentLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+You can target multiple lines:
+{
+  "sourceModifications": {
+    "action": "replace",
+    "target": "contentLabel.Text = text\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular\ncontentLabel.TextSize = THEME.Sizes.Body\ncontentLabel.TextWrapped = true",
+    "newCode": "contentLabel.Text = text or ''\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular\ncontentLabel.TextSize = THEME.Sizes.Body\ncontentLabel.TextWrapped = true"
+  }
+}
+
+### Example 2: Insert after a block
+{
+  "sourceModifications": {
+    "action": "insertAfter",
+    "target": "function someFunction()\n    print('hello')",
+    "newCode": "    -- New validation added\n    if not player then\n        warn('Player is nil!')\n        return\n    end"
+  }
+}
+
+### Example 3: Replace function with improvements
+{
+  "sourceModifications": {
+    "action": "replace",
+    "target": "function spawnGold()\n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\nend",
+    "newCode": "function spawnGold()\n    -- Improved with validation\n    if not workspace:FindFirstChild('GoldSpawnArea') then\n        warn('GoldSpawnArea not found!')\n        return\n    end\n    \n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\n    gold.Position = workspace.GoldSpawnArea.Position\nend"
+  }
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -323,16 +400,17 @@ User types: "modify @CurrencyManager"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### QUICK MODIFICATION RULES:
-1. Use "replaceAll" for COMPLETE rewrites
+1. Use "replace" for targeted line changes or small blocks
 2. Use "append" for adding NEW functions to end
 3. Use "insertAfter/insertBefore" for SPECIFIC line changes
-4. Keep modifications SMALL and FOCUSED
-5. Always include line breaks (\n)
+4. Use "prepend" for adding imports or setup code
+5. Use "remove" only for broken or unused code
+6. Use "replaceAll" ONLY when specifically requested
 
 ### SPEED OPTIMIZATIONS:
 1. Modify scripts INSTANTLY without delays
 2. Use direct source replacement when possible
-3. For small changes, use targeted modifications
+3. For multiple changes, use one step with multi-line targeting
 4. NEVER wait or add artificial delays
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -358,7 +436,7 @@ User: "Hello"
   "reasoning": "Greeting response"
 }
 
-### Example 2: Modifying CurrencyManager (with automatic reading)
+### Example 2: Modifying CurrencyManager with multi-line fix
 User: "Fix the currency spawning logic in CurrencyManager"
 
 MATCHED INSTANCES:
@@ -381,44 +459,42 @@ EXACT MATCHES:
       "name": "CurrencyManager",
       "parentPath": "game.ServerScriptService",
       "sourceModifications": {
-        "action": "replaceAll",
-        "newCode": "-- Fixed CurrencyManager with improved spawning logic\nlocal CurrencyManager = {}\n\nfunction CurrencyManager.spawnGold()\n    -- Improved gold spawning with validation\n    if not workspace:FindFirstChild('GoldSpawnArea') then\n        warn('GoldSpawnArea not found!')\n        return\n    end\n    \n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\n    gold.Position = workspace.GoldSpawnArea.Position + Vector3.new(\n        math.random(-10, 10),\n        5,\n        math.random(-10, 10)\n    )\nend\n\nreturn CurrencyManager"
+        "action": "replace",
+        "target": "function CurrencyManager.spawnGold()\n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\nend",
+        "newCode": "function CurrencyManager.spawnGold()\n    -- Improved gold spawning with validation\n    if not workspace:FindFirstChild('GoldSpawnArea') then\n        warn('GoldSpawnArea not found!')\n        return\n    end\n    \n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\n    gold.Position = workspace.GoldSpawnArea.Position + Vector3.new(\n        math.random(-10, 10),\n        5,\n        math.random(-10, 10)\n    )\nend"
       }
     }
   ],
   "needsApproval": false,
-  "reasoning": "Found exact match for CurrencyManager in ServerScriptService, reading and fixing it"
+  "reasoning": "Found exact match for CurrencyManager in ServerScriptService, reading and fixing it with targeted replacement"
 }
 
-### Example 3: User asks to fix script (NO CODE ASKING)
-User: "can you fix my CurrencyManager script in ServerScriptService?"
-
-MATCHED INSTANCES:
-EXACT MATCHES:
-1. 🎯 CurrencyManager (ModuleScript) at game.ServerScriptService [project_exact]
+### Example 3: Fix multiple TextLabel properties
+User: "Fix the contentLabel properties in Main.lua"
 
 {
-  "message": "Reading and fixing your CurrencyManager script in ServerScriptService",
+  "message": "Fixing contentLabel properties in Main.lua",
   "thinkingSteps": [
-    "planning: Planning CurrencyManager fix",
-    "reading: Reading CurrencyManager at game.ServerScriptService",
-    "working: Fixing CurrencyManager script issues",
-    "complete: CurrencyManager fixed successfully"
+    "planning: Planning contentLabel property fixes",
+    "reading: Reading Main.lua at game.StarterPlayer.StarterPlayerScripts",
+    "working: Fixing contentLabel properties",
+    "complete: ContentLabel properties fixed successfully"
   ],
   "plan": [
     {
       "type": "modify",
-      "description": "Fix CurrencyManager script",
-      "name": "CurrencyManager",
-      "parentPath": "game.ServerScriptService",
+      "description": "Fix contentLabel properties to prevent nil errors",
+      "name": "Main",
+      "parentPath": "game.StarterPlayer.StarterPlayerScripts",
       "sourceModifications": {
-        "action": "replaceAll",
-        "newCode": "-- Fixed CurrencyManager script\nlocal CurrencyManager = {}\n\nfunction CurrencyManager.spawnGold()\n    -- Proper gold spawning logic\n    local gold = Instance.new('Part')\n    gold.Name = 'Gold'\n    gold.Parent = workspace\n    gold.Position = Vector3.new(0, 10, 0)\nend\n\nreturn CurrencyManager"
+        "action": "replace",
+        "target": "contentLabel.Text = text\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular\ncontentLabel.TextSize = THEME.Sizes.Body\ncontentLabel.TextWrapped = true",
+        "newCode": "contentLabel.Text = text or ''\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular\ncontentLabel.TextSize = THEME.Sizes.Body\ncontentLabel.TextWrapped = true"
       }
     }
   ],
   "needsApproval": false,
-  "reasoning": "User asked to fix CurrencyManager, found exact match in ServerScriptService, reading and fixing automatically"
+  "reasoning": "Targeting multiple lines in one modification to fix all text properties at once"
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -433,6 +509,9 @@ EXACT MATCHES:
 6. For modifications, use sourceModifications for scripts
 7. Never ask for clarification if exact matches exist
 8. For greetings: return empty thinkingSteps and plan with friendly message
+9. TARGET MULTIPLE LINES when making related changes
+10. PRESERVE existing code - don't remove unless broken
+11. Use "replaceAll" ONLY when user explicitly asks for complete rewrite
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## PERFORMANCE GUIDELINES
@@ -440,7 +519,7 @@ EXACT MATCHES:
 
 ### FAST EXECUTION:
 - Complete modifications in under 5 seconds
-- Use "replaceAll" for complete script rewrites
+- Use multi-line targeting for related changes
 - Keep property changes minimal
 - Batch modifications in single steps when possible
 
@@ -930,9 +1009,10 @@ function buildPrompt(userPrompt, context, sessionId) {
     prompt += '3. READ the source code automatically when available\n';
     prompt += '4. NEVER ask for code if instance is found\n';
     prompt += '5. Use EXACT names and paths from matches\n';
-    prompt += '6. If modifying, use sourceModifications for scripts\n';
-    prompt += '7. Message = one sentence summary\n';
-    prompt += '8. Respond in JSON format only\n';
+    prompt += '6. Use MULTI-LINE targeting when changing related lines\n';
+    prompt += '7. NEVER use "replaceAll" unless user explicitly asks for complete rewrite\n';
+    prompt += '8. Message = one sentence summary\n';
+    prompt += '9. Respond in JSON format only\n';
   }
   
   return prompt;
@@ -999,10 +1079,24 @@ async function processAIRequest(prompt, context, sessionId) {
     if (!aiResponse.plan) aiResponse.plan = [];
     if (!aiResponse.reasoning) aiResponse.reasoning = 'Based on session context';
     
+    // Check for destructive "replaceAll" actions and warn
+    if (aiResponse.plan && Array.isArray(aiResponse.plan)) {
+      aiResponse.plan.forEach((step, index) => {
+        if (step && step.sourceModifications && step.sourceModifications.action === 'replaceAll') {
+          console.warn(`[AI] ⚠️ WARNING: Step ${index} uses replaceAll - this may remove existing code!`);
+          // Add a warning to the reasoning
+          aiResponse.reasoning = (aiResponse.reasoning || '') + ' WARNING: Used replaceAll which replaces entire script.';
+        }
+      });
+    }
+    
     // Auto-approve settings
     const hasDestructiveAction = aiResponse.plan.some(step => step && step.type === 'delete');
+    const hasReplaceAll = aiResponse.plan.some(step => 
+      step && step.sourceModifications && step.sourceModifications.action === 'replaceAll'
+    );
     const hasManySteps = aiResponse.plan.length >= 3;
-    aiResponse.needsApproval = hasDestructiveAction || hasManySteps;
+    aiResponse.needsApproval = hasDestructiveAction || hasReplaceAll || hasManySteps;
 
     // Update session memory
     updateSession(sessionId, aiResponse.plan, prompt);
@@ -1016,7 +1110,9 @@ async function processAIRequest(prompt, context, sessionId) {
       thinkingStepsSize: aiResponse.thinkingSteps.length,
       sessionInstances: sessionMemory.get(sessionId)?.createdInstances?.length || 0,
       instanceMatches: instanceMatches.length,
-      sourceCodesProvided: Object.keys(sourceCodes).length
+      sourceCodesProvided: Object.keys(sourceCodes).length,
+      hasReplaceAll: hasReplaceAll,
+      hasDestructiveActions: hasDestructiveAction
     };
 
     console.log(`[AI] Response: ${aiResponse.thinkingSteps.length} thinking steps, ${aiResponse.plan.length} plan steps`);
@@ -1046,6 +1142,7 @@ app.get('/', (req, res) => {
       'No asking for code',
       'Enhanced instance matching',
       'Exact name detection',
+      'Multi-line targeting',
       'Location-aware search',
       'Session memory',
       'Thinking steps system'
@@ -1152,12 +1249,13 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v2.6 - AUTOMATIC CODE READING');
+  console.log('ACIDNADE AI v2.6 - ENHANCED MODIFICATION');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
   console.log('Features:');
-  console.log('  • NO ASKING FOR CODE - reads automatically');
+  console.log('  • MULTI-LINE targeting for precise edits');
+  console.log('  • NO replaceAll - preserves existing code');
   console.log('  • Source code display in prompts');
   console.log('  • Enhanced instance matching');
   console.log('  • Automatic code analysis');
