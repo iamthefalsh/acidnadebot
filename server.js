@@ -20,11 +20,13 @@ const sessionMemory = new Map();
 function initSession(sessionId) {
   if (!sessionMemory.has(sessionId)) {
     sessionMemory.set(sessionId, {
-      createdInstances: [],
-      modifiedInstances: [],
-      chatHistory: [],
-      currentPlan: null,
-      currentStepIndex: 0,
+      createdInstances: [],      // Instances created in this session
+      modifiedInstances: [],     // Instances modified in this session
+      currentPlan: [],           // Current execution plan
+      currentStep: 0,            // Current step in execution
+      executionState: 'idle',    // idle, planning, executing, complete
+      chatHistory: [],           // Conversation history
+      pendingSourceRequests: [], // Files AI needs to read
       timestamp: Date.now()
     });
   }
@@ -61,428 +63,434 @@ const logRequest = (req, res, next) => {
 
 app.use(logRequest);
 
-// UPDATED SYSTEM PROMPT - EMPHASIZES FIXING AND STEP-BY-STEP
-const SYSTEM_PROMPT = `You are Acidnade AI, an expert Roblox Studio AI assistant.
+// NEW: Optimized prompt that allows AI to request source code
+const SYSTEM_PROMPT = `You are Acidnade AI, a Roblox Studio assistant. Provide JSON responses only.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CORE MISSION: FIX FIRST, CREATE SECOND
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**PRIORITY ORDER:**
-1. 🔧 **FIX existing code** (bugs, errors, improvements)
-2. 🛠️ **MODIFY existing instances** (change properties, update logic)
-3. ➕ **CREATE new instances** (only if nothing exists to fix/modify)
-
-When user says "fix", "broken", "not working", "error":
-- ALWAYS prioritize modifying existing code
-- NEVER create new scripts if one exists
-- Request source code if you need to see what's wrong
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## STEP-BY-STEP EXECUTION MODE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-You work in STEPS, not all at once:
-
-**PHASE 1: PLANNING**
-- Analyze the request
-- Create a plan with numbered steps
-- Return the plan WITHOUT executing
-
-**PHASE 2: EXECUTION**
-- Execute ONE step at a time
-- If you need source code, REQUEST it (don't assume you have it)
-- Wait for step result before continuing
-
-**PHASE 3: ITERATION**
-- Process step result
-- Continue to next step or finish
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## RESPONSE FORMATS (STRICT JSON)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### Format 1: PLANNING (First response)
+RESPONSE FORMAT:
 {
-  "mode": "planning",
-  "message": "I'll fix the CurrencyManager in 3 steps",
-  "plan": [
-    {
-      "stepNumber": 1,
-      "description": "Read CurrencyManager source code",
-      "action": "requestSource",
-      "target": {
-        "name": "CurrencyManager",
-        "path": "game.ServerScriptService"
-      }
-    },
-    {
-      "stepNumber": 2,
-      "description": "Fix the spawning logic bug",
-      "action": "modify"
-    },
-    {
-      "stepNumber": 3,
-      "description": "Test the fix",
-      "action": "test"
-    }
-  ],
-  "totalSteps": 3,
-  "reasoning": "Need to read source code first to understand the bug"
+  "message": "Brief description",
+  "thinkingSteps": ["state: description"],
+  "plan": [{step1}, {step2}],
+  "needsApproval": false,
+  "reasoning": "Brief explanation"
 }
 
-### Format 2: REQUESTING SOURCE CODE
+CRITICAL RULES:
+1. NEVER use "replaceAll" - use "replace", "insertAfter", "insertBefore"
+2. If you need to read source code, add a "needsSourceCode" request
+3. Break complex tasks into steps
+4. Keep responses concise
+
+SOURCE CODE REQUEST FORMAT:
+If you need to read a specific file to understand it before modifying:
 {
-  "mode": "requestSource",
-  "message": "I need to see the CurrencyManager code to fix it",
-  "request": {
-    "name": "CurrencyManager",
-    "path": "game.ServerScriptService",
-    "reason": "To analyze the spawning logic bug"
+  "message": "I need to read FieldSystem to understand the code",
+  "thinkingSteps": ["planning: Need to analyze FieldSystem"],
+  "plan": [],
+  "needsSourceCode": {
+    "instanceName": "FieldSystem",
+    "expectedPath": "game.ServerScriptService.FieldSystem or similar",
+    "reason": "To identify image loading logic and UI creation steps"
   },
-  "currentStep": 1,
-  "totalSteps": 3
+  "needsApproval": false,
+  "reasoning": "Cannot modify without understanding existing code"
 }
 
-### Format 3: EXECUTING STEP
-{
-  "mode": "executing",
-  "message": "Fixing the spawning logic in CurrencyManager",
-  "currentStep": 2,
-  "totalSteps": 3,
-  "actions": [
-    {
-      "type": "modify",
-      "description": "Fix spawn rate check",
-      "name": "CurrencyManager",
-      "parentPath": "game.ServerScriptService",
-      "sourceModifications": {
-        "action": "replace",
-        "target": "if spawnRate > 0 then",
-        "newCode": "if spawnRate > 0 and currentCount < maxCount then"
+WORKFLOW:
+1. If user asks to read/modify a file and you don't have it, request it
+2. Once source code is provided, analyze it and create plan
+3. Use targeted modifications only`;
+
+// NEW: Helper to find instance by name
+function findInstanceByName(instanceName, existingInstances, session) {
+  if (!instanceName) return null;
+  
+  const nameLower = instanceName.toLowerCase();
+  
+  // Check session instances first
+  const allSessionInstances = [];
+  if (session) {
+    if (session.createdInstances) allSessionInstances.push(...session.createdInstances);
+    if (session.modifiedInstances) allSessionInstances.push(...session.modifiedInstances);
+  }
+  
+  for (const inst of allSessionInstances) {
+    if (inst.name && inst.name.toLowerCase() === nameLower) {
+      return { name: inst.name, path: inst.path, className: inst.className, source: 'session' };
+    }
+  }
+  
+  // Check existing instances
+  if (existingInstances && Array.isArray(existingInstances)) {
+    for (const inst of existingInstances) {
+      if (inst && inst.Name && inst.Name.toLowerCase() === nameLower) {
+        return { name: inst.Name, path: inst.Path, className: inst.ClassName, source: 'project' };
       }
     }
-  ],
-  "reasoning": "Fixed the condition to check max count"
-}
-
-### Format 4: COMPLETION
-{
-  "mode": "complete",
-  "message": "CurrencyManager bug fixed successfully",
-  "summary": "Fixed spawning logic to respect max count limit",
-  "totalStepsCompleted": 3
-}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## REQUESTING SOURCE CODE (CRITICAL)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**When to request source code:**
-- User mentions a bug or error
-- User wants to fix existing script
-- You need to see the code to modify it
-- You're not sure what the current code does
-
-**How to request:**
-{
-  "mode": "requestSource",
-  "request": {
-    "name": "ScriptName",
-    "path": "game.ServerScriptService",
-    "reason": "To understand the bug and fix it"
   }
+  
+  return null;
 }
 
-**NEVER assume you have source code!**
-**ALWAYS request it if you need it!**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## TARGETED MODIFICATIONS (NO REPLACEALL)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Use these actions IN ORDER:
-1. **replace** - Change specific line(s)
-2. **insertAfter** - Add code after line
-3. **insertBefore** - Add code before line
-4. **append** - Add to end
-5. **prepend** - Add to beginning
-6. **remove** - Delete line(s)
-
-**FORBIDDEN:** replaceAll (deletes entire script)
-
-Example:
-{
-  "sourceModifications": {
-    "action": "replace",
-    "target": "local maxGold = 1000",
-    "newCode": "local maxGold = 100  -- Reduced limit"
-  }
-}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## KEEP IT EFFICIENT (SAVE TOKENS)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- ONE step at a time
-- Request ONLY the source code you need
-- Keep responses concise
-- Don't repeat information
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## ABSOLUTE RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. **FIX BEFORE CREATE** - Always try to fix existing code first
-2. **REQUEST SOURCE CODE** - Don't assume you have it
-3. **ONE STEP AT A TIME** - Don't execute entire plan at once
-4. **NO REPLACEALL** - Use targeted modifications
-5. **SAVE TOKENS** - Be efficient with your responses
-6. **BE SPECIFIC** - "Fixing spawn logic bug" not "Done"`;
-
-// Build minimal prompt (NO SOURCE CODES UNLESS REQUESTED)
-function buildPrompt(userPrompt, context, sessionId, requestedSource = null) {
+// NEW: Build prompt that tells AI what files are available
+function buildPrompt(userPrompt, context, sessionId, mode = 'planning') {
   const session = initSession(sessionId);
   
-  let prompt = 'USER REQUEST: ' + userPrompt + '\n\n';
+  let prompt = '';
   
-  // Add session context (brief)
-  if (session.createdInstances && session.createdInstances.length > 0) {
-    prompt += 'CREATED IN SESSION:\n';
-    session.createdInstances.slice(-5).forEach(inst => {
-      prompt += `- ${inst.name} (${inst.className}) at ${inst.path}\n`;
-    });
-    prompt += '\n';
-  }
-  
-  if (session.modifiedInstances && session.modifiedInstances.length > 0) {
-    prompt += 'MODIFIED IN SESSION:\n';
-    session.modifiedInstances.slice(-5).forEach(inst => {
-      prompt += `- ${inst.name} at ${inst.path}\n`;
-    });
-    prompt += '\n';
-  }
-  
-  // Add current plan if exists
-  if (session.currentPlan) {
-    prompt += `CURRENT PLAN (Step ${session.currentStepIndex}/${session.currentPlan.totalSteps}):\n`;
-    prompt += JSON.stringify(session.currentPlan, null, 2) + '\n\n';
-  }
-  
-  // Add requested source code ONLY if provided
-  if (requestedSource) {
-    prompt += `📜 REQUESTED SOURCE CODE:\n`;
-    prompt += `Name: ${requestedSource.name}\n`;
-    prompt += `Path: ${requestedSource.path}\n`;
-    prompt += `\`\`\`lua\n${requestedSource.source}\n\`\`\`\n\n`;
-    prompt += '⚠️ Use targeted modifications (replace, insertAfter) NOT replaceAll\n\n';
-  }
-  
-  // Add BRIEF instance list (just names, no details)
-  if (context && context.existingInstances && context.existingInstances.length > 0) {
-    prompt += 'AVAILABLE INSTANCES (brief list):\n';
-    const keywords = userPrompt.toLowerCase().split(/\s+/);
-    const relevant = context.existingInstances.filter(inst => 
-      inst && inst.Name && keywords.some(k => 
-        k.length > 3 && inst.Name.toLowerCase().includes(k)
-      )
-    ).slice(0, 10);
+  if (mode === 'planning') {
+    prompt = `USER REQUEST: ${userPrompt}\n\n`;
     
-    if (relevant.length > 0) {
-      relevant.forEach(inst => {
-        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
-      });
-    } else {
-      // Show first 5 if no relevant matches
-      context.existingInstances.slice(0, 5).forEach(inst => {
-        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
-      });
+    // Check if user wants to read a specific file
+    const wantsToRead = userPrompt.toLowerCase().includes('read') && 
+                       (userPrompt.toLowerCase().includes('source') || 
+                        userPrompt.toLowerCase().includes('code') ||
+                        userPrompt.toLowerCase().includes('file'));
+    
+    if (wantsToRead) {
+      // User wants to read a file - list available files
+      prompt += 'USER WANTS TO READ A FILE. AVAILABLE SOURCE CODES:\n';
+      
+      if (context?.sourceCodes && Object.keys(context.sourceCodes).length > 0) {
+        Object.keys(context.sourceCodes).forEach((path, index) => {
+          // Extract instance name from path
+          const parts = path.split('.');
+          const name = parts[parts.length - 1];
+          prompt += `${index + 1}. ${name} at ${path}\n`;
+        });
+        prompt += '\n';
+        
+        prompt += 'IF YOU NEED TO READ ONE OF THESE:\n';
+        prompt += '1. Use "reading: Reading [name] at [path]" in thinkingSteps\n';
+        prompt += '2. Analyze the code shown below\n';
+        prompt += '3. Provide summary or plan based on code\n\n';
+        
+        // Include the source code for analysis
+        Object.entries(context.sourceCodes).forEach(([path, code]) => {
+          prompt += `--- ${path} ---\n`;
+          prompt += '```lua\n';
+          prompt += code.length > 2000 ? code.substring(0, 2000) + '...' : code;
+          prompt += '\n```\n\n';
+        });
+      } else {
+        prompt += 'NO SOURCE CODE PROVIDED. You can request it by returning:\n';
+        prompt += '{\n';
+        prompt += '  "needsSourceCode": {\n';
+        prompt += '    "instanceName": "FieldSystem",\n';
+        prompt += '    "expectedPath": "game.ServerScriptService.FieldSystem",\n';
+        prompt += '    "reason": "To analyze the code structure"\n';
+        prompt += '  }\n';
+        prompt += '}\n\n';
+      }
     }
-    prompt += '\n';
-  }
-  
-  // Add execution mode instructions
-  if (!session.currentPlan) {
-    prompt += 'MODE: PLANNING\n';
-    prompt += 'Create a step-by-step plan. Do NOT execute yet.\n';
-    prompt += 'If you need source code, include "requestSource" action in plan.\n';
-  } else if (requestedSource) {
-    prompt += 'MODE: EXECUTING\n';
-    prompt += `Execute step ${session.currentStepIndex} of ${session.currentPlan.totalSteps}\n`;
-    prompt += 'You now have the source code. Implement the fix.\n';
-  } else {
-    prompt += 'MODE: CONTINUE\n';
-    prompt += `Continue with step ${session.currentStepIndex} of ${session.currentPlan.totalSteps}\n`;
+    
+    // Add session context briefly
+    if (session.createdInstances?.length > 0) {
+      prompt += 'RECENTLY CREATED:\n';
+      session.createdInstances.slice(-3).forEach(inst => {
+        prompt += `- ${inst.name} at ${inst.path}\n`;
+      });
+      prompt += '\n';
+    }
+    
+    // Check for pending source requests
+    if (session.pendingSourceRequests?.length > 0) {
+      prompt += 'PENDING SOURCE REQUESTS:\n';
+      session.pendingSourceRequests.forEach(req => {
+        prompt += `- ${req.instanceName} at ${req.expectedPath || 'unknown'}\n`;
+      });
+      prompt += '\n';
+    }
+    
+    prompt += 'INSTRUCTIONS:\n';
+    prompt += '1. If source code is shown above, analyze it\n';
+    prompt += '2. If no source code, request it with needsSourceCode\n';
+    prompt += '3. Create a plan with steps\n';
+    prompt += '4. Keep plan concise\n';
+    
+  } else if (mode === 'execution') {
+    const currentStep = session.currentStep || 0;
+    const step = session.currentPlan?.[currentStep];
+    
+    prompt = `EXECUTING STEP ${currentStep + 1}: ${step?.description || 'Unknown step'}\n\n`;
+    
+    if (step?.type === 'modify' && context?.sourceCodes) {
+      // Find source code for this specific step
+      let sourceCode = null;
+      Object.entries(context.sourceCodes).forEach(([path, code]) => {
+        if (path.includes(step.name) || (step.parentPath && path.includes(step.parentPath))) {
+          sourceCode = code;
+        }
+      });
+      
+      if (sourceCode) {
+        prompt += `SOURCE CODE for ${step.name}:\n`;
+        prompt += '```lua\n';
+        prompt += sourceCode.length > 1500 ? sourceCode.substring(0, 1500) + '...' : sourceCode;
+        prompt += '\n```\n\n';
+      }
+    }
+    
+    prompt += `ACTION: ${step?.type || 'create'}\n`;
+    prompt += `TARGET: ${step?.name || 'New instance'} at ${step?.parentPath || 'game.Workspace'}\n\n`;
+    prompt += 'INSTRUCTIONS:\n';
+    prompt += '1. Implement ONLY this step\n';
+    prompt += '2. Use targeted modifications\n';
+    prompt += '3. Provide code changes\n';
   }
   
   return prompt;
 }
 
-async function processAIRequest(prompt, context, sessionId, requestedSource = null) {
+// NEW: Check if AI needs to request source code
+function shouldRequestSourceCode(userPrompt, context, session) {
+  const lowerPrompt = userPrompt.toLowerCase();
+  
+  // Check for read requests
+  const wantsToRead = lowerPrompt.includes('read') && 
+                     (lowerPrompt.includes('source') || 
+                      lowerPrompt.includes('code') ||
+                      lowerPrompt.includes('file'));
+  
+  // Check for modification requests that need code
+  const wantsToModify = lowerPrompt.includes('modify') || 
+                       lowerPrompt.includes('fix') || 
+                       lowerPrompt.includes('change') ||
+                       lowerPrompt.includes('edit');
+  
+  // Extract potential instance names
+  const instanceNameMatch = userPrompt.match(/\b([A-Z][a-zA-Z]+)\b/);
+  const instanceName = instanceNameMatch ? instanceNameMatch[1] : null;
+  
+  // If user wants to read/modify a specific instance but we don't have source code
+  if ((wantsToRead || wantsToModify) && instanceName) {
+    // Check if we have source code for this instance
+    if (context?.sourceCodes) {
+      const hasSourceCode = Object.keys(context.sourceCodes).some(path => 
+        path.toLowerCase().includes(instanceName.toLowerCase())
+      );
+      
+      if (!hasSourceCode) {
+        return {
+          needsSource: true,
+          instanceName: instanceName,
+          reason: `User wants to ${wantsToRead ? 'read' : 'modify'} ${instanceName} but source code not provided`
+        };
+      }
+    } else {
+      return {
+        needsSource: true,
+        instanceName: instanceName || 'unknown',
+        reason: 'No source code provided at all'
+      };
+    }
+  }
+  
+  return { needsSource: false };
+}
+
+// NEW: Process AI request with source code handling
+async function processAIRequest(prompt, context, sessionId) {
   try {
+    const session = initSession(sessionId);
     const model = genAI.getGenerativeModel({
       model: 'gemini-3-flash-preview',
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
         topK: 40,
-        maxOutputTokens: 4096,  // Reduced from 8192
+        maxOutputTokens: 2048,
         responseMimeType: 'application/json',
       },
       systemInstruction: SYSTEM_PROMPT
     });
 
-    const fullPrompt = buildPrompt(prompt, context || {}, sessionId, requestedSource);
-    console.log('[AI] Prompt length:', fullPrompt.length, 'characters');
+    // Check if we should request source code
+    const sourceCheck = shouldRequestSourceCode(prompt, context, session);
     
-    const startTime = Date.now();
-    const result = await model.generateContent(fullPrompt);
-    const thinkingTime = Date.now() - startTime;
-    
-    const text = result.response.text();
-    let aiResponse;
-    
-    try {
-      const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
-      aiResponse = JSON.parse(cleanedText);
-    } catch (parseError) {
-      console.error('[AI] Parse error:', parseError.message);
-      aiResponse = {
-        mode: 'error',
-        message: 'Failed to parse AI response',
-        error: true
+    if (sourceCheck.needsSource) {
+      console.log(`[AI] Need source code for: ${sourceCheck.instanceName}`);
+      
+      // Add to pending requests
+      if (!session.pendingSourceRequests) {
+        session.pendingSourceRequests = [];
+      }
+      
+      session.pendingSourceRequests.push({
+        instanceName: sourceCheck.instanceName,
+        timestamp: new Date().toISOString(),
+        reason: sourceCheck.reason
+      });
+      
+      // Return request for source code
+      return {
+        message: `I need to read ${sourceCheck.instanceName} source code to proceed`,
+        thinkingSteps: [
+          'planning: Analyzing user request',
+          `reading: Source code for ${sourceCheck.instanceName} not provided`,
+          'working: Requesting source code from user'
+        ],
+        plan: [],
+        needsSourceCode: {
+          instanceName: sourceCheck.instanceName,
+          expectedPath: `game.ServerScriptService.${sourceCheck.instanceName}`,
+          reason: sourceCheck.reason
+        },
+        needsApproval: false,
+        reasoning: 'Cannot analyze or modify code without seeing the source first'
       };
     }
+    
+    // Clear pending requests if we now have source code
+    if (session.pendingSourceRequests?.length > 0 && context?.sourceCodes) {
+      session.pendingSourceRequests = [];
+    }
 
-    // Validate response
-    if (!aiResponse.mode) aiResponse.mode = 'unknown';
-    if (!aiResponse.message) aiResponse.message = 'Processing request';
-    
-    // Update session based on response mode
-    const session = sessionMemory.get(sessionId);
-    
-    if (aiResponse.mode === 'planning') {
-      session.currentPlan = aiResponse;
-      session.currentStepIndex = 1;
-    } else if (aiResponse.mode === 'complete') {
-      session.currentPlan = null;
-      session.currentStepIndex = 0;
-    } else if (aiResponse.mode === 'executing') {
-      session.currentStepIndex += 1;
+    // Check execution state
+    if (session.executionState === 'idle') {
+      // Planning phase
+      session.executionState = 'planning';
+      const planningPrompt = buildPrompt(prompt, context, sessionId, 'planning');
+      
+      console.log('[AI] Planning phase, prompt length:', planningPrompt.length);
+      
+      const planResult = await model.generateContent(planningPrompt);
+      const planText = planResult.response.text();
+      
+      let aiResponse;
+      try {
+        const cleanedText = planText.replace(/```json\n?|\n?```/g, '').trim();
+        aiResponse = JSON.parse(cleanedText);
+      } catch (parseError) {
+        console.error('[AI] Parse error:', parseError.message);
+        aiResponse = {
+          message: 'Analyzing your request',
+          thinkingSteps: ['planning: Processing request'],
+          plan: [],
+          needsApproval: false,
+          reasoning: 'Creating execution plan'
+        };
+      }
+      
+      // If AI requests source code in response
+      if (aiResponse.needsSourceCode) {
+        return aiResponse;
+      }
+      
+      // Store plan
+      session.currentPlan = aiResponse.plan || [];
+      session.currentStep = 0;
+      session.executionState = 'executing';
+      
+      return {
+        message: aiResponse.message || 'Plan created',
+        thinkingSteps: aiResponse.thinkingSteps || ['planning: Request analyzed'],
+        plan: aiResponse.plan || [],
+        needsApproval: aiResponse.needsApproval || false,
+        reasoning: aiResponse.reasoning || 'Ready to execute',
+        metadata: {
+          mode: 'planning',
+          totalSteps: aiResponse.plan?.length || 0,
+          sessionId,
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+    } else if (session.executionState === 'executing') {
+      // Execute current step
+      const currentStep = session.currentStep;
+      const totalSteps = session.currentPlan.length;
+      
+      if (currentStep >= totalSteps) {
+        session.executionState = 'complete';
+        return {
+          message: 'All steps completed successfully',
+          thinkingSteps: ['complete: Execution finished'],
+          plan: [],
+          needsApproval: false,
+          reasoning: 'All planned steps executed',
+          metadata: {
+            mode: 'complete',
+            sessionId,
+            timestamp: new Date().toISOString()
+          }
+        };
+      }
+      
+      const executionPrompt = buildPrompt(prompt, context, sessionId, 'execution');
+      
+      console.log(`[AI] Executing step ${currentStep + 1}/${totalSteps}`);
+      
+      const stepResult = await model.generateContent(executionPrompt);
+      const stepText = stepResult.response.text();
+      
+      let stepResponse;
+      try {
+        const cleanedText = stepText.replace(/```json\n?|\n?```/g, '').trim();
+        stepResponse = JSON.parse(cleanedText);
+      } catch (parseError) {
+        console.error('[AI] Step parse error:', parseError.message);
+        stepResponse = {
+          message: `Executing step ${currentStep + 1}`,
+          thinkingSteps: [`working: Processing step ${currentStep + 1}`],
+          plan: [session.currentPlan[currentStep]],
+          needsApproval: false,
+          reasoning: 'Step execution'
+        };
+      }
+      
+      // Update session
+      session.currentStep++;
+      if (session.currentStep >= totalSteps) {
+        session.executionState = 'complete';
+      }
+      
+      return {
+        message: stepResponse.message || `Step ${currentStep + 1} executed`,
+        thinkingSteps: stepResponse.thinkingSteps || [`working: Completed step ${currentStep + 1}`],
+        plan: stepResponse.plan || [],
+        needsApproval: stepResponse.needsApproval || false,
+        reasoning: stepResponse.reasoning || 'Step completed',
+        metadata: {
+          mode: 'execution',
+          currentStep: currentStep + 1,
+          totalSteps,
+          sessionId,
+          timestamp: new Date().toISOString()
+        }
+      };
     }
     
-    aiResponse.metadata = {
-      thinkingTime,
-      model: 'gemini-3-flash-preview',
-      sessionId,
-      timestamp: new Date().toISOString(),
-      promptLength: fullPrompt.length,
-      tokensSaved: 'Not sending all source codes at once'
-    };
-
-    console.log(`[AI] Mode: ${aiResponse.mode}, Message: "${aiResponse.message}"`);
-    return aiResponse;
-
   } catch (error) {
     console.error('[AI] Error:', error.message);
     return {
-      mode: 'error',
-      message: 'Internal server error',
+      message: 'Error processing request',
+      thinkingSteps: [],
+      plan: [],
+      needsApproval: false,
+      reasoning: 'Internal error',
       error: true
     };
   }
 }
 
+// Routes
 app.get('/', (req, res) => {
   res.json({
-    name: 'Acidnade AI v3.0',
+    name: 'Acidnade AI',
+    version: '3.1',
     status: 'online',
     model: 'gemini-3-flash-preview',
     features: [
-      '🔧 FIX-FIRST approach',
-      '📋 Step-by-step execution',
-      '📜 On-demand source code requests',
-      '💾 Token-efficient (no bulk source code)',
-      '🎯 Targeted modifications only',
-      '🚫 NO replaceAll by default'
-    ],
-    modes: [
-      'planning - Create step-by-step plan',
-      'requestSource - Request specific source code',
-      'executing - Execute current step',
-      'complete - Task finished'
+      'Source code request system',
+      'File reading capability',
+      'Step-by-step execution',
+      'Targeted modifications only',
+      'Context-aware file finding'
     ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
   });
-});
-
-app.get('/ping', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    model: 'gemini-3-flash-preview',
-    uptime: process.uptime(),
-    sessions: sessionMemory.size
-  });
-});
-
-// NEW ENDPOINT: Provide source code when AI requests it
-app.post('/ai/provide-source', authenticateRequest, async (req, res) => {
-  try {
-    const { sessionId, name, path, source } = req.body;
-    
-    if (!sessionId || !name || !path || !source) {
-      return res.status(400).json({ 
-        error: 'Missing required fields',
-        message: 'Need: sessionId, name, path, source'
-      });
-    }
-    
-    const session = sessionMemory.get(sessionId);
-    if (!session) {
-      return res.status(404).json({ error: 'Session not found' });
-    }
-    
-    // Continue with the AI, now providing the source code
-    const aiResponse = await processAIRequest(
-      `Continue with the plan. I've provided the source code for ${name}.`,
-      {},
-      sessionId,
-      { name, path, source }
-    );
-    
-    res.json(aiResponse);
-    
-  } catch (error) {
-    console.error('[Provide Source Error]:', error.message);
-    res.status(500).json({ 
-      error: 'Server error',
-      message: error.message
-    });
-  }
-});
-
-app.post('/ai', authenticateRequest, async (req, res) => {
-  try {
-    const { prompt, context, sessionId } = req.body;
-    if (!prompt || !sessionId) {
-      return res.status(400).json({ 
-        error: 'Missing required fields',
-        message: 'Both prompt and sessionId are required'
-      });
-    }
-    
-    initSession(sessionId);
-    const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
-    res.json(aiResponse);
-    
-  } catch (error) {
-    console.error('[Server Error]:', error.message);
-    res.status(500).json({ 
-      error: 'Server error',
-      message: error.message
-    });
-  }
 });
 
 app.get('/session/:sessionId', authenticateRequest, (req, res) => {
@@ -495,23 +503,50 @@ app.get('/session/:sessionId', authenticateRequest, (req, res) => {
   
   res.json({
     sessionId,
+    executionState: session.executionState,
+    currentStep: session.currentStep,
+    totalSteps: session.currentPlan?.length || 0,
     createdInstances: session.createdInstances || [],
-    modifiedInstances: session.modifiedInstances || [],
-    currentPlan: session.currentPlan || null,
-    currentStepIndex: session.currentStepIndex || 0,
-    chatHistory: session.chatHistory || [],
+    pendingSourceRequests: session.pendingSourceRequests || [],
     timestamp: new Date(session.timestamp || Date.now()).toISOString()
   });
 });
 
-app.delete('/session/:sessionId', authenticateRequest, (req, res) => {
-  const sessionId = req.params.sessionId;
-  const deleted = sessionMemory.delete(sessionId);
-  
-  res.json({
-    success: deleted,
-    message: deleted ? 'Session cleared' : 'Session not found'
-  });
+app.post('/ai', authenticateRequest, async (req, res) => {
+  try {
+    const { prompt, context, sessionId } = req.body;
+    if (!prompt || !sessionId) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        message: 'Both prompt and sessionId are required'
+      });
+    }
+    
+    // Initialize session
+    const session = initSession(sessionId);
+    
+    // If context has source codes, log what's available
+    if (context?.sourceCodes) {
+      console.log(`[AI] Context has ${Object.keys(context.sourceCodes).length} source files`);
+      Object.keys(context.sourceCodes).forEach(path => {
+        console.log(`  - ${path}: ${context.sourceCodes[path].length} chars`);
+      });
+    }
+    
+    const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
+    res.json(aiResponse);
+    
+  } catch (error) {
+    console.error('[Server Error]:', error.message);
+    res.status(500).json({ 
+      error: 'Server error',
+      message: error.message,
+      thinkingSteps: [],
+      plan: [],
+      needsApproval: false,
+      reasoning: 'Internal server error'
+    });
+  }
 });
 
 // Clean up old sessions
@@ -527,52 +562,19 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
-app.use((err, req, res, next) => {
-  console.error('[Middleware Error]:', err.message);
-  res.status(500).json({ 
-    mode: 'error',
-    error: 'Internal error',
-    message: err.message
-  });
-});
-
-app.use((req, res) => {
-  res.status(404).json({ 
-    error: 'Not found',
-    message: 'Route does not exist'
-  });
-});
-
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v3.0 - STEP-BY-STEP MODE');
+  console.log('ACIDNADE AI v3.1 - SOURCE CODE READER');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
-  console.log('');
-  console.log('KEY CHANGES:');
-  console.log('  🔧 FIX-FIRST: Prioritizes fixing over creating');
-  console.log('  📋 STEP-BY-STEP: Executes one step at a time');
-  console.log('  📜 ON-DEMAND: Requests source code only when needed');
-  console.log('  💾 TOKEN-EFFICIENT: No bulk source code sending');
-  console.log('  🎯 TARGETED: No replaceAll by default');
-  console.log('');
-  console.log('RESPONSE MODES:');
-  console.log('  • planning - Creates execution plan');
-  console.log('  • requestSource - Asks for specific source code');
-  console.log('  • executing - Runs current step');
-  console.log('  • complete - Task finished');
+  console.log('NEW FEATURES:');
+  console.log('  • ✅ AI can request specific source files');
+  console.log('  • ✅ Shows available files in context');
+  console.log('  • ✅ Detects read/modify requests');
+  console.log('  • ✅ Pending source request tracking');
+  console.log('  • ✅ Better file path detection');
   console.log('==========================================');
   console.log('Server ready at http://localhost:' + PORT);
   console.log('==========================================');
-});
-
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  process.exit(0);
 });
