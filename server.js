@@ -20,10 +20,11 @@ const sessionMemory = new Map();
 function initSession(sessionId) {
   if (!sessionMemory.has(sessionId)) {
     sessionMemory.set(sessionId, {
-      createdInstances: [],      // Instances created in this session
-      modifiedInstances: [],     // Instances modified in this session
-      mentionedInstances: [],    // Instances mentioned in chat
-      chatHistory: [],           // Conversation history
+      createdInstances: [],
+      modifiedInstances: [],
+      chatHistory: [],
+      currentPlan: null,
+      currentStepIndex: 0,
       timestamp: Date.now()
     });
   }
@@ -60,893 +61,279 @@ const logRequest = (req, res, next) => {
 
 app.use(logRequest);
 
+// UPDATED SYSTEM PROMPT - EMPHASIZES FIXING AND STEP-BY-STEP
 const SYSTEM_PROMPT = `You are Acidnade AI, an expert Roblox Studio AI assistant.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CORE EXPERTISE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Lua scripting (Script, LocalScript, ModuleScript)
-- Roblox services & APIs
-- ALL Roblox instance types (Parts, Models, Tools, Sounds, Lights, etc.)
-- Client-server architecture
-- UI systems built programmatically
-- Security & exploit prevention
-- Performance optimization
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## NEW RESPONSE FORMAT (STRICT JSON ONLY)
+## CORE MISSION: FIX FIRST, CREATE SECOND
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+**PRIORITY ORDER:**
+1. 🔧 **FIX existing code** (bugs, errors, improvements)
+2. 🛠️ **MODIFY existing instances** (change properties, update logic)
+3. ➕ **CREATE new instances** (only if nothing exists to fix/modify)
+
+When user says "fix", "broken", "not working", "error":
+- ALWAYS prioritize modifying existing code
+- NEVER create new scripts if one exists
+- Request source code if you need to see what's wrong
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## STEP-BY-STEP EXECUTION MODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You work in STEPS, not all at once:
+
+**PHASE 1: PLANNING**
+- Analyze the request
+- Create a plan with numbered steps
+- Return the plan WITHOUT executing
+
+**PHASE 2: EXECUTION**
+- Execute ONE step at a time
+- If you need source code, REQUEST it (don't assume you have it)
+- Wait for step result before continuing
+
+**PHASE 3: ITERATION**
+- Process step result
+- Continue to next step or finish
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## RESPONSE FORMATS (STRICT JSON)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+### Format 1: PLANNING (First response)
 {
-  "message": "Descriptive summary of what will be accomplished (not just 'Done')",
-  "thinkingSteps": [
-    "planning: Planning completed successfully",
-    "reading: Reading CurrencyManager at game.ServerScriptService",
-    "working: Fixing CurrencyManager spawning logic",
-    "testing: Testing currency spawning",
-    "complete: Currency spawning logic fixed successfully"
-  ],
-  "plan": [STEPS],
-  "needsApproval": false,
-  "reasoning": "Why this approach was chosen"
-}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CRITICAL: AVOID REPLACEALL - USE TARGETED MODIFICATIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### ⚠️ CRITICAL WARNING: NEVER USE "replaceAll" UNLESS ABSOLUTELY NECESSARY
-- "replaceAll" DELETES ENTIRE SCRIPTS and REPLACES ALL CODE
-- Users HATE this - they want PARTIAL changes, not complete rewrites
-- ALWAYS prefer targeted modifications over complete replacements
-
-### ✅ CORRECT APPROACH: Targeted Changes
-1. FIRST try: "replace" for specific lines
-2. SECOND try: "insertAfter" or "insertBefore" for adding code
-3. THIRD try: "append" or "prepend" for end/beginning additions
-4. LAST RESORT: "replaceAll" ONLY if script is completely broken/wrong
-
-### ❌ FORBIDDEN:
-- Never use "replaceAll" for small changes
-- Never use "replaceAll" for bug fixes
-- Never use "replaceAll" for feature additions
-- Only use "replaceAll" if script has fundamental architectural issues
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## THINKING STEPS FORMAT (CRITICAL)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-You MUST include "thinkingSteps" array with these state formats:
-
-1. PLANNING: Analysis and planning phase
-   Format: "planning: [description]"
-   Examples: 
-   - "planning: Analyzing the full user request"
-   - "planning: Planning multi-step implementation"
-   - "planning: Mapping all requirements from user prompt"
-
-2. READING: Reading files, docs, or existing code
-   Format: "reading: [description]"
-   Examples:
-   - "reading: Reading CurrencyManager at game.ServerScriptService"
-   - "reading: Reading source code provided by user"
-
-3. WORKING: Creating, modifying, or editing
-   Format: "working: [action] [location]"
-   Examples:
-   - "working: Creating gold collection system"
-   - "working: Modifying CurrencyManager for resource limits"
-
-4. TESTING: Running tests or validations
-   Format: "testing: [description]"
-   Examples:
-   - "testing: Validating resource collection system"
-
-5. COMPLETE: Final state, success or completion
-   Format: "complete: [description]"
-   Examples:
-   - "complete: All requirements implemented successfully"
-   - "complete: Multi-step task completed as requested"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## AUTOMATIC CODE READING SYSTEM
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### WHEN YOU HAVE SOURCE CODE:
-When the system provides source code for an instance (like CurrencyManager):
-1. READ the source code in your "thinkingSteps" 
-2. Example: "reading: Reading CurrencyManager at game.ServerScriptService"
-3. Analyze what needs to be fixed
-4. DON'T ask for code - you already have it!
-5. Provide a plan to fix the issues
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## MULTI-STEP REQUESTS HANDLING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### EXAMPLE: User says:
-"make so there is a limit of how much gold and diamonds there can be at the plots, and also make them anchored, and in like them a PART, a square, with skull texture or sand also make so when you collect them, it adds to your lead-retart by leaderstats handler"
-
-### YOU MUST:
-1. Break down ALL requirements:
-   - Resource limits for gold and diamonds
-   - Make parts anchored
-   - Create square parts with skull/sand texture
-   - Collection system
-   - Leaderstats integration
-
-2. Create ONE comprehensive plan that addresses ALL points
-3. Do NOT ask for clarification unless absolutely necessary
-4. Do NOT break into multiple conversations
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## RESPONSE QUALITY REQUIREMENTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### FORBIDDEN RESPONSES:
-- ❌ "Done" (alone)
-- ❌ "Fixed"
-- ❌ "Working on it"
-- ❌ "Ok"
-- ❌ "replaceAll" for minor changes
-
-### REQUIRED RESPONSES:
-- ✅ "Creating resource collection system with limits and leaderstats"
-- ✅ "Implementing gold/diamond limits with anchored collection parts"
-- ✅ "Building comprehensive resource management system"
-- ✅ Always descriptive and specific
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CRITICAL: CODE MODIFICATION RULES - FIXED
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### 🎯 TARGETED MODIFICATIONS ONLY - NO REPLACEALL
-You MUST use targeted, specific modifications instead of full replacements:
-
-### 1. USE THESE IN ORDER OF PREFERENCE:
-1. **"replace"** - Replace specific line(s) (BEST CHOICE)
-   - Example: Fix a bug on line 15
-   - Use for: Changing specific logic, fixing errors
-
-2. **"insertAfter"** - Insert code after specific line
-   - Example: Add new function after existing function
-   - Use for: Adding features without breaking existing code
-
-3. **"insertBefore"** - Insert code before specific line
-   - Example: Add initialization code before main loop
-
-4. **"append"** - Add code at the end of script
-   - Example: Add new utility functions at bottom
-
-5. **"prepend"** - Add code at the beginning
-   - Example: Add new requires or constants
-
-6. **"remove"** - Remove specific lines
-   - Example: Remove deprecated code
-
-7. **🚨 "replaceAll"** - ONLY as LAST RESORT
-   - Use ONLY if: Script is completely wrong architecture
-   - Use ONLY if: User explicitly asks for complete rewrite
-   - Use ONLY if: No existing code is worth keeping
-
-### 2. MULTI-LINE TARGETING EXAMPLES:
-✅ GOOD - Replace specific function:
-\`\`\`json
-{
-  "type": "modify",
-  "sourceModifications": {
-    "action": "replace",
-    "target": "function collectResource(player, resourceType)\\n    local amount = 1\\n    addToLeaderstats(player, amount)\\nend",
-    "newCode": "function collectResource(player, resourceType)\\n    local amount = 1\\n    -- Check resource limits before adding\\n    if canCollectMore(resourceType) then\\n        addToLeaderstats(player, amount)\\n    end\\nend"
-  }
-}
-\`\`\`
-
-✅ GOOD - Insert after specific line:
-\`\`\`json
-{
-  "type": "modify",
-  "sourceModifications": {
-    "action": "insertAfter",
-    "target": "function addToLeaderstats(player, amount)",
-    "newCode": "\\n-- Check resource limits\\nlocal function canCollectMore(resourceType)\\n    local current = getResourceCount(resourceType)\\n    return current < MAX_RESOURCES[resourceType]\\nend"
-  }
-}
-\`\`\`
-
-### 3. ALWAYS SPECIFY EXACT TARGETS:
-- Use exact line patterns
-- Include line breaks exactly as in source code
-- Copy-paste from provided source code when possible
-
-### 4. REPLACEALL REQUIREMENTS:
-To use "replaceAll" you MUST:
-1. Have "reading: [script]" in thinking steps
-2. Have analyzed the existing code
-3. Determine it's fundamentally broken
-4. Explain in reasoning why replaceAll is necessary
-5. ALWAYS set "needsApproval": true for replaceAll
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## ABSOLUTE RULES (NON-NEGOTIABLE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### 1. READ ENTIRE PROMPTS
-- Read EVERY WORD of the user's message
-- Identify ALL requirements mentioned
-- Do not focus on just keywords like "Fix", "Broken"
-- Implement COMPLETE solutions
-
-### 2. NO "DONE" RESPONSES
-- Never respond with just "Done"
-- Always provide descriptive summary in "message"
-- Explain what was accomplished
-
-### 3. NO REPLACEALL FOR MINOR CHANGES
-- Use targeted modifications (replace, insertAfter, etc.)
-- replaceAll ONLY for complete architectural rewrites
-- Users want partial changes, not full rewrites
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## STEP TYPES & FORMATS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### 1. CREATE (New instances):
-{
-  "type": "create",
-  "description": "What this creates",
-  "className": "Part|Script|LocalScript|Model|Tool|Sound|etc",
-  "name": "UniqueName",
-  "parentPath": "game.Workspace|game.ServerScriptService|etc",
-  "properties": {
-    "Color": "255, 0, 0",
-    "Size": "10, 5, 10",
-    "Source": "-- Full Lua code here"
-  }
-}
-
-### 2. MODIFY (Change existing instances) - TARGETED ONLY:
-{
-  "type": "modify",
-  "description": "What changes - be specific",
-  "name": "EXACT_NAME_FROM_MATCHES",
-  "parentPath": "EXACT_PATH_FROM_MATCHES",
-  "properties": {
-    "Color": "0, 255, 0"
-  },
-  "sourceModifications": {
-    "action": "replace|insertAfter|insertBefore|append|prepend|remove",  // AVOID replaceAll
-    "target": "-- exact line or block to find",  // REQUIRED for replace, insertAfter, insertBefore
-    "newCode": "-- new code to insert"  // REQUIRED except for remove
-  }
-}
-
-### 3. DELETE:
-{
-  "type": "delete",
-  "description": "What deletes",
-  "name": "EXACT_NAME_FROM_MATCHES",
-  "parentPath": "EXACT_PATH_FROM_MATCHES"
-}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## EXAMPLE: TARGETED MODIFICATION (GOOD)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### User Request:
-"Fix the CurrencyManager so it limits gold to 100 per plot"
-
-### ✅ CORRECT RESPONSE (Targeted):
-{
-  "message": "Adding resource limit of 100 gold per plot to CurrencyManager",
-  "thinkingSteps": [
-    "planning: Analyzing CurrencyManager for gold limit implementation",
-    "reading: Reading CurrencyManager at game.ServerScriptService",
-    "working: Modifying CurrencyManager to add gold limits",
-    "testing: Testing gold limit functionality",
-    "complete: Gold limit of 100 per plot implemented successfully"
-  ],
+  "mode": "planning",
+  "message": "I'll fix the CurrencyManager in 3 steps",
   "plan": [
     {
-      "type": "modify",
-      "description": "Add gold limit constant to CurrencyManager",
-      "name": "CurrencyManager",
-      "parentPath": "game.ServerScriptService",
-      "sourceModifications": {
-        "action": "insertAfter",
-        "target": "local MAX_GOLD = 1000  -- Old global limit",
-        "newCode": "local MAX_GOLD_PER_PLOT = 100  -- New per-plot limit"
+      "stepNumber": 1,
+      "description": "Read CurrencyManager source code",
+      "action": "requestSource",
+      "target": {
+        "name": "CurrencyManager",
+        "path": "game.ServerScriptService"
       }
     },
     {
+      "stepNumber": 2,
+      "description": "Fix the spawning logic bug",
+      "action": "modify"
+    },
+    {
+      "stepNumber": 3,
+      "description": "Test the fix",
+      "action": "test"
+    }
+  ],
+  "totalSteps": 3,
+  "reasoning": "Need to read source code first to understand the bug"
+}
+
+### Format 2: REQUESTING SOURCE CODE
+{
+  "mode": "requestSource",
+  "message": "I need to see the CurrencyManager code to fix it",
+  "request": {
+    "name": "CurrencyManager",
+    "path": "game.ServerScriptService",
+    "reason": "To analyze the spawning logic bug"
+  },
+  "currentStep": 1,
+  "totalSteps": 3
+}
+
+### Format 3: EXECUTING STEP
+{
+  "mode": "executing",
+  "message": "Fixing the spawning logic in CurrencyManager",
+  "currentStep": 2,
+  "totalSteps": 3,
+  "actions": [
+    {
       "type": "modify",
-      "description": "Modify gold collection to check per-plot limit",
+      "description": "Fix spawn rate check",
       "name": "CurrencyManager",
       "parentPath": "game.ServerScriptService",
       "sourceModifications": {
         "action": "replace",
-        "target": "function addGold(player, plotId, amount)\\n    local current = getPlayerGold(player)\\n    if current + amount <= MAX_GOLD then\\n        setPlayerGold(player, current + amount)\\n        return true\\n    end\\n    return false\\nend",
-        "newCode": "function addGold(player, plotId, amount)\\n    local current = getPlayerGold(player)\\n    local plotGold = getPlotGold(plotId)\\n    \\n    -- Check both player and plot limits\\n    if current + amount <= MAX_GOLD and plotGold + amount <= MAX_GOLD_PER_PLOT then\\n        setPlayerGold(player, current + amount)\\n        setPlotGold(plotId, plotGold + amount)\\n        return true\\n    end\\n    return false\\nend"
+        "target": "if spawnRate > 0 then",
+        "newCode": "if spawnRate > 0 and currentCount < maxCount then"
       }
     }
   ],
-  "needsApproval": false,
-  "reasoning": "Used targeted modifications (insertAfter and replace) to add per-plot gold limit without rewriting entire script"
+  "reasoning": "Fixed the condition to check max count"
 }
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## EXAMPLE: REPLACEALL (BAD - AVOID)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### ❌ BAD RESPONSE (Full replacement):
+### Format 4: COMPLETION
 {
-  "message": "Rewriting CurrencyManager with gold limits",
-  "thinkingSteps": [...],
-  "plan": [
-    {
-      "type": "modify",
-      "description": "Rewrite CurrencyManager",
-      "name": "CurrencyManager",
-      "parentPath": "game.ServerScriptService",
-      "sourceModifications": {
-        "action": "replaceAll",  // ⚠️ BAD - DELETES ALL EXISTING CODE
-        "newCode": "-- Entire new script here, old code GONE..."
-      }
-    }
-  ],
-  "needsApproval": false,
-  "reasoning": "Fixed gold limits"
+  "mode": "complete",
+  "message": "CurrencyManager bug fixed successfully",
+  "summary": "Fixed spawning logic to respect max count limit",
+  "totalStepsCompleted": 3
 }
-
-### WHY THIS IS BAD:
-1. Deletes ALL existing CurrencyManager code
-2. User loses any custom features they added
-3. Breaks if script has other working features
-4. User wanted LIMIT ADDED, not full rewrite
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## PERFORMANCE GUIDELINES
+## REQUESTING SOURCE CODE (CRITICAL)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### COMPLETE IMPLEMENTATIONS:
-- Handle multi-step requests in ONE response
-- Create 5-10 plan steps if needed for complex requests
-- Batch related modifications together
-- No step limits - user wants complete solutions
+**When to request source code:**
+- User mentions a bug or error
+- User wants to fix existing script
+- You need to see the code to modify it
+- You're not sure what the current code does
 
-### TARGETED MODIFICATION STRATEGY:
-1. READ the existing source code first
-2. IDENTIFY specific lines to change
-3. USE exact line patterns from source
-4. CHANGE only what's needed
-5. KEEP existing working code
+**How to request:**
+{
+  "mode": "requestSource",
+  "request": {
+    "name": "ScriptName",
+    "path": "game.ServerScriptService",
+    "reason": "To understand the bug and fix it"
+  }
+}
+
+**NEVER assume you have source code!**
+**ALWAYS request it if you need it!**
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-NO REPLACEALL. TARGETED MODIFICATIONS ONLY. READ EXISTING CODE. PARTIAL CHANGES.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+## TARGETED MODIFICATIONS (NO REPLACEALL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// Update session with new instances
-function updateSession(sessionId, plan, userPrompt) {
-  const session = sessionMemory.get(sessionId);
-  if (!session) return;
-  
-  const timestamp = new Date().toISOString();
-  
-  // Track created instances
-  if (plan && Array.isArray(plan)) {
-    plan.filter(step => step && step.type === 'create').forEach(step => {
-      const existing = session.createdInstances.find(i => 
-        i.name === step.name && i.parentPath === step.parentPath
-      );
-      
-      if (!existing) {
-        session.createdInstances.push({
-          name: step.name,
-          className: step.className,
-          path: step.parentPath,
-          action: 'created',
-          timestamp,
-          properties: step.properties
-        });
-      }
-    });
-    
-    // Track modified instances
-    plan.filter(step => step && step.type === 'modify').forEach(step => {
-      const existing = session.modifiedInstances.find(i => 
-        i.name === step.name && i.path === step.parentPath
-      );
-      
-      if (!existing) {
-        session.modifiedInstances.push({
-          name: step.name,
-          className: step.className || 'Unknown',
-          path: step.parentPath,
-          action: 'modified',
-          timestamp,
-          changes: step.properties,
-          sourceModifications: step.sourceModifications
-        });
-      }
-    });
+Use these actions IN ORDER:
+1. **replace** - Change specific line(s)
+2. **insertAfter** - Add code after line
+3. **insertBefore** - Add code before line
+4. **append** - Add to end
+5. **prepend** - Add to beginning
+6. **remove** - Delete line(s)
+
+**FORBIDDEN:** replaceAll (deletes entire script)
+
+Example:
+{
+  "sourceModifications": {
+    "action": "replace",
+    "target": "local maxGold = 1000",
+    "newCode": "local maxGold = 100  -- Reduced limit"
   }
-  
-  // Update chat history
-  session.chatHistory.push({
-    role: 'user',
-    content: userPrompt,
-    timestamp
-  });
-  
-  // Keep only last 20 items
-  session.createdInstances = session.createdInstances.slice(-20);
-  session.modifiedInstances = session.modifiedInstances.slice(-20);
-  session.mentionedInstances = session.mentionedInstances.slice(-20);
-  session.chatHistory = session.chatHistory.slice(-20);
 }
 
-// Build session context for AI
-function buildSessionContext(session) {
-  const context = [];
-  
-  if (session.createdInstances && session.createdInstances.length > 0) {
-    context.push('CREATED IN THIS SESSION:');
-    session.createdInstances.forEach(inst => {
-      if (inst && inst.name) {
-        context.push(`- ${inst.name} (${inst.className || 'Unknown'}) at ${inst.path || 'Unknown'} [${inst.action || 'created'}]`);
-      }
-    });
-    context.push('');
-  }
-  
-  if (session.modifiedInstances && session.modifiedInstances.length > 0) {
-    context.push('MODIFIED IN THIS SESSION:');
-    session.modifiedInstances.forEach(inst => {
-      if (inst && inst.name) {
-        context.push(`- ${inst.name} at ${inst.path || 'Unknown'} [${inst.action || 'modified'}]`);
-      }
-    });
-    context.push('');
-  }
-  
-  if (session.chatHistory && session.chatHistory.length > 0) {
-    context.push('RECENT CHAT:');
-    session.chatHistory.slice(-3).forEach(msg => {
-      if (msg && msg.content) {
-        const prefix = msg.role === 'user' ? 'U' : 'A';
-        context.push(`${prefix}: ${msg.content.substring(0, 80)}${msg.content.length > 80 ? '...' : ''}`);
-      }
-    });
-    context.push('');
-  }
-  
-  return context.join('\n');
-}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## KEEP IT EFFICIENT (SAVE TOKENS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// Enhanced instance finding with path priority and exact matching
-function findInstanceInContext(userPrompt, session, existingInstances, sourceCodes = {}) {
-  if (!userPrompt) return [];
-  
-  const promptLower = userPrompt.toLowerCase();
-  const matches = [];
-  
-  // Extract potential instance names (looks like proper nouns or capitalized)
-  const potentialInstanceNames = userPrompt.match(/\b[A-Z][a-zA-Z]+\b/g) || [];
-  
-  // Also use all words as keywords
-  const keywords = promptLower.match(/\b(\w+)\b/g) || [];
-  
-  // Check if user mentioned a specific location
-  const locationKeywords = {
-    'serverscriptservice': 'ServerScriptService',
-    'server storage': 'ServerStorage',
-    'replicatedstorage': 'ReplicatedStorage',
-    'replicated first': 'ReplicatedFirst',
-    'workspace': 'Workspace',
-    'starterplayer': 'StarterPlayer',
-    'startergui': 'StarterGui',
-    'starterpack': 'StarterPack',
-    'lighting': 'Lighting',
-    'soundservice': 'SoundService'
-  };
-  
-  let mentionedLocation = null;
-  for (const [key, location] of Object.entries(locationKeywords)) {
-    if (promptLower.includes(key)) {
-      mentionedLocation = location;
-      break;
-    }
-  }
-  
-  // Search in session first
-  const allSessionInstances = [];
-  if (session) {
-    if (session.createdInstances) allSessionInstances.push(...session.createdInstances);
-    if (session.modifiedInstances) allSessionInstances.push(...session.modifiedInstances);
-  }
-  
-  // First: Try exact name matching (for "CurrencyManager", "HealthBar", etc.)
-  potentialInstanceNames.forEach(instanceName => {
-    const nameLower = instanceName.toLowerCase();
-    
-    // Search in session
-    allSessionInstances.forEach(inst => {
-      if (inst && inst.name && inst.name.toLowerCase() === nameLower) {
-        matches.push({
-          source: 'session_exact',
-          name: inst.name,
-          className: inst.className || 'Unknown',
-          path: inst.path || 'Unknown',
-          score: 20, // Very high score for exact match
-          exactMatch: true,
-          matchType: 'exact_name',
-          hasSourceCode: sourceCodes[inst.path] ? true : false
-        });
-      }
-    });
-    
-    // Search in existing instances
-    (existingInstances || []).forEach(inst => {
-      if (!inst || typeof inst !== 'object') return;
-      
-      const instName = inst.Name || '';
-      if (instName.toLowerCase() === nameLower) {
-        matches.push({
-          source: 'project_exact',
-          name: inst.Name || 'Unknown',
-          className: inst.ClassName || 'Unknown',
-          path: inst.Path || 'Unknown',
-          score: 19, // High score for exact match
-          exactMatch: true,
-          matchType: 'exact_name',
-          hasSourceCode: sourceCodes[inst.Path] ? true : false
-        });
-      }
-    });
-  });
-  
-  // Second: Search by keywords with context awareness
-  keywords.forEach(keyword => {
-    // Skip common words and very short words
-    if (keyword.length < 3 || 
-        ['the', 'and', 'for', 'with', 'this', 'that', 'have', 'from', 'its', 'in', 'on', 'at'].includes(keyword)) {
-      return;
-    }
-    
-    // Search in session
-    allSessionInstances.forEach(inst => {
-      if (!inst || !inst.name) return;
-      
-      const nameLower = inst.name.toLowerCase();
-      const classNameLower = (inst.className || '').toLowerCase();
-      const pathLower = (inst.path || '').toLowerCase();
-      
-      let score = 0;
-      let matchType = 'keyword';
-      
-      // Exact name match
-      if (nameLower === keyword) {
-        score += 15;
-        matchType = 'exact_name';
-      }
-      // Name contains keyword
-      else if (nameLower.includes(keyword)) {
-        score += 7;
-      }
-      
-      // Class name contains keyword
-      if (classNameLower.includes(keyword)) {
-        score += 5;
-      }
-      
-      // Path contains keyword
-      if (pathLower.includes(keyword)) {
-        score += 4;
-      }
-      
-      // Boost if it's in the mentioned location
-      if (mentionedLocation && pathLower.includes(mentionedLocation.toLowerCase())) {
-        score += 10;
-        matchType = 'location_match';
-      }
-      
-      // Boost for script-related keywords
-      if (['script', 'module', 'local', 'handler', 'manager', 'controller'].includes(keyword) &&
-          classNameLower.includes('script')) {
-        score += 6;
-      }
-      
-      if (score > 0) {
-        matches.push({
-          source: 'session_keyword',
-          name: inst.name,
-          className: inst.className || 'Unknown',
-          path: inst.path || 'Unknown',
-          score: score,
-          exactMatch: matchType === 'exact_name',
-          matchType: matchType,
-          hasSourceCode: sourceCodes[inst.path] ? true : false
-        });
-      }
-    });
-    
-    // Search in existing instances
-    (existingInstances || []).forEach(inst => {
-      if (!inst || typeof inst !== 'object') return;
-      
-      const nameLower = (inst.Name || '').toLowerCase();
-      const classNameLower = (inst.ClassName || '').toLowerCase();
-      const pathLower = (inst.Path || '').toLowerCase();
-      
-      let score = 0;
-      let matchType = 'keyword';
-      
-      // Exact name match
-      if (nameLower === keyword) {
-        score += 15;
-        matchType = 'exact_name';
-      }
-      // Name contains keyword
-      else if (nameLower.includes(keyword)) {
-        score += 7;
-      }
-      
-      // Class name contains keyword
-      if (classNameLower.includes(keyword)) {
-        score += 5;
-      }
-      
-      // Path contains keyword
-      if (pathLower.includes(keyword)) {
-        score += 4;
-      }
-      
-      // Boost if it's in the mentioned location
-      if (mentionedLocation && pathLower.includes(mentionedLocation.toLowerCase())) {
-        score += 10;
-        matchType = 'location_match';
-      }
-      
-      // Boost for script-related keywords
-      if (['script', 'module', 'local', 'handler', 'manager', 'controller'].includes(keyword) &&
-          classNameLower.includes('script')) {
-        score += 6;
-      }
-      
-      if (score > 0) {
-        matches.push({
-          source: 'project_keyword',
-          name: inst.Name || 'Unknown',
-          className: inst.ClassName || 'Unknown',
-          path: inst.Path || 'Unknown',
-          score: score,
-          exactMatch: matchType === 'exact_name',
-          matchType: matchType,
-          hasSourceCode: sourceCodes[inst.Path] ? true : false
-        });
-      }
-    });
-  });
-  
-  // Sort by score and return unique
-  const uniqueMatches = [];
-  const seen = new Set();
-  
-  matches
-    .sort((a, b) => b.score - a.score)
-    .forEach(match => {
-      const key = `${match.name}|${match.path}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        uniqueMatches.push(match);
-      }
-    });
-  
-  return uniqueMatches.slice(0, 10);
-}
+- ONE step at a time
+- Request ONLY the source code you need
+- Keep responses concise
+- Don't repeat information
 
-function buildPrompt(userPrompt, context, sessionId) {
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## ABSOLUTE RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. **FIX BEFORE CREATE** - Always try to fix existing code first
+2. **REQUEST SOURCE CODE** - Don't assume you have it
+3. **ONE STEP AT A TIME** - Don't execute entire plan at once
+4. **NO REPLACEALL** - Use targeted modifications
+5. **SAVE TOKENS** - Be efficient with your responses
+6. **BE SPECIFIC** - "Fixing spawn logic bug" not "Done"`;
+
+// Build minimal prompt (NO SOURCE CODES UNLESS REQUESTED)
+function buildPrompt(userPrompt, context, sessionId, requestedSource = null) {
   const session = initSession(sessionId);
-  const sessionContext = buildSessionContext(session);
-  
-  // Extract source codes from context if available
-  const sourceCodes = context?.sourceCodes || {};
-  
-  // Find potential instance matches
-  const instanceMatches = findInstanceInContext(
-    userPrompt, 
-    session, 
-    (context && context.existingInstances) ? context.existingInstances : [],
-    sourceCodes
-  );
   
   let prompt = 'USER REQUEST: ' + userPrompt + '\n\n';
   
-  // Add session context
-  if (sessionContext) {
-    prompt += 'SESSION CONTEXT (MOST IMPORTANT - USE THESE NAMES):\n';
-    prompt += sessionContext + '\n';
-  }
-  
-  // Add matched instances with more details
-  if (instanceMatches.length > 0) {
-    prompt += '🔍 INSTANCE MATCHES FOUND (USE THESE):\n';
-    
-    // Group by type
-    const exactMatches = instanceMatches.filter(m => m.exactMatch);
-    const keywordMatches = instanceMatches.filter(m => !m.exactMatch);
-    
-    if (exactMatches.length > 0) {
-      prompt += '\n🎯 EXACT MATCHES (VERY LIKELY WHAT USER WANTS):\n';
-      exactMatches.forEach((match, i) => {
-        const emoji = match.matchType === 'exact_name' ? '🎯' : '📍';
-        const codeEmoji = match.hasSourceCode ? '📜' : '';
-        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
-      });
-      prompt += '\n';
-      
-      // Add source code for exact matches if available WITH WARNING
-      exactMatches.forEach((match, i) => {
-        if (match.hasSourceCode && sourceCodes[match.path]) {
-          prompt += `📜 SOURCE CODE FOR ${match.name} at ${match.path}:\n`;
-          prompt += '```lua\n';
-          prompt += sourceCodes[match.path].substring(0, 2000); // Limit code length
-          if (sourceCodes[match.path].length > 2000) {
-            prompt += '\n... (truncated)';
-          }
-          prompt += '\n```\n';
-          prompt += '⚠️ ⚠️ ⚠️ CRITICAL: DO NOT USE "replaceAll" FOR THIS SCRIPT! ⚠️ ⚠️ ⚠️\n';
-          prompt += 'Use targeted modifications like "replace", "insertAfter", or "insertBefore"\n';
-          prompt += 'Example: Find the exact line(s) to change in the code above\n\n';
-        }
-      });
-    }
-    
-    if (keywordMatches.length > 0) {
-      prompt += '\n🔎 KEYWORD MATCHES (CHECK THESE):\n';
-      keywordMatches.forEach((match, i) => {
-        const emoji = match.matchType === 'location_match' ? '📍' : '🔎';
-        const codeEmoji = match.hasSourceCode ? '📜' : '';
-        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
-      });
-      prompt += '\n';
-    }
-    
-    // Add special instructions
-    prompt += '📋 IMPORTANT INSTRUCTIONS:\n';
-    prompt += '1. If there are EXACT MATCHES, ALWAYS use those for modifications\n';
-    prompt += '2. READ the source code automatically (shown above)\n';
-    prompt += '3. Use TARGETED modifications, NOT replaceAll\n';
-    prompt += '4. Include "reading: Reading [instance] at [path]" in thinking steps\n';
-    prompt += '5. Provide fix based on the source code you read\n';
-    prompt += '6. 🚨 NEVER use "replaceAll" unless script is completely broken\n\n';
-  } else {
-    prompt += '⚠️ NO INSTANCE MATCHES FOUND\n';
-    prompt += 'You may need to ask for clarification about which instance to modify.\n\n';
-  }
-  
-  // Check if user mentioned a specific location
-  const lowerPrompt = userPrompt.toLowerCase();
-  if (lowerPrompt.includes('serverscriptservice')) {
-    prompt += '⚠️ USER SPECIFIED LOCATION: Instance is in ServerScriptService\n';
-    prompt += 'Look for instances in game.ServerScriptService first!\n\n';
-  }
-  if (lowerPrompt.includes('workspace')) {
-    prompt += '⚠️ USER SPECIFIED LOCATION: Instance is in Workspace\n';
-    prompt += 'Look for instances in game.Workspace first!\n\n';
-  }
-  
-  // Add selected objects with null safety
-  if (context && context.selectedObjects && Array.isArray(context.selectedObjects) && context.selectedObjects.length > 0) {
-    prompt += 'SELECTED OBJECTS:\n';
-    const validObjects = context.selectedObjects.filter(obj => obj && typeof obj === 'object');
-    validObjects.forEach(obj => {
-      prompt += `- ${obj.Name || 'Unknown'} (${obj.ClassName || 'Unknown'}) at ${obj.Path || 'Unknown'}\n`;
+  // Add session context (brief)
+  if (session.createdInstances && session.createdInstances.length > 0) {
+    prompt += 'CREATED IN SESSION:\n';
+    session.createdInstances.slice(-5).forEach(inst => {
+      prompt += `- ${inst.name} (${inst.className}) at ${inst.path}\n`;
     });
     prompt += '\n';
   }
   
-  // Add existing instances with null safety
-  if (context && context.existingInstances && Array.isArray(context.existingInstances) && context.existingInstances.length > 0) {
-    prompt += 'PROJECT INSTANCES (search if not in session or matches):\n';
-    const validInstances = context.existingInstances.filter(inst => inst && typeof inst === 'object');
-    
-    // Show instances similar to request
-    const relevantInstances = validInstances.filter(inst => {
-      if (!inst || !inst.Name) return false;
-      const nameLower = (inst.Name || '').toLowerCase();
-      const promptLower = userPrompt.toLowerCase();
-      return promptLower.split(/\s+/).some(word => 
-        word.length > 3 && nameLower.includes(word)
-      );
+  if (session.modifiedInstances && session.modifiedInstances.length > 0) {
+    prompt += 'MODIFIED IN SESSION:\n';
+    session.modifiedInstances.slice(-5).forEach(inst => {
+      prompt += `- ${inst.name} at ${inst.path}\n`;
     });
+    prompt += '\n';
+  }
+  
+  // Add current plan if exists
+  if (session.currentPlan) {
+    prompt += `CURRENT PLAN (Step ${session.currentStepIndex}/${session.currentPlan.totalSteps}):\n`;
+    prompt += JSON.stringify(session.currentPlan, null, 2) + '\n\n';
+  }
+  
+  // Add requested source code ONLY if provided
+  if (requestedSource) {
+    prompt += `📜 REQUESTED SOURCE CODE:\n`;
+    prompt += `Name: ${requestedSource.name}\n`;
+    prompt += `Path: ${requestedSource.path}\n`;
+    prompt += `\`\`\`lua\n${requestedSource.source}\n\`\`\`\n\n`;
+    prompt += '⚠️ Use targeted modifications (replace, insertAfter) NOT replaceAll\n\n';
+  }
+  
+  // Add BRIEF instance list (just names, no details)
+  if (context && context.existingInstances && context.existingInstances.length > 0) {
+    prompt += 'AVAILABLE INSTANCES (brief list):\n';
+    const keywords = userPrompt.toLowerCase().split(/\s+/);
+    const relevant = context.existingInstances.filter(inst => 
+      inst && inst.Name && keywords.some(k => 
+        k.length > 3 && inst.Name.toLowerCase().includes(k)
+      )
+    ).slice(0, 10);
     
-    if (relevantInstances.length > 0) {
-      relevantInstances.slice(0, 10).forEach(inst => {
-        prompt += `- ${inst.Name || 'Unknown'} (${inst.ClassName || 'Unknown'}) at ${inst.Path || 'Unknown'}\n`;
+    if (relevant.length > 0) {
+      relevant.forEach(inst => {
+        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
       });
     } else {
-      // Show some random instances
-      validInstances.slice(0, 5).forEach(inst => {
-        prompt += `- ${inst.Name || 'Unknown'} (${inst.ClassName || 'Unknown'}) at ${inst.Path || 'Unknown'}\n`;
+      // Show first 5 if no relevant matches
+      context.existingInstances.slice(0, 5).forEach(inst => {
+        prompt += `- ${inst.Name} (${inst.ClassName}) at ${inst.Path}\n`;
       });
     }
     prompt += '\n';
   }
   
-  // SPECIAL CASE: Simple greetings/questions
-  const isGreeting = ['hello', 'hi', 'hey', 'greetings'].some(word => lowerPrompt.includes(word));
-  const isHelp = ['help', 'what can you do', 'how do i', 'can you'].some(phrase => lowerPrompt.includes(phrase));
-  
-  prompt += 'FINAL INSTRUCTIONS:\n';
-  
-  // Check for problematic keywords
-  const hasProblematicKeywords = ['done', 'fix', 'broken', 'ok', 'working on it', 'fixed'].some(word => 
-    lowerPrompt.toLowerCase().includes(word)
-  );
-  
-  if (isGreeting || isHelp) {
-    prompt += '1. This is a simple greeting or help request\n';
-    prompt += '2. Respond with a friendly, descriptive message\n';
-    prompt += '3. Return empty thinkingSteps and plan arrays\n';
-    prompt += '4. Keep it helpful and encouraging\n';
+  // Add execution mode instructions
+  if (!session.currentPlan) {
+    prompt += 'MODE: PLANNING\n';
+    prompt += 'Create a step-by-step plan. Do NOT execute yet.\n';
+    prompt += 'If you need source code, include "requestSource" action in plan.\n';
+  } else if (requestedSource) {
+    prompt += 'MODE: EXECUTING\n';
+    prompt += `Execute step ${session.currentStepIndex} of ${session.currentPlan.totalSteps}\n`;
+    prompt += 'You now have the source code. Implement the fix.\n';
   } else {
-    prompt += '1. READ THE ENTIRE USER PROMPT - process every requirement mentioned\n';
-    prompt += '2. NEVER respond with just "Done", "Fixed", or "Ok" - use descriptive summaries\n';
-    prompt += '3. Handle multi-part requests in ONE comprehensive response\n';
-    prompt += '4. ALWAYS include "thinkingSteps" array with planning, reading, working, testing, complete\n';
-    prompt += '5. Use format: "state: description" for thinking steps\n';
-    prompt += '6. READ the source code automatically when available\n';
-    prompt += '7. NEVER ask for code if instance is found\n';
-    prompt += '8. 🚨 CRITICAL: DO NOT USE "replaceAll" UNLESS ABSOLUTELY NECESSARY\n';
-    prompt += '9. Use "replace", "insertAfter", "insertBefore" for targeted changes\n';
-    prompt += '10. Use EXACT names and paths from matches\n';
-    prompt += '11. Use MULTI-LINE targeting when changing related lines\n';
-    prompt += '12. Respond in JSON format only\n';
-    prompt += '13. EVERY plan step MUST have a description field\n';
-    prompt += '14. No artificial step limits - handle complex requests completely\n';
-    
-    if (hasProblematicKeywords) {
-      prompt += '\n⚠️ WARNING: User mentioned problematic keywords. DO NOT just respond to keywords.\n';
-      prompt += 'READ THE ENTIRE PROMPT and implement ALL requirements mentioned.\n';
-    }
+    prompt += 'MODE: CONTINUE\n';
+    prompt += `Continue with step ${session.currentStepIndex} of ${session.currentPlan.totalSteps}\n`;
   }
   
   return prompt;
 }
 
-async function processAIRequest(prompt, context, sessionId) {
+async function processAIRequest(prompt, context, sessionId, requestedSource = null) {
   try {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash-exp',
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
         topK: 40,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 4096,  // Reduced from 8192
         responseMimeType: 'application/json',
       },
       systemInstruction: SYSTEM_PROMPT
     });
 
-    const fullPrompt = buildPrompt(prompt, context || {}, sessionId);
-    console.log('[AI] Prompt length:', fullPrompt.length);
-    
-    // Log instance matches for debugging
-    const session = initSession(sessionId);
-    const sourceCodes = context?.sourceCodes || {};
-    const instanceMatches = findInstanceInContext(
-      prompt, 
-      session, 
-      (context && context.existingInstances) ? context.existingInstances : [],
-      sourceCodes
-    );
-    
-    console.log(`[AI] Found ${instanceMatches.length} instance matches for prompt: "${prompt.substring(0, 50)}..."`);
-    if (instanceMatches.length > 0) {
-      console.log(`[AI] Top match: ${instanceMatches[0].name} at ${instanceMatches[0].path}`);
-      console.log(`[AI] Has source code: ${instanceMatches[0].hasSourceCode}`);
-    }
+    const fullPrompt = buildPrompt(prompt, context || {}, sessionId, requestedSource);
+    console.log('[AI] Prompt length:', fullPrompt.length, 'characters');
     
     const startTime = Date.now();
     const result = await model.generateContent(fullPrompt);
@@ -960,151 +347,47 @@ async function processAIRequest(prompt, context, sessionId) {
       aiResponse = JSON.parse(cleanedText);
     } catch (parseError) {
       console.error('[AI] Parse error:', parseError.message);
-      console.error('[AI] Raw text:', text.substring(0, 500));
       aiResponse = {
-        message: 'Processing your request',
-        thinkingSteps: [],
-        plan: [],
-        needsApproval: false,
-        reasoning: 'Failed to parse response'
+        mode: 'error',
+        message: 'Failed to parse AI response',
+        error: true
       };
     }
 
     // Validate response
+    if (!aiResponse.mode) aiResponse.mode = 'unknown';
     if (!aiResponse.message) aiResponse.message = 'Processing request';
-    if (!aiResponse.thinkingSteps) aiResponse.thinkingSteps = [];
-    if (!aiResponse.plan) aiResponse.plan = [];
-    if (!aiResponse.reasoning) aiResponse.reasoning = 'Based on session context';
     
-    // FIX: Prevent "Done" responses
-    const badResponses = ['done', 'fixed', 'ok', 'working on it'];
-    if (badResponses.includes(aiResponse.message.toLowerCase())) {
-      console.warn('[AI] WARNING: AI returned a bad response:', aiResponse.message);
-      aiResponse.message = 'Implementing your request';
+    // Update session based on response mode
+    const session = sessionMemory.get(sessionId);
+    
+    if (aiResponse.mode === 'planning') {
+      session.currentPlan = aiResponse;
+      session.currentStepIndex = 1;
+    } else if (aiResponse.mode === 'complete') {
+      session.currentPlan = null;
+      session.currentStepIndex = 0;
+    } else if (aiResponse.mode === 'executing') {
+      session.currentStepIndex += 1;
     }
-    
-    // CRITICAL FIX: Validate and convert replaceAll to targeted modifications
-    if (aiResponse.plan && Array.isArray(aiResponse.plan)) {
-      aiResponse.plan.forEach((step, index) => {
-        if (step && typeof step === 'object') {
-          // Ensure required fields with better defaults
-          if (!step.type) step.type = 'create';
-          if (!step.description) {
-            step.description = `${step.type} ${step.name || 'instance'} at ${step.parentPath || 'game.Workspace'}`;
-          }
-          if (!step.name) {
-            step.name = `${step.type || 'Instance'}_${index + 1}`;
-          }
-          if (!step.parentPath) step.parentPath = 'game.Workspace';
-          if (!step.className && step.type === 'create') {
-            step.className = 'Part';
-          }
-          
-          // Ensure description is never empty
-          if (typeof step.description !== 'string' || step.description.trim() === '') {
-            step.description = `${step.type || 'action'} ${step.name || 'instance'}`;
-          }
-          
-          // 🚨 CRITICAL FIX: Check for replaceAll and warn/convert
-          if (step.sourceModifications && step.sourceModifications.action === 'replaceAll') {
-            console.warn(`[AI] ⚠️ CRITICAL WARNING: Step ${index} uses replaceAll!`);
-            
-            // If we have source code, try to suggest targeted changes
-            if (sourceCodes[step.parentPath]) {
-              console.warn('[AI] Source code available, replaceAll should be avoided!');
-              
-              // Add warning to reasoning
-              aiResponse.reasoning = (aiResponse.reasoning || '') + 
-                ' WARNING: Used replaceAll which replaces entire script. Consider using targeted modifications instead.';
-              
-              // Force approval for replaceAll
-              step.needsSpecialApproval = true;
-              step.replaceAllWarning = 'This will DELETE ALL existing code in the script and replace it entirely.';
-            }
-          }
-          
-          // Validate source modifications have required fields
-          if (step.sourceModifications) {
-            const action = step.sourceModifications.action;
-            const needsTarget = ['replace', 'insertAfter', 'insertBefore'].includes(action);
-            const needsNewCode = ['replace', 'insertAfter', 'insertBefore', 'append', 'prepend'].includes(action);
-            
-            if (needsTarget && !step.sourceModifications.target) {
-              console.warn(`[AI] Step ${index} action "${action}" missing target field`);
-              // Set a default or remove the step
-            }
-            
-            if (needsNewCode && !step.sourceModifications.newCode) {
-              console.warn(`[AI] Step ${index} action "${action}" missing newCode field`);
-            }
-          }
-        } else {
-          // Replace invalid step with a valid one
-          aiResponse.plan[index] = {
-            type: 'create',
-            description: `Step ${index + 1}: Creating instance as requested`,
-            name: `Instance_${index + 1}`,
-            parentPath: 'game.Workspace',
-            className: 'Part'
-          };
-        }
-      });
-    }
-    
-    // Check for destructive "replaceAll" actions and warn - ALWAYS require approval
-    const hasReplaceAll = aiResponse.plan.some(step => 
-      step && step.sourceModifications && step.sourceModifications.action === 'replaceAll'
-    );
-    
-    if (hasReplaceAll) {
-      console.warn('[AI] ⚠️ CRITICAL: Response contains replaceAll - requiring approval');
-      // Add explicit warning to the response
-      aiResponse.replaceAllWarning = 'This plan uses replaceAll which will DELETE ALL existing code and replace entire scripts. This is destructive.';
-    }
-    
-    // Auto-approve settings - NO STEP LIMITS AS REQUESTED
-    const hasDestructiveAction = aiResponse.plan.some(step => step && step.type === 'delete');
-    const hasManySteps = false; // Always false now - no step limits
-    
-    // 🚨 ALWAYS require approval for replaceAll
-    aiResponse.needsApproval = hasDestructiveAction || hasReplaceAll || hasManySteps;
-    
-    // Add progress text for approval dialog
-    if (aiResponse.plan.length > 0) {
-      aiResponse.progressText = `Steps: 0/${aiResponse.plan.length}`;
-    }
-
-    // Update session memory
-    updateSession(sessionId, aiResponse.plan, prompt);
     
     aiResponse.metadata = {
       thinkingTime,
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash-exp',
       sessionId,
       timestamp: new Date().toISOString(),
-      planSize: aiResponse.plan.length,
-      thinkingStepsSize: aiResponse.thinkingSteps.length,
-      sessionInstances: sessionMemory.get(sessionId)?.createdInstances?.length || 0,
-      instanceMatches: instanceMatches.length,
-      sourceCodesProvided: Object.keys(sourceCodes).length,
-      hasReplaceAll: hasReplaceAll,
-      hasDestructiveActions: hasDestructiveAction,
-      note: 'No step limits - handles complete requests. ReplaceAll requires approval.'
+      promptLength: fullPrompt.length,
+      tokensSaved: 'Not sending all source codes at once'
     };
 
-    console.log(`[AI] Response: ${aiResponse.thinkingSteps.length} thinking steps, ${aiResponse.plan.length} plan steps`);
-    console.log(`[AI] Message: "${aiResponse.message}"`);
-    console.log(`[AI] Has replaceAll: ${hasReplaceAll}`);
+    console.log(`[AI] Mode: ${aiResponse.mode}, Message: "${aiResponse.message}"`);
     return aiResponse;
 
   } catch (error) {
     console.error('[AI] Error:', error.message);
     return {
-      message: 'Processing your request',
-      thinkingSteps: [],
-      plan: [],
-      needsApproval: false,
-      reasoning: 'Internal server error',
+      mode: 'error',
+      message: 'Internal server error',
       error: true
     };
   }
@@ -1112,24 +395,22 @@ async function processAIRequest(prompt, context, sessionId) {
 
 app.get('/', (req, res) => {
   res.json({
-    name: 'Acidnade AI',
-    version: '2.7',
+    name: 'Acidnade AI v3.0',
     status: 'online',
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.0-flash-exp',
     features: [
-      'Full prompt processing',
-      'No "Done" responses',
-      'Complete multi-step implementations',
-      'No artificial step limits',
-      'Automatic code reading',
-      'Enhanced instance matching',
-      'Exact name detection',
-      'Multi-line targeting',
-      'Location-aware search',
-      'Session memory',
-      'Thinking steps system',
-      '🚨 REPLACEALL FIX: Targeted modifications only',
-      'Partial code changes instead of full rewrites'
+      '🔧 FIX-FIRST approach',
+      '📋 Step-by-step execution',
+      '📜 On-demand source code requests',
+      '💾 Token-efficient (no bulk source code)',
+      '🎯 Targeted modifications only',
+      '🚫 NO replaceAll by default'
+    ],
+    modes: [
+      'planning - Create step-by-step plan',
+      'requestSource - Request specific source code',
+      'executing - Execute current step',
+      'complete - Task finished'
     ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
@@ -1139,10 +420,69 @@ app.get('/', (req, res) => {
 app.get('/ping', (req, res) => {
   res.json({ 
     status: 'ok', 
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.0-flash-exp',
     uptime: process.uptime(),
     sessions: sessionMemory.size
   });
+});
+
+// NEW ENDPOINT: Provide source code when AI requests it
+app.post('/ai/provide-source', authenticateRequest, async (req, res) => {
+  try {
+    const { sessionId, name, path, source } = req.body;
+    
+    if (!sessionId || !name || !path || !source) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        message: 'Need: sessionId, name, path, source'
+      });
+    }
+    
+    const session = sessionMemory.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    
+    // Continue with the AI, now providing the source code
+    const aiResponse = await processAIRequest(
+      `Continue with the plan. I've provided the source code for ${name}.`,
+      {},
+      sessionId,
+      { name, path, source }
+    );
+    
+    res.json(aiResponse);
+    
+  } catch (error) {
+    console.error('[Provide Source Error]:', error.message);
+    res.status(500).json({ 
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+app.post('/ai', authenticateRequest, async (req, res) => {
+  try {
+    const { prompt, context, sessionId } = req.body;
+    if (!prompt || !sessionId) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        message: 'Both prompt and sessionId are required'
+      });
+    }
+    
+    initSession(sessionId);
+    const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
+    res.json(aiResponse);
+    
+  } catch (error) {
+    console.error('[Server Error]:', error.message);
+    res.status(500).json({ 
+      error: 'Server error',
+      message: error.message
+    });
+  }
 });
 
 app.get('/session/:sessionId', authenticateRequest, (req, res) => {
@@ -1157,6 +497,8 @@ app.get('/session/:sessionId', authenticateRequest, (req, res) => {
     sessionId,
     createdInstances: session.createdInstances || [],
     modifiedInstances: session.modifiedInstances || [],
+    currentPlan: session.currentPlan || null,
+    currentStepIndex: session.currentStepIndex || 0,
     chatHistory: session.chatHistory || [],
     timestamp: new Date(session.timestamp || Date.now()).toISOString()
   });
@@ -1172,36 +514,7 @@ app.delete('/session/:sessionId', authenticateRequest, (req, res) => {
   });
 });
 
-app.post('/ai', authenticateRequest, async (req, res) => {
-  try {
-    const { prompt, context, sessionId } = req.body;
-    if (!prompt || !sessionId) {
-      return res.status(400).json({ 
-        error: 'Missing required fields',
-        message: 'Both prompt and sessionId are required'
-      });
-    }
-    
-    // Initialize session if needed
-    initSession(sessionId);
-    
-    const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
-    res.json(aiResponse);
-    
-  } catch (error) {
-    console.error('[Server Error]:', error.message);
-    res.status(500).json({ 
-      error: 'Server error',
-      message: error.message,
-      thinkingSteps: [],
-      plan: [],
-      needsApproval: false,
-      reasoning: 'Internal server error'
-    });
-  }
-});
-
-// Clean up old sessions periodically (optional)
+// Clean up old sessions
 setInterval(() => {
   const now = Date.now();
   const oneHour = 60 * 60 * 1000;
@@ -1212,15 +525,14 @@ setInterval(() => {
       console.log(`[Cleanup] Removed old session: ${sessionId}`);
     }
   }
-}, 30 * 60 * 1000); // Every 30 minutes
+}, 30 * 60 * 1000);
 
 app.use((err, req, res, next) => {
   console.error('[Middleware Error]:', err.message);
   res.status(500).json({ 
+    mode: 'error',
     error: 'Internal error',
-    thinkingSteps: [],
-    plan: [],
-    needsApproval: false
+    message: err.message
   });
 });
 
@@ -1233,27 +545,34 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v2.7 - TARGETED MODIFICATIONS');
+  console.log('ACIDNADE AI v3.0 - STEP-BY-STEP MODE');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
-  console.log('FIXES:');
-  console.log('  • 🚨 NO replaceAll for minor changes');
-  console.log('  • ✅ Targeted modifications only');
-  console.log('  • Partial code changes instead of full rewrites');
-  console.log('  • Use replace, insertAfter, insertBefore');
-  console.log('  • Always require approval for replaceAll');
+  console.log('');
+  console.log('KEY CHANGES:');
+  console.log('  🔧 FIX-FIRST: Prioritizes fixing over creating');
+  console.log('  📋 STEP-BY-STEP: Executes one step at a time');
+  console.log('  📜 ON-DEMAND: Requests source code only when needed');
+  console.log('  💾 TOKEN-EFFICIENT: No bulk source code sending');
+  console.log('  🎯 TARGETED: No replaceAll by default');
+  console.log('');
+  console.log('RESPONSE MODES:');
+  console.log('  • planning - Creates execution plan');
+  console.log('  • requestSource - Asks for specific source code');
+  console.log('  • executing - Runs current step');
+  console.log('  • complete - Task finished');
   console.log('==========================================');
   console.log('Server ready at http://localhost:' + PORT);
   console.log('==========================================');
 });
 
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, saving sessions...');
+  console.log('SIGTERM received, shutting down gracefully...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received, saving sessions...');
+  console.log('SIGINT received, shutting down gracefully...');
   process.exit(0);
 });
