@@ -321,7 +321,7 @@ function buildPrompt(userPrompt, context, sessionId, requestedSource = null) {
 async function processAIRequest(prompt, context, sessionId, requestedSource = null) {
   try {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-3-flash-preview',
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
@@ -373,7 +373,7 @@ async function processAIRequest(prompt, context, sessionId, requestedSource = nu
     
     aiResponse.metadata = {
       thinkingTime,
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-3-flash-preview',
       sessionId,
       timestamp: new Date().toISOString(),
       promptLength: fullPrompt.length,
@@ -397,7 +397,7 @@ app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI v3.0',
     status: 'online',
-    model: 'gemini-2.0-flash-exp',
+    model: 'gemini-3-flash-preview',
     features: [
       '🔧 FIX-FIRST approach',
       '📋 Step-by-step execution',
@@ -420,7 +420,7 @@ app.get('/', (req, res) => {
 app.get('/ping', (req, res) => {
   res.json({ 
     status: 'ok', 
-    model: 'gemini-2.0-flash-exp',
+    model: 'gemini-3-flash-preview',
     uptime: process.uptime(),
     sessions: sessionMemory.size
   });
