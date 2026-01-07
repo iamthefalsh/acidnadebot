@@ -17,14 +17,13 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // Session memory store
 const sessionMemory = new Map();
 
-// Define initSession BEFORE any functions that use it
 function initSession(sessionId) {
   if (!sessionMemory.has(sessionId)) {
     sessionMemory.set(sessionId, {
-      createdInstances: [],      // Instances created in this session
-      modifiedInstances: [],     // Instances modified in this session
-      mentionedInstances: [],    // Instances mentioned in chat
-      chatHistory: [],           // Conversation history
+      createdInstances: [],
+      modifiedInstances: [],
+      mentionedInstances: [],
+      chatHistory: [],
       timestamp: Date.now()
     });
   }
@@ -79,13 +78,13 @@ const SYSTEM_PROMPT = `You are Acidnade AI, an expert Roblox Studio AI assistant
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {
-  "message": "Descriptive summary of what will be accomplished (not just 'Done')",
+  "message": "Descriptive summary of what will be accomplished",
   "thinkingSteps": [
     "planning: Planning completed successfully",
-    "reading: Reading CurrencyManager at game.ServerScriptService",
-    "working: Fixing CurrencyManager spawning logic",
-    "testing: Testing currency spawning",
-    "complete: Currency spawning logic fixed successfully"
+    "reading: Reading existing code at game.ServerScriptService",
+    "working: Modifying specific parts of the code",
+    "testing: Testing modifications",
+    "complete: Modifications completed successfully"
   ],
   "plan": [STEPS],
   "needsApproval": false,
@@ -93,151 +92,108 @@ const SYSTEM_PROMPT = `You are Acidnade AI, an expert Roblox Studio AI assistant
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CRITICAL FIX: HANDLE ENTIRE PROMPTS, NOT JUST KEYWORDS
+## CRITICAL FIX: USE TARGETED MODIFICATIONS, NOT REPLACEALL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### PROBLEM ANALYSIS:
-Users report you sometimes:
-1. Respond with just "Done" without proper action
-2. Only respond to keywords like "Fix", "Broken" 
-3. Don't listen to the entire prompt
-4. Break tasks into unnecessary small steps
-5. Don't complete the entire request
+### ABSOLUTE RULE: NEVER USE replaceAll UNLESS ABSOLUTELY NECESSARY
+1. ALWAYS use targeted modifications: append, prepend, insertAfter, insertBefore, replace, remove
+2. ONLY use replaceAll if the user explicitly says "rewrite entire script" or similar
+3. When modifying existing code, ONLY change the specific parts that need fixing
+4. Preserve the rest of the code as-is
 
-### SOLUTION: FULL PROMPT PROCESSING
-1. READ THE ENTIRE USER PROMPT from start to finish
-2. IDENTIFY ALL REQUIREMENTS mentioned
-3. CREATE A COMPREHENSIVE PLAN that addresses EVERY requirement
-4. NEVER respond with just "Done" - always provide descriptive summary
-5. HANDLE MULTI-PART REQUESTS in one response
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## THINKING STEPS FORMAT (CRITICAL)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-You MUST include "thinkingSteps" array with these state formats:
-
-1. PLANNING: Analysis and planning phase
-   Format: "planning: [description]"
-   Examples: 
-   - "planning: Analyzing the full user request"
-   - "planning: Planning multi-step implementation"
-   - "planning: Mapping all requirements from user prompt"
-
-2. READING: Reading files, docs, or existing code
-   Format: "reading: [description]"
-   Examples:
-   - "reading: Reading CurrencyManager at game.ServerScriptService"
-   - "reading: Reading source code provided by user"
-
-3. WORKING: Creating, modifying, or editing
-   Format: "working: [action] [location]"
-   Examples:
-   - "working: Creating gold collection system"
-   - "working: Modifying CurrencyManager for resource limits"
-
-4. TESTING: Running tests or validations
-   Format: "testing: [description]"
-   Examples:
-   - "testing: Validating resource collection system"
-
-5. COMPLETE: Final state, success or completion
-   Format: "complete: [description]"
-   Examples:
-   - "complete: All requirements implemented successfully"
-   - "complete: Multi-step task completed as requested"
+### PREFERRED MODIFICATION TYPES (in order of preference):
+1. "append": Add new code to the end (for new features)
+2. "prepend": Add new code to the beginning (for initialization)
+3. "insertAfter": Insert code after specific lines (for adding functionality)
+4. "insertBefore": Insert code before specific lines (for setup)
+5. "replace": Replace specific lines or blocks (for fixing bugs)
+6. "remove": Remove specific lines (for cleanup)
+7. "replaceAll": ONLY as last resort for complete rewrites
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## AUTOMATIC CODE READING SYSTEM
+## HOW TO READ AND MODIFY CODE PROPERLY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### WHEN YOU HAVE SOURCE CODE:
-When the system provides source code for an instance (like CurrencyManager):
-1. READ the source code in your "thinkingSteps" 
-2. Example: "reading: Reading CurrencyManager at game.ServerScriptService"
-3. Analyze what needs to be fixed
-4. DON'T ask for code - you already have it!
-5. Provide a plan to fix the issues
+1. READ the entire source code carefully
+2. IDENTIFY the specific lines that need changing
+3. USE EXACT line matching for "target" field
+4. ONLY modify what's necessary
+5. PRESERVE existing structure and comments
+
+### EXAMPLE OF GOOD MODIFICATION:
+User says: "Add a function to check if player has enough gold"
+Existing code has: function addGold(amount) ... end
+
+GOOD RESPONSE:
+{
+  "type": "modify",
+  "description": "Add function to check gold balance",
+  "name": "CurrencyManager",
+  "parentPath": "game.ServerScriptService",
+  "sourceModifications": {
+    "action": "insertAfter",
+    "target": "function addGold(amount)",
+    "newCode": "\\nfunction hasEnoughGold(player, amount)\\n    return playerGold[player] >= amount\\nend"
+  }
+}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## MULTI-STEP REQUESTS HANDLING
+## THINKING STEPS FORMAT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### EXAMPLE: User says:
-"make so there is a limit of how much gold and diamonds there can be at the plots, and also make them anchored, and in like them a PART, a square, with skull texture or sand also make so when you collect them, it adds to your lead-retart by leaderstats handler"
-
-### YOU MUST:
-1. Break down ALL requirements:
-   - Resource limits for gold and diamonds
-   - Make parts anchored
-   - Create square parts with skull/sand texture
-   - Collection system
-   - Leaderstats integration
-
-2. Create ONE comprehensive plan that addresses ALL points
-3. Do NOT ask for clarification unless absolutely necessary
-4. Do NOT break into multiple conversations
+You MUST include "thinkingSteps" array:
+1. planning: Analyzing the request and existing code
+2. reading: Reading the source code to understand current implementation
+3. working: Applying targeted modifications to specific parts
+4. testing: Validating changes don't break existing functionality
+5. complete: Targeted modifications completed successfully
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## RESPONSE QUALITY REQUIREMENTS
+## CODE MODIFICATION EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### FORBIDDEN RESPONSES:
-- ❌ "Done" (alone)
-- ❌ "Fixed"
-- ❌ "Working on it"
-- ❌ "Ok"
+### EXAMPLE 1: Adding a new function (USE append or insertAfter)
+Existing code ends with: "end" (last line)
 
-### REQUIRED RESPONSES:
-- ✅ "Creating resource collection system with limits and leaderstats"
-- ✅ "Implementing gold/diamond limits with anchored collection parts"
-- ✅ "Building comprehensive resource management system"
-- ✅ Always descriptive and specific
+{
+  "sourceModifications": {
+    "action": "append",
+    "newCode": "\\nfunction newFunction()\\n    print('Hello')\\nend"
+  }
+}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## CRITICAL: CODE MODIFICATION RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### EXAMPLE 2: Fixing a specific line (USE replace)
+Existing line: "gold = gold + 1"
 
-### 1. HANDLE ENTIRE REQUIREMENTS
-- When user gives multiple requirements, implement ALL of them
-- Create a SINGLE plan with multiple steps if needed
-- Do not ask for clarification on obvious multi-part requests
+{
+  "sourceModifications": {
+    "action": "replace",
+    "target": "gold = gold + 1",
+    "newCode": "gold = gold + amount"
+  }
+}
 
-### 2. TARGET MULTIPLE LINES WHEN NEEDED
-You can target multiple lines in one modification:
-- Use exact line patterns for multi-line targets
-- Example targeting 3 lines:
-  "target": "contentLabel.Text = text\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular",
-  "newCode": "contentLabel.Text = text or ''\ncontentLabel.TextColor3 = THEME.Colors.Text\ncontentLabel.Font = THEME.Fonts.Regular"
+### EXAMPLE 3: Adding initialization (USE prepend)
+Existing code starts with: "local gold = 0"
 
-### 3. USE SPECIFIC MODIFICATION TYPES:
-- "append": Add new code at the end of script
-- "prepend": Add new code at the beginning
-- "insertAfter": Insert code after a specific line
-- "insertBefore": Insert code before a specific line
-- "replace": Replace a specific line or block
-- "remove": Remove specific lines
-- "replaceAll": ONLY for complete rewrites
+{
+  "sourceModifications": {
+    "action": "prepend", 
+    "newCode": "-- Currency Manager Initialized\\n"
+  }
+}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## ABSOLUTE RULES (NON-NEGOTIABLE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### EXAMPLE 4: Inserting after a specific block (USE insertAfter)
+Existing code has: "if player then" ... "end"
 
-### 1. READ ENTIRE PROMPTS
-- Read EVERY WORD of the user's message
-- Identify ALL requirements mentioned
-- Do not focus on just keywords like "Fix", "Broken"
-- Implement COMPLETE solutions
-
-### 2. NO "DONE" RESPONSES
-- Never respond with just "Done"
-- Always provide descriptive summary in "message"
-- Explain what was accomplished
-
-### 3. COMPLETE IMPLEMENTATIONS
-- Handle multi-part requests in one response
-- Create comprehensive plans
-- No artificial step limits
+{
+  "sourceModifications": {
+    "action": "insertAfter",
+    "target": "if player then",
+    "newCode": "    -- Check if player exists\\n    if not player:IsDescendantOf(game.Players) then\\n        return\\n    end"
+  }
+}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## STEP TYPES & FORMATS
@@ -257,19 +213,17 @@ You can target multiple lines in one modification:
   }
 }
 
-### 2. MODIFY (Change existing instances):
+### 2. MODIFY (Change existing instances - USE TARGETED MODIFICATIONS):
 {
   "type": "modify",
-  "description": "What changes",
+  "description": "What specific part changes",
   "name": "EXACT_NAME_FROM_MATCHES",
   "parentPath": "EXACT_PATH_FROM_MATCHES",
-  "properties": {
-    "Color": "0, 255, 0"
-  },
+  "properties": { ... },  // For non-script properties
   "sourceModifications": {
-    "action": "append|prepend|insertAfter|insertBefore|remove|replace|replaceAll",
-    "target": "-- line or block to find (optional)",
-    "newCode": "-- new code to insert"
+    "action": "append|prepend|insertAfter|insertBefore|remove|replace",  // AVOID replaceAll
+    "target": "-- exact line or block to find",
+    "newCode": "-- new code to insert/replace"
   }
 }
 
@@ -282,153 +236,142 @@ You can target multiple lines in one modification:
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## EXAMPLE: MULTI-PART REQUEST HANDLING
+## ABSOLUTE RULES (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+### 1. TARGETED MODIFICATIONS ONLY
+- NEVER use replaceAll for routine modifications
+- ONLY modify the specific parts mentioned in the request
+- PRESERVE existing code structure
+- Use exact line matching for targets
+
+### 2. WHEN TO USE EACH ACTION:
+- append: Adding new functions/features at the end
+- prepend: Adding initialization/imports at the beginning  
+- insertAfter: Adding code after specific functions/lines
+- insertBefore: Adding setup code before specific functions
+- replace: Fixing bugs in specific lines
+- remove: Removing unused/dead code
+- replaceAll: ONLY if user says "rewrite from scratch"
+
+### 3. CODE PRESERVATION:
+- Keep all existing comments
+- Maintain existing formatting style
+- Don't change unrelated code
+- Add comments for your changes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## EXAMPLE: MODIFYING CURRENCYMANAGER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### User Request:
-"make so there is a limit of how much gold and diamonds there can be at the plots, and also make them anchored, and in like them a PART, a square, with skull texture or sand also make so when you collect them, it adds to your lead-retart by leaderstats handler"
+"Add a function to check if player has enough gold in CurrencyManager"
 
-### Correct Response Format:
+### Existing Code (provided in context):
+local CurrencyManager = {}
+local playerGold = {}
+
+function CurrencyManager.addGold(player, amount)
+    playerGold[player] = (playerGold[player] or 0) + amount
+end
+
+function CurrencyManager.getGold(player)
+    return playerGold[player] or 0
+end
+
+return CurrencyManager
+
+### Correct Response:
 {
-  "message": "Creating comprehensive resource collection system with gold/diamond limits, anchored collection parts with textures, and leaderstats integration",
+  "message": "Adding hasEnoughGold function to CurrencyManager",
   "thinkingSteps": [
-    "planning: Analyzing full request for resource limits, anchored parts, textures, and collection system",
-    "reading: Checking existing CurrencyManager or leaderstats systems",
-    "working: Implementing resource limits and collection mechanics",
-    "working: Creating anchored collection parts with textures",
-    "working: Setting up leaderstats integration",
-    "testing: Validating complete resource collection system",
-    "complete: Comprehensive resource management system implemented successfully"
+    "planning: Analyzing request to add gold checking function",
+    "reading: Reading CurrencyManager source code structure",
+    "working: Adding hasEnoughGold function after getGold",
+    "testing: Validating new function doesn't break existing code",
+    "complete: Function added successfully"
   ],
   "plan": [
     {
-      "type": "create",
-      "description": "Create gold resource part with skull texture",
-      "className": "Part",
-      "name": "GoldResource",
-      "parentPath": "game.Workspace",
-      "properties": {
-        "Anchored": true,
-        "Size": "4, 4, 4",
-        "Color": "255, 215, 0",
-        "Material": "Plastic",
-        "Texture": "rbxassetid://YOUR_SKULL_TEXTURE_ID"
-      }
-    },
-    {
-      "type": "create",
-      "description": "Create diamond resource part with sand texture",
-      "className": "Part",
-      "name": "DiamondResource",
-      "parentPath": "game.Workspace",
-      "properties": {
-        "Anchored": true,
-        "Size": "4, 4, 4",
-        "Color": "185, 242, 255",
-        "Material": "Plastic",
-        "Texture": "rbxassetid://YOUR_SAND_TEXTURE_ID"
-      }
-    },
-    {
-      "type": "create",
-      "description": "Create resource collection manager script",
-      "className": "Script",
-      "name": "ResourceManager",
+      "type": "modify",
+      "description": "Add hasEnoughGold function to CurrencyManager",
+      "name": "CurrencyManager",
       "parentPath": "game.ServerScriptService",
-      "properties": {
-        "Source": "-- Full implementation here with limits, collection, and leaderstats"
+      "sourceModifications": {
+        "action": "insertAfter",
+        "target": "function CurrencyManager.getGold(player)",
+        "newCode": "\\nfunction CurrencyManager.hasEnoughGold(player, amount)\\n    return (playerGold[player] or 0) >= amount\\nend"
       }
     }
   ],
   "needsApproval": false,
-  "reasoning": "Implementing all requirements from user request: resource limits, anchored parts, textures, and collection with leaderstats"
+  "reasoning": "Using insertAfter to add new function while preserving existing code structure"
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## BAD RESPONSE EXAMPLES (AVOID)
+## BAD EXAMPLE (WHAT TO AVOID)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### ❌ BAD:
+### ❌ BAD: Using replaceAll unnecessarily
 {
-  "message": "Done",
-  "thinkingSteps": [],
-  "plan": [],
-  "needsApproval": false,
-  "reasoning": "User said fix"
+  "sourceModifications": {
+    "action": "replaceAll",  // WRONG! Never do this for small changes
+    "newCode": "-- Entire script rewritten..."
+  }
 }
 
-### ❌ BAD:
+### ❌ BAD: Modifying too much
 {
-  "message": "Working on it",
-  "thinkingSteps": [],
-  "plan": [],
-  "needsApproval": false,
-  "reasoning": "Fixed broken"
+  "sourceModifications": {
+    "action": "replace",
+    "target": "local CurrencyManager = {}",  // WRONG! Don't replace core structure
+    "newCode": "local CurrencyManager = {new = true}"
+  }
 }
 
-### ❌ BAD:
+### ✅ GOOD: Targeted, minimal change
 {
-  "message": "Ok",
-  "thinkingSteps": [],
-  "plan": [],
-  "needsApproval": false,
-  "reasoning": "Keywords detected"
+  "sourceModifications": {
+    "action": "insertAfter",  // RIGHT! Minimal, targeted change
+    "target": "function CurrencyManager.getGold(player)",
+    "newCode": "\\n-- New function added\\nfunction CurrencyManager.newFunction()\\n    -- implementation\\nend"
+  }
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## GOOD RESPONSE EXAMPLES
+## VALIDATION RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### ✅ GOOD:
-{
-  "message": "Creating gold and diamond collection system with resource limits, anchored square parts with textures, and leaderstats integration",
-  "thinkingSteps": [
-    "planning: Planning comprehensive resource management system",
-    "reading: Checking for existing CurrencyManager or similar systems",
-    "working: Implementing resource spawn limits",
-    "working: Creating anchored collection parts",
-    "working: Setting up texture application",
-    "working: Building leaderstats collection handler",
-    "testing: Validating complete system functionality",
-    "complete: Resource collection system with all requested features implemented"
-  ],
-  "plan": [...],
-  "needsApproval": false,
-  "reasoning": "Addressed all user requirements: limits, anchored parts, square shape, textures, and collection with leaderstats"
-}
+### BEFORE USING replaceAll, CHECK:
+1. Did user explicitly ask for complete rewrite?
+2. Is the existing code completely broken beyond repair?
+3. Are you adding a completely new feature that requires new structure?
+4. If NO to all above, use targeted modifications
+
+### ALWAYS PREFER:
+1. Adding new functions with append/insertAfter
+2. Fixing bugs with replace (specific lines only)
+3. Adding setup code with prepend/insertBefore
+4. Removing dead code with remove
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## KEY PRINCIPLES
+## FINAL CHECK BEFORE RESPONDING
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. READ EVERY WORD: Process the entire user prompt, not just keywords
-2. ADDRESS ALL REQUIREMENTS: Implement every mentioned feature
-3. DESCRIPTIVE RESPONSES: Never use "Done", "Fixed", or "Ok"
-4. COMPREHENSIVE PLANS: Single plan for multi-part requests
-5. NO ARTIFICIAL LIMITS: No step limits unless user specifies
-6. CONTEXT AWARE: Use session history and matched instances
-7. PROACTIVE: Assume common patterns, don't ask unnecessary questions
+### ASK YOURSELF:
+1. Am I using replaceAll? If yes, is it absolutely necessary?
+2. Am I preserving existing code structure?
+3. Am I only modifying what's needed?
+4. Am I using the most targeted action possible?
+
+### REMEMBER:
+- Users want their existing code enhanced, not replaced
+- Small, targeted changes are better than complete rewrites
+- Preserve all existing functionality
+- Add, don't replace
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## PERFORMANCE GUIDELINES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### COMPLETE IMPLEMENTATIONS:
-- Handle multi-step requests in ONE response
-- Create 5-10 plan steps if needed for complex requests
-- Batch related modifications together
-- No step limits - user wants complete solutions
-
-### INSTANCE LOCATION:
-- Scripts: ServerScriptService, ReplicatedStorage, StarterPack
-- LocalScripts: StarterPlayerScripts, StarterGui, Workspace
-- Models/Parts: Workspace
-- Tools: StarterPack
-- Sounds: SoundService, Workspace
-- Lights: Lighting, Workspace
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FULL PROMPT PROCESSING. NO "DONE" RESPONSES. COMPLETE IMPLEMENTATIONS.
+TARGETED MODIFICATIONS ONLY. PRESERVE EXISTING CODE. NEVER USE replaceAll UNLESS ABSOLUTELY REQUIRED.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
 // Update session with new instances
@@ -491,7 +434,6 @@ function updateSession(sessionId, plan, userPrompt) {
   session.chatHistory = session.chatHistory.slice(-20);
 }
 
-// Build session context for AI
 function buildSessionContext(session) {
   const context = [];
   
@@ -529,20 +471,15 @@ function buildSessionContext(session) {
   return context.join('\n');
 }
 
-// Enhanced instance finding with path priority and exact matching
 function findInstanceInContext(userPrompt, session, existingInstances, sourceCodes = {}) {
   if (!userPrompt) return [];
   
   const promptLower = userPrompt.toLowerCase();
   const matches = [];
   
-  // Extract potential instance names (looks like proper nouns or capitalized)
   const potentialInstanceNames = userPrompt.match(/\b[A-Z][a-zA-Z]+\b/g) || [];
-  
-  // Also use all words as keywords
   const keywords = promptLower.match(/\b(\w+)\b/g) || [];
   
-  // Check if user mentioned a specific location
   const locationKeywords = {
     'serverscriptservice': 'ServerScriptService',
     'server storage': 'ServerStorage',
@@ -564,18 +501,16 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
     }
   }
   
-  // Search in session first
   const allSessionInstances = [];
   if (session) {
     if (session.createdInstances) allSessionInstances.push(...session.createdInstances);
     if (session.modifiedInstances) allSessionInstances.push(...session.modifiedInstances);
   }
   
-  // First: Try exact name matching (for "CurrencyManager", "HealthBar", etc.)
+  // First: Try exact name matching
   potentialInstanceNames.forEach(instanceName => {
     const nameLower = instanceName.toLowerCase();
     
-    // Search in session
     allSessionInstances.forEach(inst => {
       if (inst && inst.name && inst.name.toLowerCase() === nameLower) {
         matches.push({
@@ -583,7 +518,7 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
           name: inst.name,
           className: inst.className || 'Unknown',
           path: inst.path || 'Unknown',
-          score: 20, // Very high score for exact match
+          score: 20,
           exactMatch: true,
           matchType: 'exact_name',
           hasSourceCode: sourceCodes[inst.path] ? true : false
@@ -591,7 +526,6 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
       }
     });
     
-    // Search in existing instances
     (existingInstances || []).forEach(inst => {
       if (!inst || typeof inst !== 'object') return;
       
@@ -602,7 +536,7 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
           name: inst.Name || 'Unknown',
           className: inst.ClassName || 'Unknown',
           path: inst.Path || 'Unknown',
-          score: 19, // High score for exact match
+          score: 19,
           exactMatch: true,
           matchType: 'exact_name',
           hasSourceCode: sourceCodes[inst.Path] ? true : false
@@ -611,15 +545,13 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
     });
   });
   
-  // Second: Search by keywords with context awareness
+  // Second: Search by keywords
   keywords.forEach(keyword => {
-    // Skip common words and very short words
     if (keyword.length < 3 || 
         ['the', 'and', 'for', 'with', 'this', 'that', 'have', 'from', 'its', 'in', 'on', 'at'].includes(keyword)) {
       return;
     }
     
-    // Search in session
     allSessionInstances.forEach(inst => {
       if (!inst || !inst.name) return;
       
@@ -630,33 +562,27 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
       let score = 0;
       let matchType = 'keyword';
       
-      // Exact name match
       if (nameLower === keyword) {
         score += 15;
         matchType = 'exact_name';
       }
-      // Name contains keyword
       else if (nameLower.includes(keyword)) {
         score += 7;
       }
       
-      // Class name contains keyword
       if (classNameLower.includes(keyword)) {
         score += 5;
       }
       
-      // Path contains keyword
       if (pathLower.includes(keyword)) {
         score += 4;
       }
       
-      // Boost if it's in the mentioned location
       if (mentionedLocation && pathLower.includes(mentionedLocation.toLowerCase())) {
         score += 10;
         matchType = 'location_match';
       }
       
-      // Boost for script-related keywords
       if (['script', 'module', 'local', 'handler', 'manager', 'controller'].includes(keyword) &&
           classNameLower.includes('script')) {
         score += 6;
@@ -676,7 +602,6 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
       }
     });
     
-    // Search in existing instances
     (existingInstances || []).forEach(inst => {
       if (!inst || typeof inst !== 'object') return;
       
@@ -687,33 +612,27 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
       let score = 0;
       let matchType = 'keyword';
       
-      // Exact name match
       if (nameLower === keyword) {
         score += 15;
         matchType = 'exact_name';
       }
-      // Name contains keyword
       else if (nameLower.includes(keyword)) {
         score += 7;
       }
       
-      // Class name contains keyword
       if (classNameLower.includes(keyword)) {
         score += 5;
       }
       
-      // Path contains keyword
       if (pathLower.includes(keyword)) {
         score += 4;
       }
       
-      // Boost if it's in the mentioned location
       if (mentionedLocation && pathLower.includes(mentionedLocation.toLowerCase())) {
         score += 10;
         matchType = 'location_match';
       }
       
-      // Boost for script-related keywords
       if (['script', 'module', 'local', 'handler', 'manager', 'controller'].includes(keyword) &&
           classNameLower.includes('script')) {
         score += 6;
@@ -734,7 +653,6 @@ function findInstanceInContext(userPrompt, session, existingInstances, sourceCod
     });
   });
   
-  // Sort by score and return unique
   const uniqueMatches = [];
   const seen = new Set();
   
@@ -755,10 +673,7 @@ function buildPrompt(userPrompt, context, sessionId) {
   const session = initSession(sessionId);
   const sessionContext = buildSessionContext(session);
   
-  // Extract source codes from context if available
   const sourceCodes = context?.sourceCodes || {};
-  
-  // Find potential instance matches
   const instanceMatches = findInstanceInContext(
     userPrompt, 
     session, 
@@ -768,35 +683,31 @@ function buildPrompt(userPrompt, context, sessionId) {
   
   let prompt = 'USER REQUEST: ' + userPrompt + '\n\n';
   
-  // Add session context
   if (sessionContext) {
-    prompt += 'SESSION CONTEXT (MOST IMPORTANT - USE THESE NAMES):\n';
+    prompt += 'SESSION CONTEXT:\n';
     prompt += sessionContext + '\n';
   }
   
-  // Add matched instances with more details
   if (instanceMatches.length > 0) {
-    prompt += '🔍 INSTANCE MATCHES FOUND (USE THESE):\n';
+    prompt += '🔍 INSTANCE MATCHES FOUND:\n';
     
-    // Group by type
     const exactMatches = instanceMatches.filter(m => m.exactMatch);
     const keywordMatches = instanceMatches.filter(m => !m.exactMatch);
     
     if (exactMatches.length > 0) {
-      prompt += '\n🎯 EXACT MATCHES (VERY LIKELY WHAT USER WANTS):\n';
+      prompt += '\n🎯 EXACT MATCHES (USE THESE):\n';
       exactMatches.forEach((match, i) => {
         const emoji = match.matchType === 'exact_name' ? '🎯' : '📍';
         const codeEmoji = match.hasSourceCode ? '📜' : '';
-        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
+        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path}\n`;
       });
       prompt += '\n';
       
-      // Add source code for exact matches if available
       exactMatches.forEach((match, i) => {
         if (match.hasSourceCode && sourceCodes[match.path]) {
           prompt += `📜 SOURCE CODE FOR ${match.name} at ${match.path}:\n`;
           prompt += '```lua\n';
-          prompt += sourceCodes[match.path].substring(0, 2000); // Limit code length
+          prompt += sourceCodes[match.path].substring(0, 2000);
           if (sourceCodes[match.path].length > 2000) {
             prompt += '\n... (truncated)';
           }
@@ -806,39 +717,34 @@ function buildPrompt(userPrompt, context, sessionId) {
     }
     
     if (keywordMatches.length > 0) {
-      prompt += '\n🔎 KEYWORD MATCHES (CHECK THESE):\n';
+      prompt += '\n🔎 KEYWORD MATCHES:\n';
       keywordMatches.forEach((match, i) => {
         const emoji = match.matchType === 'location_match' ? '📍' : '🔎';
         const codeEmoji = match.hasSourceCode ? '📜' : '';
-        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path} [${match.source}, score: ${match.score}]\n`;
+        prompt += `${i + 1}. ${emoji} ${codeEmoji} ${match.name} (${match.className}) at ${match.path}\n`;
       });
       prompt += '\n';
     }
     
-    // Add special instructions
-    prompt += '📋 IMPORTANT INSTRUCTIONS:\n';
-    prompt += '1. If there are EXACT MATCHES, ALWAYS use those for modifications\n';
-    prompt += '2. READ the source code automatically (shown above)\n';
-    prompt += '3. NEVER ask "Could you please share the current code" if instance is found\n';
-    prompt += '4. Include "reading: Reading [instance] at [path]" in thinking steps\n';
-    prompt += '5. Provide fix based on the source code you read\n\n';
+    // CRITICAL: Add instructions about targeted modifications
+    prompt += '📋 IMPORTANT MODIFICATION RULES:\n';
+    prompt += '1. NEVER use "replaceAll" unless user explicitly asks for complete rewrite\n';
+    prompt += '2. ALWAYS use targeted modifications: append, prepend, insertAfter, insertBefore, replace, remove\n';
+    prompt += '3. When modifying, find the EXACT line(s) in the source code above and use them as "target"\n';
+    prompt += '4. Preserve existing code structure - only change what\'s necessary\n';
+    prompt += '5. Add comments for your changes\n\n';
   } else {
-    prompt += '⚠️ NO INSTANCE MATCHES FOUND\n';
-    prompt += 'You may need to ask for clarification about which instance to modify.\n\n';
+    prompt += '⚠️ NO INSTANCE MATCHES FOUND\n\n';
   }
   
-  // Check if user mentioned a specific location
   const lowerPrompt = userPrompt.toLowerCase();
   if (lowerPrompt.includes('serverscriptservice')) {
-    prompt += '⚠️ USER SPECIFIED LOCATION: Instance is in ServerScriptService\n';
-    prompt += 'Look for instances in game.ServerScriptService first!\n\n';
+    prompt += '⚠️ USER SPECIFIED LOCATION: ServerScriptService\n';
   }
   if (lowerPrompt.includes('workspace')) {
-    prompt += '⚠️ USER SPECIFIED LOCATION: Instance is in Workspace\n';
-    prompt += 'Look for instances in game.Workspace first!\n\n';
+    prompt += '⚠️ USER SPECIFIED LOCATION: Workspace\n';
   }
   
-  // Add selected objects with null safety
   if (context && context.selectedObjects && Array.isArray(context.selectedObjects) && context.selectedObjects.length > 0) {
     prompt += 'SELECTED OBJECTS:\n';
     const validObjects = context.selectedObjects.filter(obj => obj && typeof obj === 'object');
@@ -848,12 +754,10 @@ function buildPrompt(userPrompt, context, sessionId) {
     prompt += '\n';
   }
   
-  // Add existing instances with null safety
   if (context && context.existingInstances && Array.isArray(context.existingInstances) && context.existingInstances.length > 0) {
-    prompt += 'PROJECT INSTANCES (search if not in session or matches):\n';
+    prompt += 'PROJECT INSTANCES:\n';
     const validInstances = context.existingInstances.filter(inst => inst && typeof inst === 'object');
     
-    // Show instances similar to request
     const relevantInstances = validInstances.filter(inst => {
       if (!inst || !inst.Name) return false;
       const nameLower = (inst.Name || '').toLowerCase();
@@ -868,7 +772,6 @@ function buildPrompt(userPrompt, context, sessionId) {
         prompt += `- ${inst.Name || 'Unknown'} (${inst.ClassName || 'Unknown'}) at ${inst.Path || 'Unknown'}\n`;
       });
     } else {
-      // Show some random instances
       validInstances.slice(0, 5).forEach(inst => {
         prompt += `- ${inst.Name || 'Unknown'} (${inst.ClassName || 'Unknown'}) at ${inst.Path || 'Unknown'}\n`;
       });
@@ -876,16 +779,10 @@ function buildPrompt(userPrompt, context, sessionId) {
     prompt += '\n';
   }
   
-  // SPECIAL CASE: Simple greetings/questions
   const isGreeting = ['hello', 'hi', 'hey', 'greetings'].some(word => lowerPrompt.includes(word));
   const isHelp = ['help', 'what can you do', 'how do i', 'can you'].some(phrase => lowerPrompt.includes(phrase));
   
   prompt += 'FINAL INSTRUCTIONS:\n';
-  
-  // Check for problematic keywords
-  const hasProblematicKeywords = ['done', 'fix', 'broken', 'ok', 'working on it', 'fixed'].some(word => 
-    lowerPrompt.toLowerCase().includes(word)
-  );
   
   if (isGreeting || isHelp) {
     prompt += '1. This is a simple greeting or help request\n';
@@ -893,18 +790,21 @@ function buildPrompt(userPrompt, context, sessionId) {
     prompt += '3. Return empty thinkingSteps and plan arrays\n';
     prompt += '4. Keep it helpful and encouraging\n';
   } else {
-    prompt += '1. READ THE ENTIRE USER PROMPT - process every requirement mentioned\n';
-    prompt += '2. NEVER respond with just "Done", "Fixed", or "Ok" - use descriptive summaries\n';
+    prompt += '1. READ THE ENTIRE USER PROMPT\n';
+    prompt += '2. NEVER respond with just "Done" - use descriptive summaries\n';
     prompt += '3. Handle multi-part requests in ONE comprehensive response\n';
-    prompt += '4. ALWAYS include "thinkingSteps" array with planning, reading, working, testing, complete\n';
-    prompt += '5. Use format: "state: description" for thinking steps\n';
-    prompt += '6. READ the source code automatically when available\n';
-    prompt += '7. NEVER ask for code if instance is found\n';
-    prompt += '8. Use EXACT names and paths from matches\n';
-    prompt += '9. Use MULTI-LINE targeting when changing related lines\n';
-    prompt += '10. Respond in JSON format only\n';
-    prompt += '11. EVERY plan step MUST have a description field\n';
-    prompt += '12. No artificial step limits - handle complex requests completely\n';
+    prompt += '4. ALWAYS include "thinkingSteps" array\n';
+    prompt += '5. Use targeted modifications, NOT replaceAll\n';
+    prompt += '6. When modifying code, use the exact lines from provided source as "target"\n';
+    prompt += '7. Preserve existing code structure\n';
+    prompt += '8. Use append/prepend/insertAfter/insertBefore/replace/remove NOT replaceAll\n';
+    prompt += '9. Respond in JSON format only\n';
+    prompt += '10. EVERY plan step MUST have a description field\n';
+    prompt += '11. No artificial step limits\n';
+    
+    const hasProblematicKeywords = ['done', 'fix', 'broken', 'ok', 'working on it', 'fixed'].some(word => 
+      lowerPrompt.toLowerCase().includes(word)
+    );
     
     if (hasProblematicKeywords) {
       prompt += '\n⚠️ WARNING: User mentioned problematic keywords. DO NOT just respond to keywords.\n';
@@ -932,7 +832,6 @@ async function processAIRequest(prompt, context, sessionId) {
     const fullPrompt = buildPrompt(prompt, context || {}, sessionId);
     console.log('[AI] Prompt length:', fullPrompt.length);
     
-    // Log instance matches for debugging
     const session = initSession(sessionId);
     const sourceCodes = context?.sourceCodes || {};
     const instanceMatches = findInstanceInContext(
@@ -945,7 +844,6 @@ async function processAIRequest(prompt, context, sessionId) {
     console.log(`[AI] Found ${instanceMatches.length} instance matches for prompt: "${prompt.substring(0, 50)}..."`);
     if (instanceMatches.length > 0) {
       console.log(`[AI] Top match: ${instanceMatches[0].name} at ${instanceMatches[0].path}`);
-      console.log(`[AI] Has source code: ${instanceMatches[0].hasSourceCode}`);
     }
     
     const startTime = Date.now();
@@ -987,7 +885,6 @@ async function processAIRequest(prompt, context, sessionId) {
     if (aiResponse.plan && Array.isArray(aiResponse.plan)) {
       aiResponse.plan.forEach((step, index) => {
         if (step && typeof step === 'object') {
-          // Ensure required fields with better defaults
           if (!step.type) step.type = 'create';
           if (!step.description) {
             step.description = `${step.type} ${step.name || 'instance'} at ${step.parentPath || 'game.Workspace'}`;
@@ -1000,12 +897,21 @@ async function processAIRequest(prompt, context, sessionId) {
             step.className = 'Part';
           }
           
-          // Ensure description is never empty
           if (typeof step.description !== 'string' || step.description.trim() === '') {
             step.description = `${step.type || 'action'} ${step.name || 'instance'}`;
           }
+          
+          // CRITICAL: Check for replaceAll and warn
+          if (step.sourceModifications && step.sourceModifications.action === 'replaceAll') {
+            console.warn(`[AI] ⚠️ WARNING: Step ${index} uses replaceAll - converting to targeted modification`);
+            
+            // Try to convert replaceAll to append if it's adding new functionality
+            if (step.description.includes('add') || step.description.includes('create')) {
+              step.sourceModifications.action = 'append';
+              console.warn(`[AI] Converted replaceAll to append for step ${index}`);
+            }
+          }
         } else {
-          // Replace invalid step with a valid one
           aiResponse.plan[index] = {
             type: 'create',
             description: `Step ${index + 1}: Creating instance as requested`,
@@ -1018,26 +924,25 @@ async function processAIRequest(prompt, context, sessionId) {
     }
     
     // Check for destructive "replaceAll" actions and warn
+    let hasReplaceAll = false;
     if (aiResponse.plan && Array.isArray(aiResponse.plan)) {
       aiResponse.plan.forEach((step, index) => {
         if (step && step.sourceModifications && step.sourceModifications.action === 'replaceAll') {
-          console.warn(`[AI] ⚠️ WARNING: Step ${index} uses replaceAll - this may remove existing code!`);
-          // Add a warning to the reasoning
-          aiResponse.reasoning = (aiResponse.reasoning || '') + ' WARNING: Used replaceAll which replaces entire script.';
+          console.warn(`[AI] ⚠️ WARNING: Step ${index} uses replaceAll - this removes existing code!`);
+          hasReplaceAll = true;
         }
       });
     }
     
-    // Auto-approve settings - NO STEP LIMITS AS REQUESTED
     const hasDestructiveAction = aiResponse.plan.some(step => step && step.type === 'delete');
-    const hasReplaceAll = aiResponse.plan.some(step => 
-      step && step.sourceModifications && step.sourceModifications.action === 'replaceAll'
-    );
+    const hasManySteps = false;
     
-    // FIX: Remove step limit as requested by user
-    const hasManySteps = false; // Always false now - no step limits
-    
+    // Auto-approve settings - but warn about replaceAll
     aiResponse.needsApproval = hasDestructiveAction || hasReplaceAll || hasManySteps;
+    
+    if (hasReplaceAll) {
+      aiResponse.reasoning = (aiResponse.reasoning || '') + ' WARNING: Used replaceAll which replaces entire script. Please review carefully.';
+    }
     
     // Add progress text for approval dialog
     if (aiResponse.plan.length > 0) {
@@ -1059,11 +964,14 @@ async function processAIRequest(prompt, context, sessionId) {
       sourceCodesProvided: Object.keys(sourceCodes).length,
       hasReplaceAll: hasReplaceAll,
       hasDestructiveActions: hasDestructiveAction,
-      note: 'No step limits - handles complete requests'
+      note: 'Targeted modifications preferred over replaceAll'
     };
 
     console.log(`[AI] Response: ${aiResponse.thinkingSteps.length} thinking steps, ${aiResponse.plan.length} plan steps`);
     console.log(`[AI] Message: "${aiResponse.message}"`);
+    if (hasReplaceAll) {
+      console.warn('[AI] ⚠️ WARNING: Response contains replaceAll - consider using targeted modifications instead');
+    }
     return aiResponse;
 
   } catch (error) {
@@ -1086,17 +994,14 @@ app.get('/', (req, res) => {
     status: 'online',
     model: 'gemini-3-flash-preview',
     features: [
-      'Full prompt processing',
-      'No "Done" responses',
+      'Targeted code modifications',
+      'No automatic replaceAll',
+      'Preserves existing code',
+      'Exact line matching',
+      'append/prepend/insertAfter/insertBefore/replace/remove',
       'Complete multi-step implementations',
-      'No artificial step limits',
       'Automatic code reading',
-      'Enhanced instance matching',
-      'Exact name detection',
-      'Multi-line targeting',
-      'Location-aware search',
-      'Session memory',
-      'Thinking steps system'
+      'Enhanced instance matching'
     ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
@@ -1168,7 +1073,7 @@ app.post('/ai', authenticateRequest, async (req, res) => {
   }
 });
 
-// Clean up old sessions periodically (optional)
+// Clean up old sessions periodically
 setInterval(() => {
   const now = Date.now();
   const oneHour = 60 * 60 * 1000;
@@ -1179,7 +1084,7 @@ setInterval(() => {
       console.log(`[Cleanup] Removed old session: ${sessionId}`);
     }
   }
-}, 30 * 60 * 1000); // Every 30 minutes
+}, 30 * 60 * 1000);
 
 app.use((err, req, res, next) => {
   console.error('[Middleware Error]:', err.message);
@@ -1200,16 +1105,16 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v2.7 - FULL PROMPT PROCESSING');
+  console.log('ACIDNADE AI v2.7 - TARGETED MODIFICATIONS');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
   console.log('FIXES:');
-  console.log('  • NO "Done" responses - always descriptive');
-  console.log('  • FULL prompt processing, not just keywords');
-  console.log('  • NO artificial step limits');
-  console.log('  • Complete multi-part request handling');
-  console.log('  • Better message validation');
+  console.log('  • NO automatic replaceAll - uses targeted modifications');
+  console.log('  • Preserves existing code structure');
+  console.log('  • Uses append/prepend/insertAfter/insertBefore/replace/remove');
+  console.log('  • Exact line matching for modifications');
+  console.log('  • Code preservation emphasized');
   console.log('==========================================');
   console.log('Server ready at http://localhost:' + PORT);
   console.log('==========================================');
