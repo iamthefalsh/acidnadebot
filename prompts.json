@@ -1,0 +1,86 @@
+{
+  "stages": {
+    "understand": {
+      "prompt": "You are analyzing a user request. Determine:\n1. Is this a QUESTION, BUILD request, ANALYZE request, or MODIFY request?\n2. What systems are involved? (inventory, gui, combat, data, etc.)\n3. What is the complexity level? (simple, medium, complex)\n4. Does this reference any known games?\n\nRespond ONLY with JSON:\n{\n  \"requestType\": \"question|build|analyze|modify\",\n  \"systems\": [\"system1\", \"system2\"],\n  \"complexity\": \"simple|medium|complex\",\n  \"gameReference\": \"name or null\",\n  \"needsSource\": true/false\n}",
+      "max_tokens": 200
+    },
+    
+    "explain": {
+      "prompt": "The user is asking a QUESTION. Respond conversationally:\n1. Answer their question clearly\n2. If they mention a game, explain what it is\n3. Ask what they'd like to build\n4. DO NOT create a plan\n5. Set plan: [] (empty)\n\nYour response should be friendly and helpful, NOT technical.",
+      "max_tokens": 500
+    },
+    
+    "initial_idea": {
+      "prompt": "Generate an initial implementation idea. Think through:\n1. What are the main components needed?\n2. How should they interact?\n3. What's the basic structure?\n4. What are potential issues?\n\nRespond with a rough concept, don't worry about perfection yet.\n\nRules:\n- Use 'local' for ALL variables\n- Use ':GetService()' for services\n- Use 'task.wait()' not 'wait()'\n- Always include 'end' keywords\n- Use ':WaitForChild()' for safety",
+      "max_tokens": 800
+    },
+    
+    "improve_idea": {
+      "prompt": "You generated an initial idea. Now IMPROVE it:\n1. What did you miss?\n2. Are there security issues? (validate inputs, check distances)\n3. Are there performance issues? (debounce, object pooling)\n4. Is error handling needed? (pcall for DataStore)\n5. Can the structure be better?\n\nProvide an IMPROVED version of the idea.",
+      "max_tokens": 1000
+    },
+    
+    "create_plan": {
+      "prompt": "Convert your improved idea into a detailed step-by-step plan.\n\nEach step must have:\n- step: number\n- type: 'create' or 'modify'\n- name: exact instance name\n- className: Script|LocalScript|ModuleScript|Folder|Part|RemoteEvent\n- parentPath: exact parent path (e.g., game.ServerScriptService)\n- description: what this step does\n- properties: {Name: 'value', Source: 'complete code'}\n\nIMPORTANT:\n- Source code must be COMPLETE and RUNNABLE\n- Include ALL necessary code, not placeholders\n- Add comments for complex parts\n- Use proper Luau syntax\n- Order steps by dependencies (create RemoteEvents before scripts that use them)",
+      "max_tokens": 2000
+    },
+    
+    "analyze_code": {
+      "prompt": "Analyze the provided source code:\n1. What does it do?\n2. What are potential issues?\n3. Security problems? (client trust, validation)\n4. Performance problems? (loops, memory leaks)\n5. Bugs or errors?\n6. Improvements?\n\nProvide detailed analysis with specific line references.",
+      "max_tokens": 1000
+    },
+    
+    "modify_code": {
+      "prompt": "Generate modifications for the code.\n\nFor each modification:\n{\n  \"action\": \"replace|insertAfter|insertBefore|wrapWith\",\n  \"target\": \"EXACT code string to find (must be unique)\",\n  \"replacement\": \"new code with proper indentation\",\n  \"reasoning\": \"why this change is needed\"\n}\n\nRULES:\n- NEVER use 'replaceAll'\n- target must be EXACT and UNIQUE\n- Preserve indentation\n- Keep changes small and focused\n- Test mentally that target exists",
+      "max_tokens": 1500
+    }
+  },
+  
+  "knowledge": {
+    "luau_basics": "Luau Syntax:\n- Always use 'local' for variables\n- Services: game:GetService('Players')\n- Safe access: :WaitForChild('Name')\n- Modern: task.wait(), task.spawn()\n- End keywords: if/then/end, for/do/end, while/do/end, function/end\n- Tables: local t = {1, 2, 3}\n- Loops: for i, v in ipairs(t) do end",
+    
+    "common_mistakes": "Common Mistakes to AVOID:\n❌ Missing 'end' keywords\n❌ Using 'wait()' instead of 'task.wait()'\n❌ Global variables (not using 'local')\n❌ Direct access: game.ReplicatedStorage (use :GetService())\n❌ No validation on remote events\n❌ Trusting client data\n❌ No error handling for DataStore\n❌ Memory leaks (not disconnecting events)",
+    
+    "security": "Security Rules:\n- NEVER trust client data\n- ALWAYS validate on server\n- Check distances for interactions\n- Rate limit remote events\n- Server calculates damage, not client\n- Validate data types and ranges\n- Use pcall for risky operations",
+    
+    "roblox_services": "Common Services:\n- Players: game:GetService('Players')\n- ReplicatedStorage: game:GetService('ReplicatedStorage')\n- ServerStorage: game:GetService('ServerStorage')\n- DataStoreService: game:GetService('DataStoreService')\n- TweenService: game:GetService('TweenService')\n- RunService: game:GetService('RunService')",
+    
+    "patterns": {
+      "remote_event_server": "local RS = game:GetService('ReplicatedStorage')\nlocal event = RS:WaitForChild('EventName')\n\nevent.OnServerEvent:Connect(function(player, data)\n    -- Validate player\n    if not player or not player.Parent then return end\n    \n    -- Validate data\n    if typeof(data) ~= 'expected_type' then return end\n    \n    -- Process\nend)",
+      
+      "remote_event_client": "local RS = game:GetService('ReplicatedStorage')\nlocal event = RS:WaitForChild('EventName')\n\nevent:FireServer(data)\n\nevent.OnClientEvent:Connect(function(data)\n    print('Received:', data)\nend)",
+      
+      "leaderstats": "local stats = Instance.new('Folder')\nstats.Name = 'leaderstats'\nstats.Parent = player\n\nlocal coins = Instance.new('IntValue')\ncoins.Name = 'Coins'\ncoins.Value = 0\ncoins.Parent = stats",
+      
+      "gui_basic": "local screenGui = Instance.new('ScreenGui')\nscreenGui.Name = 'UI'\nscreenGui.Parent = player.PlayerGui\n\nlocal frame = Instance.new('Frame')\nframe.Size = UDim2.new(0, 200, 0, 100)\nframe.Position = UDim2.new(0.5, -100, 0.5, -50)\nframe.Parent = screenGui"
+    }
+  },
+  
+  "response_formats": {
+    "question_response": {
+      "message": "Clear explanation of the topic",
+      "thinkingSteps": ["analyzing: User is asking about X", "explaining: What X is", "suggesting: Offer to build similar"],
+      "plan": [],
+      "reasoning": "Detailed explanation + 'Would you like me to help you create something similar?'",
+      "nextSteps": ["Tell me what specific features you want", "I can help you build: X, Y, Z"]
+    },
+    
+    "build_response": {
+      "message": "Creating [System] with [N] steps",
+      "thinkingSteps": ["analyzing: User wants X", "planning: Breaking into Y steps", "structuring: Order is Z"],
+      "plan": ["...array of steps..."],
+      "reasoning": "Why this approach, what each component does",
+      "warnings": ["Security: Validate inputs", "Performance: Use debounce"],
+      "nextSteps": ["Test in Studio", "Adjust values as needed"]
+    },
+    
+    "analyze_response": {
+      "message": "Analysis of [Code]",
+      "thinkingSteps": ["analyzing: Code structure", "checking: Security issues", "checking: Performance"],
+      "plan": [],
+      "reasoning": "Detailed findings with specific issues and improvements",
+      "warnings": ["Critical issues found", "Potential exploits"],
+      "nextSteps": ["Fix issues mentioned", "Test thoroughly"]
+    }
+  }
+}
