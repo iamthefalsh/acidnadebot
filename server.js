@@ -43,14 +43,11 @@ const sessionMemory = new Map();
 function initSession(sessionId) {
   if (!sessionMemory.has(sessionId)) {
     sessionMemory.set(sessionId, {
-      createdInstances: [],
-      modifiedInstances: [],
+      conversationHistory: [], // Track full conversation
       currentPlan: [],
       currentStep: 0,
       executionState: 'idle',
-      chatHistory: [],
-      pendingSourceRequests: [],
-      aiStages: [], // Track AI reasoning stages
+      userContext: {}, // Remember what user is working on
       timestamp: Date.now()
     });
   }
@@ -88,14 +85,14 @@ const logRequest = (req, res, next) => {
 app.use(logRequest);
 
 // ============================================
-// MULTI-STAGE AI PROCESSING
+// AUTONOMOUS AI - ACTUALLY INTELLIGENT
 // ============================================
 
-async function callAI(prompt, maxTokens = 1000, jsonMode = false) {
+async function callAI(systemPrompt, userPrompt, maxTokens = 1000, jsonMode = false) {
   const model = genAI.getGenerativeModel({
     model: 'gemini-3-flash-preview',
     generationConfig: {
-      temperature: 0.7,
+      temperature: 0.8,
       topP: 0.95,
       topK: 40,
       maxOutputTokens: maxTokens,
@@ -103,197 +100,207 @@ async function callAI(prompt, maxTokens = 1000, jsonMode = false) {
     }
   });
 
-  const result = await model.generateContent(prompt);
+  const result = await model.generateContent([
+    { role: 'user', parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }
+  ]);
+  
   return result.response.text();
 }
 
-// STAGE 1: Understand the request
-async function stage1_understand(userPrompt, session) {
-  console.log('🔍 Stage 1: Understanding request...');
+// MAIN AUTONOMOUS DECISION MAKER
+async function autonomousDecision(userPrompt, conversationHistory, session) {
+  console.log('\n🧠 AI MAKING AUTONOMOUS DECISION...');
   
-  const prompt = `${PROMPTS.stages.understand.prompt}
+  const systemPrompt = `You are Acidnade AI, an autonomous assistant for Roblox game development.
 
-USER REQUEST: "${userPrompt}"
+CORE PRINCIPLE: You are INTELLIGENT and make your own decisions. You are NOT a robot that follows strict rules.
 
-REQUIREMENTS FOR ANALYSIS:
-${JSON.stringify(REQUIREMENTS.understanding, null, 2)}`;
+YOUR PERSONALITY:
+- Friendly, conversational, and helpful
+- You understand context and nuance
+- You ask clarifying questions when needed
+- You don't jump to conclusions
+- You remember the conversation
 
-  const response = await callAI(prompt, 300, true);
+CONVERSATION HISTORY:
+${conversationHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n')}
+
+USER'S CURRENT MESSAGE: "${userPrompt}"
+
+ANALYZE THIS MESSAGE AUTONOMOUSLY:
+1. Is this just casual conversation? (greetings, questions about you, general chat)
+2. Is this asking for information/explanation?
+3. Is this asking to build something specific?
+4. Is this asking to analyze/modify existing code?
+5. What does the user ACTUALLY want?
+
+RESPOND WITH JSON:
+{
+  "intent": "conversation|question|build|analyze|modify",
+  "confidence": 0.0-1.0,
+  "reasoning": "Why you chose this intent",
+  "shouldCreatePlan": true/false,
+  "suggestedResponse": "What you would say naturally",
+  "needsMoreInfo": ["what clarifications do you need?"] or []
+}
+
+EXAMPLES:
+- "hey" → conversation, confidence: 0.95, shouldCreatePlan: false
+- "what's a datastore?" → question, shouldCreatePlan: false  
+- "create a coin system" → build, shouldCreatePlan: true
+- "make it better" (with context) → modify, shouldCreatePlan: true
+
+BE SMART. USE CONTEXT. DON'T OVERTHINK SIMPLE THINGS.`;
+
+  const response = await callAI(systemPrompt, '', 500, true);
   
   try {
-    const understanding = JSON.parse(response);
-    session.aiStages.push({ stage: 'understand', result: understanding });
-    console.log('✅ Understanding:', understanding);
-    return understanding;
+    const decision = JSON.parse(response);
+    console.log('✅ Decision:', decision.intent, '(confidence:', decision.confidence + ')');
+    console.log('💭 Reasoning:', decision.reasoning);
+    return decision;
   } catch (error) {
-    console.error('❌ Stage 1 parse error:', error.message);
+    console.error('❌ Decision parse error:', error.message);
     return {
-      requestType: 'build',
-      systems: ['syntax'],
-      complexity: 'simple',
-      gameReference: null,
-      needsSource: false
+      intent: 'conversation',
+      confidence: 0.5,
+      reasoning: 'Failed to parse, defaulting to conversation',
+      shouldCreatePlan: false,
+      suggestedResponse: "I'm here to help! What would you like to create?",
+      needsMoreInfo: []
     };
   }
 }
 
-// STAGE 2: Handle question (if it's a question)
-async function stage2_explain(userPrompt, understanding, session) {
-  console.log('💬 Stage 2: Explaining (question detected)...');
+// CONVERSATIONAL RESPONSE (for greetings, questions, etc.)
+async function conversationalResponse(userPrompt, decision, conversationHistory) {
+  console.log('💬 Generating conversational response...');
   
-  let knowledgeContext = '';
-  
-  if (understanding.gameReference) {
-    const gameInfo = REQUIREMENTS.understanding.game_references[understanding.gameReference.toLowerCase().replace(/\s+/g, '_')];
-    if (gameInfo) {
-      knowledgeContext = `\nGAME REFERENCE: ${JSON.stringify(gameInfo, null, 2)}`;
-    }
-  }
-  
-  const prompt = `${PROMPTS.stages.explain.prompt}
+  const systemPrompt = `You are Acidnade AI, a friendly Roblox development assistant.
 
-USER QUESTION: "${userPrompt}"
-${knowledgeContext}
+CONVERSATION HISTORY:
+${conversationHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n')}
 
-Respond in JSON format:
+USER SAID: "${userPrompt}"
+
+YOUR ANALYSIS: ${decision.reasoning}
+
+RESPOND NATURALLY:
+- If it's a greeting, greet back warmly
+- If it's a question, answer it clearly
+- If they're exploring ideas, discuss them
+- Don't create plans unless they explicitly ask to build something
+- Be conversational, not robotic
+
+RESPOND WITH JSON:
 {
-  "message": "your friendly explanation",
-  "thinkingSteps": ["analyzing: ...", "explaining: ..."],
+  "message": "Your natural, friendly response",
+  "thinkingSteps": ["analyzing: ...", "responding: ..."],
   "plan": [],
-  "reasoning": "detailed explanation + offer to build",
-  "nextSteps": ["suggestions for what to build"]
+  "reasoning": "Brief explanation of your response",
+  "suggestions": ["Maybe suggest: Create a coin system?", "Or ask: What game are you making?"]
 }`;
 
-  const response = await callAI(prompt, 600, true);
+  const response = await callAI(systemPrompt, '', 600, true);
   
   try {
-    const explanation = JSON.parse(response.replace(/```json\n?|\n?```/g, '').trim());
-    session.aiStages.push({ stage: 'explain', result: explanation });
-    return explanation;
+    return JSON.parse(response.replace(/```json\n?|\n?```/g, '').trim());
   } catch (error) {
-    console.error('❌ Stage 2 parse error:', error.message);
     return {
-      message: 'I can help you with that!',
-      thinkingSteps: ['responding: Providing assistance'],
+      message: decision.suggestedResponse || "Hey! I'm here to help you build awesome Roblox games. What would you like to create?",
+      thinkingSteps: ['responding: Friendly greeting'],
       plan: [],
-      reasoning: 'What would you like me to create for you?',
-      nextSteps: ['Tell me what you want to build']
+      reasoning: 'Casual conversation',
+      suggestions: ['Tell me what game you want to make', 'Ask me to create a system']
     };
   }
 }
 
-// STAGE 3: Generate initial idea (for build requests)
-async function stage3_initialIdea(userPrompt, understanding, context, session) {
-  console.log('💡 Stage 3: Generating initial idea...');
+// BUILD SYSTEM (only when explicitly requested)
+async function buildSystem(userPrompt, decision, conversationHistory, context, session) {
+  console.log('🔨 Building system...');
   
-  const systemsContext = understanding.systems.map(sys => {
-    const examples = PROMPTS.knowledge.patterns;
-    return `System: ${sys}\nCommon patterns: ${JSON.stringify(examples, null, 2)}`;
-  }).join('\n\n');
+  // Check if request is clear enough
+  if (decision.needsMoreInfo && decision.needsMoreInfo.length > 0) {
+    return {
+      message: "I want to help you build this! But I need a bit more information:",
+      thinkingSteps: ['analyzing: Request needs clarification', 'asking: For more details'],
+      plan: [],
+      reasoning: decision.reasoning,
+      needsMoreInfo: decision.needsMoreInfo,
+      suggestions: decision.needsMoreInfo
+    };
+  }
   
-  const prompt = `${PROMPTS.stages.initial_idea.prompt}
+  const systemPrompt = `You are creating a detailed implementation plan for Roblox.
 
-USER REQUEST: "${userPrompt}"
+CONVERSATION CONTEXT:
+${conversationHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n')}
 
-SYSTEMS NEEDED: ${understanding.systems.join(', ')}
-COMPLEXITY: ${understanding.complexity}
+USER WANTS: "${userPrompt}"
 
-COMMON PATTERNS:
-${systemsContext}
+YOUR UNDERSTANDING: ${decision.reasoning}
 
-KNOWLEDGE:
-${PROMPTS.knowledge.luau_basics}
+KNOWLEDGE BASE:
+${JSON.stringify(PROMPTS.knowledge, null, 2)}
 
-${PROMPTS.knowledge.common_mistakes}
+CREATE A DETAILED PLAN:
+1. Understand what systems are needed
+2. Break into logical steps
+3. Provide complete, working code for each step
+4. Consider security and performance
+5. Add helpful warnings
 
-${context?.sourceCodes ? `EXISTING SOURCE CODE:\n${JSON.stringify(context.sourceCodes, null, 2)}` : ''}
-
-Generate your initial implementation idea.`;
-
-  const response = await callAI(prompt, 1000, false);
-  session.aiStages.push({ stage: 'initial_idea', result: response });
-  console.log('✅ Initial idea generated');
-  return response;
-}
-
-// STAGE 4: Improve the idea
-async function stage4_improveIdea(initialIdea, understanding, session) {
-  console.log('🔧 Stage 4: Improving idea...');
-  
-  const prompt = `${PROMPTS.stages.improve_idea.prompt}
-
-YOUR INITIAL IDEA:
-${initialIdea}
-
-SECURITY RULES:
-${PROMPTS.knowledge.security}
-
-COMMON MISTAKES TO AVOID:
-${PROMPTS.knowledge.common_mistakes}
-
-Now improve this idea with better security, performance, and error handling.`;
-
-  const response = await callAI(prompt, 1200, false);
-  session.aiStages.push({ stage: 'improve_idea', result: response });
-  console.log('✅ Idea improved');
-  return response;
-}
-
-// STAGE 5: Create detailed plan
-async function stage5_createPlan(improvedIdea, userPrompt, understanding, session) {
-  console.log('📋 Stage 5: Creating detailed plan...');
-  
-  const prompt = `${PROMPTS.stages.create_plan.prompt}
-
-IMPROVED IDEA:
-${improvedIdea}
-
-USER REQUEST: "${userPrompt}"
-
-ROBLOX SERVICES:
-${PROMPTS.knowledge.roblox_services}
-
-Convert your improved idea into a detailed JSON plan.
-
-RESPONSE FORMAT:
+RESPOND WITH JSON:
 {
-  "message": "Creating [system] with [N] steps",
+  "message": "Creating [system name] with [N] steps",
   "thinkingSteps": ["analyzing: ...", "planning: ...", "structuring: ..."],
   "plan": [
     {
       "step": 1,
       "type": "create",
-      "name": "ExactName",
-      "className": "Script",
+      "name": "ExactInstanceName",
+      "className": "Script|LocalScript|ModuleScript|RemoteEvent|Folder",
       "parentPath": "game.ServerScriptService",
-      "description": "What this does",
+      "description": "Clear description",
       "properties": {
         "Name": "value",
-        "Source": "-- COMPLETE working Luau code here"
+        "Source": "-- COMPLETE working Luau code"
       }
     }
   ],
   "reasoning": "Why this approach",
   "warnings": ["Security: ...", "Performance: ..."],
-  "nextSteps": ["Test this", "Adjust that"]
-}`;
+  "nextSteps": ["Test this", "Then add that"]
+}
 
-  const response = await callAI(prompt, 2000, true);
+IMPORTANT:
+- Source must be COMPLETE and RUNNABLE
+- Use proper Luau syntax (local, task.wait(), :GetService())
+- Validate everything on server
+- Add error handling`;
+
+  const response = await callAI(systemPrompt, '', 2000, true);
   
   try {
     const plan = JSON.parse(response.replace(/```json\n?|\n?```/g, '').trim());
-    session.aiStages.push({ stage: 'create_plan', result: plan });
-    console.log('✅ Plan created with', plan.plan?.length || 0, 'steps');
+    
+    // Store plan for execution
+    session.currentPlan = plan.plan || [];
+    session.currentStep = 0;
+    session.executionState = 'ready';
+    
+    console.log('✅ Plan created:', plan.plan?.length || 0, 'steps');
     return plan;
   } catch (error) {
-    console.error('❌ Stage 5 parse error:', error.message);
+    console.error('❌ Plan parse error:', error.message);
     return {
-      message: 'Plan created',
-      thinkingSteps: ['planning: Created implementation plan'],
+      message: 'Created a plan for you',
+      thinkingSteps: ['planning: Implementation steps'],
       plan: [],
-      reasoning: 'Implementation plan generated',
+      reasoning: 'Plan generated',
       warnings: [],
-      nextSteps: ['Review and implement']
+      nextSteps: []
     };
   }
 }
@@ -302,110 +309,113 @@ RESPONSE FORMAT:
 async function processAIRequest(prompt, context, sessionId) {
   try {
     const session = initSession(sessionId);
-    session.aiStages = []; // Reset stages
     
-    console.log('\n════════════════════════════════════════');
-    console.log('🚀 STARTING MULTI-STAGE AI PROCESSING');
-    console.log('════════════════════════════════════════\n');
+    // Add to conversation history
+    session.conversationHistory.push({
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now()
+    });
     
-    // STAGE 1: Understand
-    const understanding = await stage1_understand(prompt, session);
+    // Keep only last 10 messages for context
+    if (session.conversationHistory.length > 10) {
+      session.conversationHistory = session.conversationHistory.slice(-10);
+    }
     
-    // Check if source code is needed
-    if (understanding.needsSource && !context?.sourceCodes) {
-      console.log('📝 Source code required but not provided');
-      
-      const instanceMatch = prompt.match(/\b([A-Z][a-zA-Z]+)\b/);
-      const instanceName = instanceMatch ? instanceMatch[1] : 'Script';
-      
-      return {
-        message: `I need to see the ${instanceName} source code to analyze it`,
-        thinkingSteps: [
-          'analyzing: User wants to check/modify code',
-          `checking: ${instanceName} source not provided`,
-          'requesting: Need source code to proceed'
-        ],
-        plan: [],
-        needsSourceCode: {
-          instanceName: instanceName,
-          expectedPath: `game.ServerScriptService.${instanceName}`,
-          reason: 'Cannot analyze or modify without seeing the code'
-        },
-        needsApproval: false,
-        reasoning: 'I need to read the actual code to help you',
-        metadata: {
-          stages: session.aiStages,
-          sessionId,
-          timestamp: new Date().toISOString()
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🍋 ACIDNADE AI - AUTONOMOUS MODE');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    console.log('User:', prompt);
+    
+    // STEP 1: AI decides what to do autonomously
+    const decision = await autonomousDecision(
+      prompt,
+      session.conversationHistory,
+      session
+    );
+    
+    // Add AI reasoning to history
+    session.conversationHistory.push({
+      role: 'assistant-thinking',
+      content: decision.reasoning,
+      timestamp: Date.now()
+    });
+    
+    let response;
+    
+    // STEP 2: Act based on AI's decision
+    switch (decision.intent) {
+      case 'conversation':
+      case 'question':
+        response = await conversationalResponse(prompt, decision, session.conversationHistory);
+        break;
+        
+      case 'build':
+        if (decision.shouldCreatePlan) {
+          response = await buildSystem(prompt, decision, session.conversationHistory, context, session);
+        } else {
+          response = await conversationalResponse(prompt, decision, session.conversationHistory);
         }
-      };
-    }
-    
-    // STAGE 2: If question, explain and exit
-    if (understanding.requestType === 'question') {
-      const explanation = await stage2_explain(prompt, understanding, session);
-      return {
-        ...explanation,
-        metadata: {
-          requestType: 'question',
-          stages: session.aiStages,
-          sessionId,
-          timestamp: new Date().toISOString()
+        break;
+        
+      case 'analyze':
+        if (!context?.sourceCodes) {
+          response = {
+            message: "I'd love to analyze the code! Could you share it with me?",
+            thinkingSteps: ['analyzing: Need source code', 'requesting: Code to analyze'],
+            plan: [],
+            needsSourceCode: {
+              reason: 'Cannot analyze without seeing the code'
+            },
+            reasoning: 'Source code is required for analysis'
+          };
+        } else {
+          // Analyze code logic here
+          response = await conversationalResponse(prompt, decision, session.conversationHistory);
         }
-      };
-    }
-    
-    // STAGES 3-5: Build something
-    if (understanding.requestType === 'build') {
-      const initialIdea = await stage3_initialIdea(prompt, understanding, context, session);
-      const improvedIdea = await stage4_improveIdea(initialIdea, understanding, session);
-      const finalPlan = await stage5_createPlan(improvedIdea, prompt, understanding, session);
-      
-      // Store plan for execution
-      session.currentPlan = finalPlan.plan || [];
-      session.currentStep = 0;
-      session.executionState = 'executing';
-      
-      console.log('\n════════════════════════════════════════');
-      console.log('✅ MULTI-STAGE PROCESSING COMPLETE');
-      console.log('Stages used:', session.aiStages.length);
-      console.log('Steps in plan:', session.currentPlan.length);
-      console.log('════════════════════════════════════════\n');
-      
-      return {
-        ...finalPlan,
-        metadata: {
-          requestType: 'build',
-          complexity: understanding.complexity,
-          systems: understanding.systems,
-          stages: session.aiStages.map(s => s.stage),
-          totalSteps: session.currentPlan.length,
-          sessionId,
-          timestamp: new Date().toISOString()
+        break;
+        
+      case 'modify':
+        if (!context?.sourceCodes) {
+          response = {
+            message: "I need to see the code first before I can modify it!",
+            thinkingSteps: ['analyzing: Need source code', 'requesting: Code to modify'],
+            plan: [],
+            needsSourceCode: {
+              reason: 'Cannot modify without seeing the code'
+            },
+            reasoning: 'Source code is required for modifications'
+          };
+        } else {
+          response = await buildSystem(prompt, decision, session.conversationHistory, context, session);
         }
-      };
+        break;
+        
+      default:
+        response = await conversationalResponse(prompt, decision, session.conversationHistory);
     }
     
-    // ANALYZE request
-    if (understanding.requestType === 'analyze' && context?.sourceCodes) {
-      const analysis = await callAI(
-        `${PROMPTS.stages.analyze_code.prompt}\n\nSOURCE CODE:\n${JSON.stringify(context.sourceCodes, null, 2)}`,
-        1200,
-        true
-      );
-      
-      return JSON.parse(analysis);
-    }
+    // Add response to history
+    session.conversationHistory.push({
+      role: 'assistant',
+      content: response.message,
+      timestamp: Date.now()
+    });
     
-    // Default fallback
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('✅ RESPONSE GENERATED');
+    console.log('Intent:', decision.intent);
+    console.log('Confidence:', decision.confidence);
+    console.log('Created plan:', response.plan?.length > 0);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    
     return {
-      message: 'Request processed',
-      thinkingSteps: ['processing: Handled request'],
-      plan: [],
-      reasoning: 'Request completed',
+      ...response,
       metadata: {
-        stages: session.aiStages,
+        intent: decision.intent,
+        confidence: decision.confidence,
         sessionId,
+        conversationLength: session.conversationHistory.length,
         timestamp: new Date().toISOString()
       }
     };
@@ -413,10 +423,9 @@ async function processAIRequest(prompt, context, sessionId) {
   } catch (error) {
     console.error('❌ AI Processing Error:', error.message);
     return {
-      message: 'Error processing request',
+      message: 'Oops! Something went wrong. Could you try asking that again?',
       thinkingSteps: ['error: ' + error.message],
       plan: [],
-      needsApproval: false,
       reasoning: 'An error occurred: ' + error.message,
       error: true
     };
@@ -430,25 +439,20 @@ async function processAIRequest(prompt, context, sessionId) {
 app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI',
-    version: '5.0 - Multi-Stage Reasoning',
+    version: '6.0 - Autonomous Intelligence',
     status: 'online',
     model: 'gemini-3-flash-preview',
     features: [
-      '🧠 Multi-stage AI reasoning (5 stages)',
-      '🎯 Accurate request understanding',
-      '💡 Idea generation + improvement',
-      '📋 Detailed planning',
-      '🔍 Question vs build detection',
-      '📝 Source code analysis',
-      '⚡ Proper responses (no fake "completed")'
+      '🧠 Truly autonomous decision making',
+      '💬 Natural conversation understanding',
+      '🎯 Context-aware responses',
+      '🤝 Doesn\'t jump to conclusions',
+      '❓ Asks clarifying questions',
+      '🔨 Only builds when explicitly asked',
+      '📝 Remembers conversation history',
+      '⚡ Smarter, not robotic'
     ],
-    stages: [
-      '1. Understand request',
-      '2. Explain (if question)',
-      '3. Generate initial idea',
-      '4. Improve idea',
-      '5. Create detailed plan'
-    ],
+    philosophy: 'AI should think for itself, not blindly follow rules',
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
   });
@@ -467,8 +471,8 @@ app.get('/session/:sessionId', authenticateRequest, (req, res) => {
     executionState: session.executionState,
     currentStep: session.currentStep,
     totalSteps: session.currentPlan?.length || 0,
-    createdInstances: session.createdInstances || [],
-    aiStages: session.aiStages || [],
+    conversationLength: session.conversationHistory?.length || 0,
+    lastMessage: session.conversationHistory?.slice(-1)[0] || null,
     timestamp: new Date(session.timestamp || Date.now()).toISOString()
   });
 });
@@ -484,28 +488,22 @@ app.post('/ai', authenticateRequest, async (req, res) => {
       });
     }
     
-    initSession(sessionId);
-    
-    if (context?.sourceCodes) {
-      console.log(`📁 Context has ${Object.keys(context.sourceCodes).length} source files`);
-    }
-    
     const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
     res.json(aiResponse);
     
   } catch (error) {
     console.error('❌ Server Error:', error.message);
     res.status(500).json({ 
-      error: 'Server error',
-      message: error.message,
-      thinkingSteps: [],
+      message: 'Oops! Something went wrong on my end. Could you try again?',
+      thinkingSteps: ['error: Internal server error'],
       plan: [],
-      needsApproval: false,
-      reasoning: 'Internal server error'
+      reasoning: 'Server encountered an error',
+      error: true
     });
   }
 });
 
+// Clean up old sessions
 setInterval(() => {
   const now = Date.now();
   const oneHour = 60 * 60 * 1000;
@@ -513,40 +511,38 @@ setInterval(() => {
   for (const [sessionId, session] of sessionMemory.entries()) {
     if (now - (session.timestamp || now) > oneHour) {
       sessionMemory.delete(sessionId);
-      console.log(`🧹 Removed old session: ${sessionId}`);
+      console.log(`🧹 Cleaned up session: ${sessionId}`);
     }
   }
 }, 30 * 60 * 1000);
 
 app.listen(PORT, () => {
-  console.log('═══════════════════════════════════════════════════════════');
-  console.log('🚀 ACIDNADE AI v5.0 - MULTI-STAGE REASONING');
-  console.log('═══════════════════════════════════════════════════════════');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🍋 ACIDNADE AI v6.0 - AUTONOMOUS INTELLIGENCE');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
   console.log('Model: gemini-3-flash-preview');
   console.log('');
-  console.log('🧠 AI REASONING STAGES:');
-  console.log('  Stage 1: Understand request type & complexity');
-  console.log('  Stage 2: Explain (if question)');
-  console.log('  Stage 3: Generate initial idea (if build)');
-  console.log('  Stage 4: Improve idea with security & performance');
-  console.log('  Stage 5: Create detailed step-by-step plan');
+  console.log('🧠 AUTONOMOUS FEATURES:');
+  console.log('  ✓ AI makes its own decisions');
+  console.log('  ✓ Understands greetings vs build requests');
+  console.log('  ✓ Asks clarifying questions');
+  console.log('  ✓ Remembers conversation context');
+  console.log('  ✓ Natural conversation flow');
+  console.log('  ✓ Only builds when explicitly asked');
   console.log('');
-  console.log('✅ FIXES:');
-  console.log('  • Questions get proper explanations (not fake "completed")');
-  console.log('  • AI thinks before responding');
-  console.log('  • Better code quality through iteration');
-  console.log('  • Proper request type detection');
+  console.log('🎯 INTELLIGENCE LEVELS:');
+  console.log('  • "hey" → Friendly greeting');
+  console.log('  • "what is X?" → Explanation');
+  console.log('  • "create X" → Build system');
+  console.log('  • "fix my code" → Analyze & modify');
   console.log('');
-  console.log('📁 CONFIG FILES:');
-  console.log('  • requirements.json: Understanding rules');
-  console.log('  • prompts.json: Stage-specific prompts');
+  console.log('💡 PHILOSOPHY:');
+  console.log('  AI should be smart enough to understand context');
+  console.log('  Not blindly execute predefined patterns');
   console.log('');
-  console.log('⚠️  NOTE: Uses more tokens per request (5 AI calls for builds)');
-  console.log('   But responses are ACTUALLY CORRECT now!');
-  console.log('');
-  console.log('═══════════════════════════════════════════════════════════');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('✅ Server ready at http://localhost:' + PORT);
-  console.log('═══════════════════════════════════════════════════════════');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
