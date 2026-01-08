@@ -5,318 +5,571 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 dotenv.config();
-
-/* ===============================
-   BASIC SETUP
-================================ */
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-/* 🔥 REQUIRED FOR RATE-LIMIT BEHIND PROXY */
-app.set('trust proxy', 1);
-
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-/* ===============================
-   LOAD CONFIG FILES
-================================ */
-let REQUIREMENTS = {};
-let PROMPTS = {};
-
-try {
-  REQUIREMENTS = JSON.parse(fs.readFileSync(path.join(__dirname, 'requirements.json'), 'utf8'));
-  PROMPTS = JSON.parse(fs.readFileSync(path.join(__dirname, 'prompts.json'), 'utf8'));
-  console.log('✅ Loaded config files');
-} catch (err) {
-  console.error('❌ Failed to load config:', err.message);
-  process.exit(1);
-}
-
-/* ===============================
-   MIDDLEWARE
-================================ */
-app.use(helmet());
-app.use(cors());
-app.use(compression());
-app.use(express.json({ limit: '10mb' }));
-
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/ai', limiter);
-
-/* ===============================
-   AUTH + LOGGING
-================================ */
-const authenticateRequest = (req, res, next) => {
-  const apiKey = req.headers['x-acidnade-key'];
-  if (!apiKey || apiKey !== process.env.ACIDNADE_API_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-};
-
-app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  next();
-});
-
-/* ===============================
-   SESSION MEMORY
-================================ */
+// Session memory store - optimized for low memory usage
 const sessionMemory = new Map();
 
 function initSession(sessionId) {
   if (!sessionMemory.has(sessionId)) {
     sessionMemory.set(sessionId, {
-      conversationHistory: [],
-      currentPlan: [],
-      currentStep: 0,
-      executionState: 'idle',
+      currentPlan: [],           // Steps to execute
+      currentStep: 0,            // Current step index
+      executionState: 'idle',    // idle, planning, executing, complete
+      createdInstances: [],      // Instances created in this session
+      modifiedInstances: [],     // Instances modified in this session
+      pendingActions: [],        // Actions waiting for execution
       timestamp: Date.now(),
+      tokenUsage: 0
     });
   }
   return sessionMemory.get(sessionId);
 }
 
-/* ===============================
-   JSON HARDENING
-================================ */
-function extractValidJSON(text) {
-  if (!text) throw new Error('Empty AI response');
+app.use(helmet());
+app.use(cors());
+app.use(compression());
+app.use(express.json({ limit: '5mb' })); // Reduced from 10mb
+app.set('trust proxy', 1);
 
-  const cleaned = text
-    .replace(/```json/g, '')
-    .replace(/```/g, '')
-    .trim();
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200, // Increased for more frequent small requests
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/ai', limiter);
 
-  try {
-    return JSON.parse(cleaned);
-  } catch {}
+const authenticateRequest = (req, res, next) => {
+  const apiKey = req.headers['x-acidnade-key'];
+  if (!apiKey || apiKey !== process.env.ACIDNADE_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized', message: 'Invalid API key' });
+  }
+  next();
+};
 
-  const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON found');
+const logRequest = (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${req.ip}`);
+  next();
+};
 
-  return JSON.parse(match[0]);
+app.use(logRequest);
+
+// Optimized System Prompt - Minimal token usage
+const SYSTEM_PROMPT = `You are Acidnade AI, a Roblox Studio assistant. Respond in JSON only.
+
+RESPONSE FORMATS:
+
+1. PLANNING (when asked to do multiple things):
+{
+  "mode": "plan",
+  "message": "Brief description of plan",
+  "plan": [
+    {
+      "stepId": 1,
+      "action": "create/modify",
+      "description": "Short description",
+      "target": "instance name if known"
+    }
+  ],
+  "reasoning": "Short explanation"
 }
 
-/* ===============================
-   GEMINI CALL (FIXED)
-================================ */
-async function callAI(systemPrompt, userPrompt, maxTokens = 1000, jsonMode = false) {
-  let lastError;
+2. CREATE ACTION (when creating something):
+{
+  "mode": "execute",
+  "action": "create",
+  "message": "Creating [instance]",
+  "data": {
+    "name": "InstanceName",
+    "classtype": "Script/LocalScript/ModuleScript/Part/TextLabel/etc",
+    "properties": {
+      "Position": "0, 5, 0",
+      "Size": "5, 5, 5",
+      "Color": "255, 0, 0"
+    },
+    "parent": "game.Workspace",
+    "content": "-- Lua code here (for scripts)"
+  },
+  "reasoning": "Why this is needed"
+}
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-3-flash-preview',
-        generationConfig: {
-          temperature: attempt === 1 ? 0.8 : 0.4,
-          topP: 0.95,
-          topK: 40,
-          maxOutputTokens: maxTokens,
-          responseMimeType: jsonMode ? 'application/json' : 'text/plain',
-        },
+3. MODIFY ACTION (when changing existing):
+{
+  "mode": "execute",
+  "action": "modify",
+  "message": "Modifying [instance]",
+  "data": {
+    "type": "multiedit",
+    "name": "EXACT_NAME_FROM_MATCHES",
+    "parent": "EXACT_PATH_FROM_MATCHES",
+    "properties": {
+      "Color": "0, 255, 0"
+    },
+    "sourceModifications": {
+      "action": "select lines 5-9 and replace",
+      "newCode": "-- new code here"
+    }
+  },
+  "reasoning": "Why this change"
+}
+
+4. NEED INFO (when you need source code):
+{
+  "mode": "request",
+  "message": "I need to read [filename]",
+  "needs": {
+    "type": "source_code",
+    "instanceName": "FieldSystem",
+    "reason": "To understand image loading"
+  },
+  "reasoning": "Cannot proceed without this"
+}
+
+RULES:
+1. Keep responses minimal - use few tokens
+2. For multi-step requests, first return a plan
+3. Execute one action per response
+4. Only include source code when absolutely necessary
+5. Use "request" mode to ask for missing info
+6. Never use replaceAll - use targeted modifications`;
+
+// Build optimized prompt - minimal token usage
+function buildPrompt(userPrompt, context, sessionId, mode = 'planning') {
+  const session = initSession(sessionId);
+  let prompt = '';
+  
+  // Track token usage
+  session.tokenUsage = (session.tokenUsage || 0) + userPrompt.length;
+  
+  if (mode === 'planning') {
+    // Ultra-minimal planning prompt
+    prompt = `User: ${userPrompt}\n\n`;
+    
+    // Add only essential context
+    if (session.createdInstances?.length > 0) {
+      prompt += 'Recent creations: ';
+      session.createdInstances.slice(-3).forEach(inst => {
+        prompt += `${inst.name}(${inst.type}), `;
       });
+      prompt += '\n';
+    }
+    
+    if (context?.selectedObjects?.length > 0) {
+      prompt += `Selected: ${context.selectedObjects.map(o => o.Name).join(', ')}\n`;
+    }
+    
+    prompt += 'Instructions:\n';
+    prompt += '1. If multiple actions needed, return plan mode\n';
+    prompt += '2. If single action, return execute mode\n';
+    prompt += '3. Be brief, use few tokens\n';
+    prompt += '4. If missing info, use request mode\n';
+    
+  } else if (mode === 'execution') {
+    // Execution prompt - minimal
+    const currentStep = session.currentStep;
+    const step = session.currentPlan?.[currentStep];
+    
+    prompt = `Execute step ${currentStep + 1}: ${step?.description || 'unknown'}\n`;
+    
+    if (step?.target) {
+      prompt += `Target: ${step.target}\n`;
+    }
+    
+    // Only include source code if provided and relevant
+    if (context?.sourceCodes && step?.target) {
+      const targetName = step.target.toLowerCase();
+      for (const [path, code] of Object.entries(context.sourceCodes)) {
+        if (path.toLowerCase().includes(targetName)) {
+          prompt += `Source (${path}):\n${code.substring(0, 500)}...\n`;
+          break;
+        }
+      }
+    }
+    
+    prompt += 'Instructions: Return execute mode with full details.\n';
+  }
+  
+  return prompt;
+}
 
-      // ✅ CORRECT PROMPT FORMAT (NO role / parts)
-      const prompt = [
-        'SYSTEM:',
-        systemPrompt,
-        '',
-        'USER:',
-        userPrompt,
-      ].join('\n');
+// Process AI request with step-by-step execution
+async function processAIRequest(prompt, context, sessionId) {
+  try {
+    const session = initSession(sessionId);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
+      generationConfig: {
+        temperature: 0.7,
+        topP: 0.95,
+        topK: 40,
+        maxOutputTokens: 1024, // Reduced for efficiency
+        responseMimeType: 'application/json',
+      },
+      systemInstruction: SYSTEM_PROMPT
+    });
 
-      const result = await model.generateContent(prompt);
-      const text = result.response.text();
+    // Determine mode based on conversation state
+    let mode = 'planning';
+    const lowerPrompt = prompt.toLowerCase();
+    
+    // Check if we're executing a step
+    if (session.executionState === 'executing' && session.currentPlan?.length > 0) {
+      mode = 'execution';
+    }
+    // Check if this is a simple single action
+    else if (lowerPrompt.includes('create') || lowerPrompt.includes('add') || 
+             lowerPrompt.includes('make') || lowerPrompt.includes('build')) {
+      mode = 'execution';
+    }
+    // Check if user is asking for analysis/planning
+    else if (lowerPrompt.includes('plan') || lowerPrompt.includes('how to') || 
+             lowerPrompt.includes('multiple') || lowerPrompt.includes('several')) {
+      mode = 'planning';
+    }
 
-      return jsonMode ? extractValidJSON(text) : text;
+    const aiPrompt = buildPrompt(prompt, context, sessionId, mode);
+    console.log(`[AI] Mode: ${mode}, Prompt length: ${aiPrompt.length}`);
+    
+    const startTime = Date.now();
+    const result = await model.generateContent(aiPrompt);
+    const responseTime = Date.now() - startTime;
+    
+    const text = result.response.text();
+    let aiResponse;
+    
+    try {
+      const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
+      aiResponse = JSON.parse(cleanedText);
+    } catch (parseError) {
+      console.error('[AI] Parse error:', parseError.message);
+      aiResponse = {
+        mode: 'error',
+        message: 'Processing error',
+        error: parseError.message
+      };
+    }
 
-    } catch (err) {
-      lastError = err;
-      console.warn(`⚠️ Gemini retry ${attempt} failed:`, err.message);
+    // Handle different response modes
+    switch (aiResponse.mode) {
+      case 'plan':
+        // Store plan for step-by-step execution
+        session.currentPlan = aiResponse.plan || [];
+        session.currentStep = 0;
+        session.executionState = 'executing';
+        
+        // Auto-execute first step if plan is small
+        if (session.currentPlan.length === 1) {
+          session.currentStep = 1; // Mark as completed
+          return {
+            ...aiResponse,
+            autoExecute: true,
+            metadata: {
+              planSteps: session.currentPlan.length,
+              nextAction: 'Execute first step automatically'
+            }
+          };
+        }
+        
+        return {
+          ...aiResponse,
+          metadata: {
+            planSteps: session.currentPlan.length,
+            nextAction: 'Ready to execute step by step'
+          }
+        };
+        
+      case 'execute':
+        // Update session with executed action
+        if (aiResponse.action === 'create') {
+          session.createdInstances.push({
+            name: aiResponse.data?.name || 'unknown',
+            type: aiResponse.data?.classtype || 'unknown',
+            parent: aiResponse.data?.parent || 'unknown',
+            timestamp: new Date().toISOString()
+          });
+        } else if (aiResponse.action === 'modify') {
+          session.modifiedInstances.push({
+            name: aiResponse.data?.name || 'unknown',
+            changes: aiResponse.data?.sourceModifications?.action || 'unknown',
+            timestamp: new Date().toISOString()
+          });
+        }
+        
+        // Check if we have more steps in plan
+        if (session.executionState === 'executing' && session.currentStep < session.currentPlan.length) {
+          session.currentStep++;
+          
+          if (session.currentStep >= session.currentPlan.length) {
+            session.executionState = 'complete';
+          }
+        }
+        
+        return {
+          ...aiResponse,
+          metadata: {
+            responseTime,
+            tokenUsage: text.length,
+            sessionStep: session.currentStep,
+            totalSteps: session.currentPlan.length,
+            executionState: session.executionState
+          }
+        };
+        
+      case 'request':
+        // AI needs information - store request
+        session.pendingActions = session.pendingActions || [];
+        session.pendingActions.push({
+          type: aiResponse.needs?.type || 'unknown',
+          instanceName: aiResponse.needs?.instanceName,
+          reason: aiResponse.needs?.reason,
+          timestamp: new Date().toISOString()
+        });
+        
+        return {
+          ...aiResponse,
+          metadata: {
+            needsInfo: true,
+            requestedItem: aiResponse.needs?.instanceName
+          }
+        };
+        
+      default:
+        return {
+          mode: 'execute',
+          action: 'create',
+          message: 'Processing your request',
+          data: {
+            name: 'Placeholder',
+            classtype: 'Part',
+            properties: {},
+            parent: 'game.Workspace',
+            content: '-- Processing...'
+          },
+          reasoning: 'Default response'
+        };
+    }
+    
+  } catch (error) {
+    console.error('[AI] Error:', error.message);
+    return {
+      mode: 'error',
+      message: 'AI processing failed',
+      error: error.message,
+      metadata: { error: true }
+    };
+  }
+}
+
+// Enhanced instance finding with exact matching
+function findExactInstance(instanceName, context) {
+  if (!instanceName || !context) return null;
+  
+  const nameLower = instanceName.toLowerCase();
+  
+  // Check in existing instances
+  if (context.existingInstances && Array.isArray(context.existingInstances)) {
+    for (const inst of context.existingInstances) {
+      if (inst.Name && inst.Name.toLowerCase() === nameLower) {
+        return {
+          name: inst.Name,
+          className: inst.ClassName,
+          path: inst.Path,
+          fullObject: inst
+        };
+      }
     }
   }
-
-  throw lastError;
-}
-
-/* ===============================
-   AUTONOMOUS DECISION
-================================ */
-async function autonomousDecision(userPrompt, conversationHistory) {
-  const systemPrompt = `
-You are Acidnade AI, an autonomous Roblox development assistant.
-
-Conversation history:
-${conversationHistory.map(m => `${m.role}: ${m.content}`).join('\n')}
-
-Respond ONLY with JSON:
-{
-  "intent": "conversation|question|build|analyze|modify",
-  "confidence": 0.0-1.0,
-  "reasoning": "why",
-  "shouldCreatePlan": true|false,
-  "suggestedResponse": "text",
-  "needsMoreInfo": []
-}
-`;
-
-  return await callAI(systemPrompt, userPrompt, 500, true);
-}
-
-/* ===============================
-   CONVERSATION RESPONSE
-================================ */
-async function conversationalResponse(userPrompt, decision, history) {
-  const systemPrompt = `
-You are a friendly Roblox assistant.
-
-History:
-${history.map(m => `${m.role}: ${m.content}`).join('\n')}
-
-Reasoning:
-${decision.reasoning}
-
-Return JSON:
-{
-  "message": "text",
-  "thinkingSteps": [],
-  "plan": [],
-  "reasoning": "why",
-  "suggestions": []
-}
-`;
-  return await callAI(systemPrompt, userPrompt, 600, true);
-}
-
-/* ===============================
-   BUILD SYSTEM
-================================ */
-async function buildSystem(userPrompt, decision, history, session) {
-  const systemPrompt = `
-You are creating a Roblox implementation plan.
-
-Context:
-${history.map(m => `${m.role}: ${m.content}`).join('\n')}
-
-Knowledge:
-${JSON.stringify(PROMPTS.knowledge, null, 2)}
-
-Return JSON with plan steps and COMPLETE CODE.
-`;
-  const plan = await callAI(systemPrompt, userPrompt, 2000, true);
-
-  session.currentPlan = plan.plan || [];
-  session.currentStep = 0;
-  session.executionState = 'ready';
-
-  return plan;
-}
-
-/* ===============================
-   MAIN PROCESSOR
-================================ */
-async function processAIRequest(prompt, context, sessionId) {
-  const session = initSession(sessionId);
-
-  session.conversationHistory.push({ role: 'user', content: prompt });
-  session.conversationHistory = session.conversationHistory.slice(-10);
-
-  const decision = await autonomousDecision(prompt, session.conversationHistory);
-
-  let response;
-
-  switch (decision.intent) {
-    case 'conversation':
-    case 'question':
-      response = await conversationalResponse(prompt, decision, session.conversationHistory);
-      break;
-    case 'build':
-      response = decision.shouldCreatePlan
-        ? await buildSystem(prompt, decision, session.conversationHistory, session)
-        : await conversationalResponse(prompt, decision, session.conversationHistory);
-      break;
-    default:
-      response = await conversationalResponse(prompt, decision, session.conversationHistory);
+  
+  // Check in source codes keys
+  if (context.sourceCodes) {
+    for (const path of Object.keys(context.sourceCodes)) {
+      const parts = path.split('.');
+      const lastPart = parts[parts.length - 1];
+      if (lastPart.toLowerCase() === nameLower) {
+        return {
+          name: lastPart,
+          path: path,
+          hasSource: true
+        };
+      }
+    }
   }
-
-  session.conversationHistory.push({ role: 'assistant', content: response.message });
-
-  return response;
+  
+  return null;
 }
 
-/* ===============================
-   ROUTES
-================================ */
+// Routes
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Acidnade AI v4.0',
+    version: '4.0',
+    status: 'online',
+    model: 'gemini-3-flash-preview',
+    features: [
+      'Step-by-step execution',
+      'Low token usage',
+      'Real-time instance creation',
+      'Smart planning system',
+      'No replaceAll - targeted edits only'
+    ],
+    sessions: sessionMemory.size,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/ping', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    model: 'gemini-3-flash-preview',
+    uptime: process.uptime(),
+    sessions: sessionMemory.size,
+    memory: process.memoryUsage()
+  });
+});
+
+app.get('/session/:sessionId', authenticateRequest, (req, res) => {
+  const sessionId = req.params.sessionId;
+  const session = sessionMemory.get(sessionId);
+  
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  res.json({
+    sessionId,
+    executionState: session.executionState,
+    currentStep: session.currentStep,
+    totalSteps: session.currentPlan?.length || 0,
+    createdInstances: session.createdInstances?.length || 0,
+    modifiedInstances: session.modifiedInstances?.length || 0,
+    tokenUsage: session.tokenUsage || 0,
+    pendingActions: session.pendingActions?.length || 0,
+    timestamp: new Date(session.timestamp).toISOString()
+  });
+});
+
+app.delete('/session/:sessionId', authenticateRequest, (req, res) => {
+  const sessionId = req.params.sessionId;
+  const deleted = sessionMemory.delete(sessionId);
+  
+  res.json({
+    success: deleted,
+    message: deleted ? 'Session cleared' : 'Session not found',
+    remainingSessions: sessionMemory.size
+  });
+});
+
 app.post('/ai', authenticateRequest, async (req, res) => {
   try {
     const { prompt, context, sessionId } = req.body;
+    
     if (!prompt || !sessionId) {
-      return res.status(400).json({ error: 'Missing prompt or sessionId' });
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        message: 'prompt and sessionId are required'
+      });
     }
-
-    const result = await processAIRequest(prompt, context || {}, sessionId);
-    res.json(result);
-
-  } catch (err) {
-    console.error('❌ AI Error:', err.message);
-    res.status(500).json({ error: true, message: err.message });
-  }
-});
-
-/* ===============================
-   STREAMING ENDPOINT
-================================ */
-app.post('/ai/stream', authenticateRequest, async (req, res) => {
-  const { prompt } = req.body;
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      generationConfig: { temperature: 0.8, maxOutputTokens: 1500 },
+    
+    console.log(`[Request] Session: ${sessionId}, Prompt: "${prompt.substring(0, 50)}..."`);
+    
+    // Process the request
+    const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
+    
+    // Add session info to response
+    const session = sessionMemory.get(sessionId);
+    if (session) {
+      aiResponse.sessionInfo = {
+        state: session.executionState,
+        step: session.currentStep,
+        totalSteps: session.currentPlan?.length || 0,
+        createdCount: session.createdInstances?.length || 0
+      };
+    }
+    
+    res.json(aiResponse);
+    
+  } catch (error) {
+    console.error('[Server Error]:', error.message);
+    res.status(500).json({ 
+      mode: 'error',
+      message: 'Server error',
+      error: error.message,
+      metadata: { serverError: true }
     });
-
-    const stream = await model.generateContentStream(prompt);
-
-    for await (const chunk of stream.stream) {
-      const text = chunk.text();
-      if (text) res.write(`data: ${JSON.stringify({ token: text })}\n\n`);
-    }
-
-    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-    res.end();
-  } catch (err) {
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-    res.end();
   }
 });
 
-/* ===============================
-   START SERVER
-================================ */
+// Session cleanup
+setInterval(() => {
+  const now = Date.now();
+  const oneHour = 60 * 60 * 1000;
+  let cleaned = 0;
+  
+  for (const [sessionId, session] of sessionMemory.entries()) {
+    if (now - session.timestamp > oneHour) {
+      sessionMemory.delete(sessionId);
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`[Cleanup] Removed ${cleaned} old sessions`);
+  }
+}, 30 * 60 * 1000);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('[Middleware Error]:', err.stack);
+  res.status(500).json({ 
+    mode: 'error',
+    message: 'Internal server error',
+    error: err.message
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ 
+    mode: 'error',
+    message: 'Route not found',
+    path: req.path
+  });
+});
+
 app.listen(PORT, () => {
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('🍋 Acidnade AI ONLINE');
+  console.log('==========================================');
+  console.log('ACIDNADE AI v4.0 - OPTIMIZED EXECUTION');
+  console.log('==========================================');
   console.log('Port:', PORT);
-  console.log('Env:', NODE_ENV);
-  console.log('Model: gemini-3-flash-preview');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('Environment:', NODE_ENV);
+  console.log('Optimizations:');
+  console.log('  • ✅ Step-by-step execution');
+  console.log('  • ✅ Ultra-low token usage');
+  console.log('  • ✅ Real-time instance creation');
+  console.log('  • ✅ Smart mode detection');
+  console.log('  • ✅ No unnecessary source code');
+  console.log('  • ✅ Auto-plan for multi-step requests');
+  console.log('==========================================');
+  console.log('Server ready at http://localhost:' + PORT);
+  console.log('==========================================');
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down...');
+  process.exit(0);
 });
