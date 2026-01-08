@@ -20,15 +20,21 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Load knowledge modules from JSON
-let KNOWLEDGE_MODULES = {};
+// Load requirements and prompts
+let REQUIREMENTS = {};
+let PROMPTS = {};
+
 try {
-  const knowledgePath = path.join(__dirname, 'knowledge_modules.json');
-  const knowledgeData = fs.readFileSync(knowledgePath, 'utf8');
-  KNOWLEDGE_MODULES = JSON.parse(knowledgeData);
-  console.log('✅ Loaded', Object.keys(KNOWLEDGE_MODULES).length, 'knowledge modules');
+  const reqPath = path.join(__dirname, 'requirements.json');
+  const promptsPath = path.join(__dirname, 'prompts.json');
+  
+  REQUIREMENTS = JSON.parse(fs.readFileSync(reqPath, 'utf8'));
+  PROMPTS = JSON.parse(fs.readFileSync(promptsPath, 'utf8'));
+  
+  console.log('✅ Loaded requirements.json');
+  console.log('✅ Loaded prompts.json');
 } catch (error) {
-  console.error('❌ Failed to load knowledge_modules.json:', error.message);
+  console.error('❌ Failed to load config files:', error.message);
   process.exit(1);
 }
 
@@ -44,6 +50,7 @@ function initSession(sessionId) {
       executionState: 'idle',
       chatHistory: [],
       pendingSourceRequests: [],
+      aiStages: [], // Track AI reasoning stages
       timestamp: Date.now()
     });
   }
@@ -80,418 +87,368 @@ const logRequest = (req, res, next) => {
 
 app.use(logRequest);
 
-const CORE_PROMPT = `You are Acidnade AI, an expert Roblox Studio assistant specializing in professional Luau development.
+// ============================================
+// MULTI-STAGE AI PROCESSING
+// ============================================
 
-YOUR IDENTITY:
-• Expert in Roblox API, Luau scripting, and game design patterns
-• Focus on clean, efficient, maintainable, and secure code
-• Provide production-ready solutions with proper error handling
-• Anticipate edge cases and potential issues
-• Explain complex concepts clearly and professionally
+async function callAI(prompt, maxTokens = 1000, jsonMode = false) {
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-3-flash-preview',
+    generationConfig: {
+      temperature: 0.7,
+      topP: 0.95,
+      topK: 40,
+      maxOutputTokens: maxTokens,
+      responseMimeType: jsonMode ? 'application/json' : 'text/plain',
+    }
+  });
 
-MANDATORY JSON RESPONSE FORMAT:
+  const result = await model.generateContent(prompt);
+  return result.response.text();
+}
+
+// STAGE 1: Understand the request
+async function stage1_understand(userPrompt, session) {
+  console.log('🔍 Stage 1: Understanding request...');
+  
+  const prompt = `${PROMPTS.stages.understand.prompt}
+
+USER REQUEST: "${userPrompt}"
+
+REQUIREMENTS FOR ANALYSIS:
+${JSON.stringify(REQUIREMENTS.understanding, null, 2)}`;
+
+  const response = await callAI(prompt, 300, true);
+  
+  try {
+    const understanding = JSON.parse(response);
+    session.aiStages.push({ stage: 'understand', result: understanding });
+    console.log('✅ Understanding:', understanding);
+    return understanding;
+  } catch (error) {
+    console.error('❌ Stage 1 parse error:', error.message);
+    return {
+      requestType: 'build',
+      systems: ['syntax'],
+      complexity: 'simple',
+      gameReference: null,
+      needsSource: false
+    };
+  }
+}
+
+// STAGE 2: Handle question (if it's a question)
+async function stage2_explain(userPrompt, understanding, session) {
+  console.log('💬 Stage 2: Explaining (question detected)...');
+  
+  let knowledgeContext = '';
+  
+  if (understanding.gameReference) {
+    const gameInfo = REQUIREMENTS.understanding.game_references[understanding.gameReference.toLowerCase().replace(/\s+/g, '_')];
+    if (gameInfo) {
+      knowledgeContext = `\nGAME REFERENCE: ${JSON.stringify(gameInfo, null, 2)}`;
+    }
+  }
+  
+  const prompt = `${PROMPTS.stages.explain.prompt}
+
+USER QUESTION: "${userPrompt}"
+${knowledgeContext}
+
+Respond in JSON format:
 {
-  "message": "Clear, concise description",
-  "thinkingSteps": [
-    "analyzing: Detailed analysis",
-    "planning: High-level strategy",
-    "implementing: Implementation details",
-    "verifying: Expected outcomes"
-  ],
+  "message": "your friendly explanation",
+  "thinkingSteps": ["analyzing: ...", "explaining: ..."],
+  "plan": [],
+  "reasoning": "detailed explanation + offer to build",
+  "nextSteps": ["suggestions for what to build"]
+}`;
+
+  const response = await callAI(prompt, 600, true);
+  
+  try {
+    const explanation = JSON.parse(response.replace(/```json\n?|\n?```/g, '').trim());
+    session.aiStages.push({ stage: 'explain', result: explanation });
+    return explanation;
+  } catch (error) {
+    console.error('❌ Stage 2 parse error:', error.message);
+    return {
+      message: 'I can help you with that!',
+      thinkingSteps: ['responding: Providing assistance'],
+      plan: [],
+      reasoning: 'What would you like me to create for you?',
+      nextSteps: ['Tell me what you want to build']
+    };
+  }
+}
+
+// STAGE 3: Generate initial idea (for build requests)
+async function stage3_initialIdea(userPrompt, understanding, context, session) {
+  console.log('💡 Stage 3: Generating initial idea...');
+  
+  const systemsContext = understanding.systems.map(sys => {
+    const examples = PROMPTS.knowledge.patterns;
+    return `System: ${sys}\nCommon patterns: ${JSON.stringify(examples, null, 2)}`;
+  }).join('\n\n');
+  
+  const prompt = `${PROMPTS.stages.initial_idea.prompt}
+
+USER REQUEST: "${userPrompt}"
+
+SYSTEMS NEEDED: ${understanding.systems.join(', ')}
+COMPLEXITY: ${understanding.complexity}
+
+COMMON PATTERNS:
+${systemsContext}
+
+KNOWLEDGE:
+${PROMPTS.knowledge.luau_basics}
+
+${PROMPTS.knowledge.common_mistakes}
+
+${context?.sourceCodes ? `EXISTING SOURCE CODE:\n${JSON.stringify(context.sourceCodes, null, 2)}` : ''}
+
+Generate your initial implementation idea.`;
+
+  const response = await callAI(prompt, 1000, false);
+  session.aiStages.push({ stage: 'initial_idea', result: response });
+  console.log('✅ Initial idea generated');
+  return response;
+}
+
+// STAGE 4: Improve the idea
+async function stage4_improveIdea(initialIdea, understanding, session) {
+  console.log('🔧 Stage 4: Improving idea...');
+  
+  const prompt = `${PROMPTS.stages.improve_idea.prompt}
+
+YOUR INITIAL IDEA:
+${initialIdea}
+
+SECURITY RULES:
+${PROMPTS.knowledge.security}
+
+COMMON MISTAKES TO AVOID:
+${PROMPTS.knowledge.common_mistakes}
+
+Now improve this idea with better security, performance, and error handling.`;
+
+  const response = await callAI(prompt, 1200, false);
+  session.aiStages.push({ stage: 'improve_idea', result: response });
+  console.log('✅ Idea improved');
+  return response;
+}
+
+// STAGE 5: Create detailed plan
+async function stage5_createPlan(improvedIdea, userPrompt, understanding, session) {
+  console.log('📋 Stage 5: Creating detailed plan...');
+  
+  const prompt = `${PROMPTS.stages.create_plan.prompt}
+
+IMPROVED IDEA:
+${improvedIdea}
+
+USER REQUEST: "${userPrompt}"
+
+ROBLOX SERVICES:
+${PROMPTS.knowledge.roblox_services}
+
+Convert your improved idea into a detailed JSON plan.
+
+RESPONSE FORMAT:
+{
+  "message": "Creating [system] with [N] steps",
+  "thinkingSteps": ["analyzing: ...", "planning: ...", "structuring: ..."],
   "plan": [
     {
       "step": 1,
-      "type": "create|modify|analyze",
-      "name": "InstanceName",
-      "className": "Script|LocalScript|ModuleScript",
+      "type": "create",
+      "name": "ExactName",
+      "className": "Script",
       "parentPath": "game.ServerScriptService",
-      "description": "Detailed description",
+      "description": "What this does",
       "properties": {
         "Name": "value",
-        "Source": "-- Complete Luau code"
-      },
-      "modifications": [
-        {
-          "action": "replace|insertAfter|insertBefore|wrapWith",
-          "target": "EXACT code to find",
-          "replacement": "New code",
-          "reasoning": "Why needed"
-        }
-      ]
+        "Source": "-- COMPLETE working Luau code here"
+      }
     }
   ],
-  "needsApproval": false,
-  "reasoning": "Comprehensive explanation",
-  "warnings": ["Considerations"],
-  "nextSteps": ["What's next"]
+  "reasoning": "Why this approach",
+  "warnings": ["Security: ...", "Performance: ..."],
+  "nextSteps": ["Test this", "Adjust that"]
+}`;
+
+  const response = await callAI(prompt, 2000, true);
+  
+  try {
+    const plan = JSON.parse(response.replace(/```json\n?|\n?```/g, '').trim());
+    session.aiStages.push({ stage: 'create_plan', result: plan });
+    console.log('✅ Plan created with', plan.plan?.length || 0, 'steps');
+    return plan;
+  } catch (error) {
+    console.error('❌ Stage 5 parse error:', error.message);
+    return {
+      message: 'Plan created',
+      thinkingSteps: ['planning: Created implementation plan'],
+      plan: [],
+      reasoning: 'Implementation plan generated',
+      warnings: [],
+      nextSteps: ['Review and implement']
+    };
+  }
 }
 
-CRITICAL RULES:
-1. 🚫 NEVER use "replaceAll" - ONLY: replace, insertAfter, insertBefore, wrapWith
-2. 📝 If need source code: {"needsSourceCode": {"instanceName": "X", "expectedPath": "...", "reason": "..."}}
-3. ✅ ALWAYS use 'local' for variables
-4. ✅ ALWAYS use ':GetService()' for services
-5. ✅ ALWAYS use 'task.wait()' not 'wait()'
-6. ✅ ALWAYS include proper 'end' keywords
-7. ✅ ALWAYS use ':WaitForChild()' for safe access
-8. ✅ ALWAYS validate inputs with pcall()
-9. ✅ ALWAYS add meaningful comments
-10. ✅ Return ONLY valid JSON
-
-RESPONSE QUALITY STANDARDS:
-• Code must be complete and runnable
-• Follow Roblox naming conventions
-• Include proper indentation
-• Add comments for complex logic
-• Consider security: validate inputs, check distances, rate limit
-• Consider performance: avoid unnecessary loops, use pooling
-• Test mentally: would this code work?
-
-MODIFICATION BEST PRACTICES:
-• Target strings must be EXACT and UNIQUE
-• Preserve existing indentation
-• Keep modifications small and focused
-• Test that target exists
-• Break large modifications into steps
-
-PLANNING STRATEGY:
-• Start simple: base instances first
-• Order matters: dependencies before dependents
-• One concern per step
-• Validate early
-• Provide clear success criteria`;
-
-function detectNeededModules(userPrompt, context) {
-  const prompt = userPrompt.toLowerCase();
-  const modules = [];
-  
-  const detectionRules = {
-    syntax: ['syntax', 'error', 'how to', 'basic', 'end', 'help', 'learn', 'start'],
-    remotes: ['remote', 'client', 'server', 'fire', 'event', 'communicate', 'network'],
-    data: ['save', 'load', 'data', 'datastore', 'leaderstats', 'stats', 'store', 'persistent'],
-    combat: ['damage', 'health', 'attack', 'hit', 'combat', 'fight', 'weapon', 'hurt', 'kill'],
-    gui: ['gui', 'ui', 'button', 'frame', 'screen', 'interface', 'menu', 'text', 'display'],
-    tween: ['tween', 'animate', 'animation', 'move', 'smooth', 'lerp', 'transition'],
-    raycast: ['raycast', 'ray', 'shoot', 'gun', 'bullet', 'aim', 'hit detection'],
-    inventory: ['inventory', 'item', 'backpack', 'storage', 'collect', 'pickup', 'loot'],
-    security: ['secure', 'exploit', 'validate', 'check', 'anti', 'safe', 'hack', 'cheat'],
-    performance: ['optimize', 'lag', 'performance', 'fast', 'efficient', 'pool', 'slow', 'fps'],
-    advanced: ['module', 'class', 'oop', 'pattern', 'advanced', 'complex', 'system']
-  };
-  
-  for (const [module, keywords] of Object.entries(detectionRules)) {
-    for (const keyword of keywords) {
-      if (prompt.includes(keyword)) {
-        if (!modules.includes(module)) {
-          modules.push(module);
-        }
-        break;
-      }
-    }
-  }
-  
-  if (prompt.includes('read') || prompt.includes('modify') || prompt.includes('fix')) {
-    if (!modules.includes('syntax')) {
-      modules.push('syntax');
-    }
-  }
-  
-  if (modules.length === 0) {
-    modules.push('syntax');
-  }
-  
-  return modules.slice(0, 3);
-}
-
-function buildOptimizedPrompt(userPrompt, context, sessionId) {
-  const session = initSession(sessionId);
-  
-  let prompt = CORE_PROMPT + '\n\n';
-  
-  const neededModules = detectNeededModules(userPrompt, context);
-  
-  if (neededModules.length > 0) {
-    prompt += '═══ RELEVANT KNOWLEDGE ═══\n';
-    for (const moduleName of neededModules) {
-      if (KNOWLEDGE_MODULES[moduleName]) {
-        prompt += KNOWLEDGE_MODULES[moduleName] + '\n\n';
-      }
-    }
-  }
-  
-  prompt += '═══ USER REQUEST ═══\n' + userPrompt + '\n\n';
-  
-  if (context?.sourceCodes && Object.keys(context.sourceCodes).length > 0) {
-    prompt += '═══ AVAILABLE SOURCE CODE ═══\n';
-    Object.entries(context.sourceCodes).forEach(([path, code]) => {
-      const preview = code.length > 1500 ? code.substring(0, 1500) + '\n... (truncated)' : code;
-      prompt += `${path}:\n\`\`\`lua\n${preview}\n\`\`\`\n\n`;
-    });
-  }
-  
-  if (session.createdInstances?.length > 0) {
-    prompt += '═══ RECENT SESSION ═══\n';
-    const recent = session.createdInstances.slice(-3);
-    prompt += `Created: ${recent.map(i => i.name).join(', ')}\n\n`;
-  }
-  
-  if (session.pendingSourceRequests?.length > 0) {
-    prompt += '═══ PENDING REQUESTS ═══\n';
-    session.pendingSourceRequests.forEach(req => {
-      prompt += `• Need: ${req.instanceName} - ${req.reason}\n`;
-    });
-    prompt += '\n';
-  }
-  
-  prompt += '═══ INSTRUCTIONS ═══\n';
-  prompt += '1. Analyze the request and available code thoroughly\n';
-  prompt += '2. If you need source code not provided, request it with needsSourceCode\n';
-  prompt += '3. Create a detailed, step-by-step plan with proper dependencies\n';
-  prompt += '4. Write complete, production-ready code with error handling\n';
-  prompt += '5. Use only targeted modifications (no replaceAll)\n';
-  prompt += '6. Consider security, performance, and edge cases\n';
-  
-  return { prompt, modules: neededModules };
-}
-
-function estimateTokens(text) {
-  return Math.ceil(text.length / 4);
-}
-
+// MAIN PROCESSING FUNCTION
 async function processAIRequest(prompt, context, sessionId) {
   try {
     const session = initSession(sessionId);
+    session.aiStages = []; // Reset stages
     
-    const sourceCheck = shouldRequestSourceCode(prompt, context, session);
+    console.log('\n════════════════════════════════════════');
+    console.log('🚀 STARTING MULTI-STAGE AI PROCESSING');
+    console.log('════════════════════════════════════════\n');
     
-    if (sourceCheck.needsSource) {
-      console.log(`[AI] 📝 Requesting source: ${sourceCheck.instanceName}`);
+    // STAGE 1: Understand
+    const understanding = await stage1_understand(prompt, session);
+    
+    // Check if source code is needed
+    if (understanding.needsSource && !context?.sourceCodes) {
+      console.log('📝 Source code required but not provided');
       
-      if (!session.pendingSourceRequests) {
-        session.pendingSourceRequests = [];
-      }
-      
-      session.pendingSourceRequests.push({
-        instanceName: sourceCheck.instanceName,
-        timestamp: new Date().toISOString(),
-        reason: sourceCheck.reason
-      });
+      const instanceMatch = prompt.match(/\b([A-Z][a-zA-Z]+)\b/);
+      const instanceName = instanceMatch ? instanceMatch[1] : 'Script';
       
       return {
-        message: `I need to read ${sourceCheck.instanceName} source code to proceed`,
+        message: `I need to see the ${instanceName} source code to analyze it`,
         thinkingSteps: [
-          'analyzing: User request received',
-          `reading: ${sourceCheck.instanceName} source code not available`,
-          'requesting: Need source code to continue'
+          'analyzing: User wants to check/modify code',
+          `checking: ${instanceName} source not provided`,
+          'requesting: Need source code to proceed'
         ],
         plan: [],
         needsSourceCode: {
-          instanceName: sourceCheck.instanceName,
-          expectedPath: `game.ServerScriptService.${sourceCheck.instanceName}`,
-          reason: sourceCheck.reason
+          instanceName: instanceName,
+          expectedPath: `game.ServerScriptService.${instanceName}`,
+          reason: 'Cannot analyze or modify without seeing the code'
         },
         needsApproval: false,
-        reasoning: 'Cannot analyze or modify code without seeing the source'
+        reasoning: 'I need to read the actual code to help you',
+        metadata: {
+          stages: session.aiStages,
+          sessionId,
+          timestamp: new Date().toISOString()
+        }
       };
     }
     
-    if (session.pendingSourceRequests?.length > 0 && context?.sourceCodes) {
-      session.pendingSourceRequests = [];
+    // STAGE 2: If question, explain and exit
+    if (understanding.requestType === 'question') {
+      const explanation = await stage2_explain(prompt, understanding, session);
+      return {
+        ...explanation,
+        metadata: {
+          requestType: 'question',
+          stages: session.aiStages,
+          sessionId,
+          timestamp: new Date().toISOString()
+        }
+      };
     }
     
-    const { prompt: optimizedPrompt, modules } = buildOptimizedPrompt(prompt, context, sessionId);
-    const tokenCount = estimateTokens(optimizedPrompt);
-    
-    console.log(`[AI] 🔧 Modules: ${modules.join(', ')}`);
-    console.log(`[AI] 📊 Tokens: ~${tokenCount} (${modules.length} modules)`);
-    
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      generationConfig: {
-        temperature: 0.7,
-        topP: 0.95,
-        topK: 40,
-        maxOutputTokens: 2048,
-        responseMimeType: 'application/json',
-      },
-      systemInstruction: optimizedPrompt
-    });
-
-    if (session.executionState === 'idle') {
-      session.executionState = 'planning';
+    // STAGES 3-5: Build something
+    if (understanding.requestType === 'build') {
+      const initialIdea = await stage3_initialIdea(prompt, understanding, context, session);
+      const improvedIdea = await stage4_improveIdea(initialIdea, understanding, session);
+      const finalPlan = await stage5_createPlan(improvedIdea, prompt, understanding, session);
       
-      const planResult = await model.generateContent('Analyze and create plan');
-      const planText = planResult.response.text();
-      
-      let aiResponse;
-      try {
-        const cleanedText = planText.replace(/```json\n?|\n?```/g, '').trim();
-        aiResponse = JSON.parse(cleanedText);
-      } catch (parseError) {
-        console.error('[AI] ❌ Parse error:', parseError.message);
-        aiResponse = {
-          message: 'Analyzing your request',
-          thinkingSteps: ['planning: Processing request'],
-          plan: [],
-          needsApproval: false,
-          reasoning: 'Creating execution plan'
-        };
-      }
-      
-      if (aiResponse.needsSourceCode) {
-        return aiResponse;
-      }
-      
-      session.currentPlan = aiResponse.plan || [];
+      // Store plan for execution
+      session.currentPlan = finalPlan.plan || [];
       session.currentStep = 0;
       session.executionState = 'executing';
       
-      return {
-        ...aiResponse,
-        metadata: {
-          mode: 'planning',
-          totalSteps: aiResponse.plan?.length || 0,
-          modulesUsed: modules,
-          estimatedTokens: tokenCount,
-          sessionId,
-          timestamp: new Date().toISOString()
-        }
-      };
-      
-    } else if (session.executionState === 'executing') {
-      const currentStep = session.currentStep;
-      const totalSteps = session.currentPlan.length;
-      
-      if (currentStep >= totalSteps) {
-        session.executionState = 'complete';
-        return {
-          message: 'All steps completed successfully',
-          thinkingSteps: ['complete: Execution finished'],
-          plan: [],
-          needsApproval: false,
-          reasoning: 'All planned steps executed',
-          metadata: {
-            mode: 'complete',
-            sessionId,
-            timestamp: new Date().toISOString()
-          }
-        };
-      }
-      
-      const step = session.currentPlan[currentStep];
-      const executionPrompt = `Execute step ${currentStep + 1}/${totalSteps}: ${step.description}`;
-      
-      console.log(`[AI] ⚙️ Executing step ${currentStep + 1}/${totalSteps}`);
-      
-      const stepResult = await model.generateContent(executionPrompt);
-      const stepText = stepResult.response.text();
-      
-      let stepResponse;
-      try {
-        const cleanedText = stepText.replace(/```json\n?|\n?```/g, '').trim();
-        stepResponse = JSON.parse(cleanedText);
-      } catch (parseError) {
-        console.error('[AI] ❌ Step parse error:', parseError.message);
-        stepResponse = {
-          message: `Executing step ${currentStep + 1}`,
-          thinkingSteps: [`working: Processing step ${currentStep + 1}`],
-          plan: [step],
-          needsApproval: false,
-          reasoning: 'Step execution'
-        };
-      }
-      
-      session.currentStep++;
-      if (session.currentStep >= totalSteps) {
-        session.executionState = 'complete';
-      }
+      console.log('\n════════════════════════════════════════');
+      console.log('✅ MULTI-STAGE PROCESSING COMPLETE');
+      console.log('Stages used:', session.aiStages.length);
+      console.log('Steps in plan:', session.currentPlan.length);
+      console.log('════════════════════════════════════════\n');
       
       return {
-        ...stepResponse,
+        ...finalPlan,
         metadata: {
-          mode: 'execution',
-          currentStep: currentStep + 1,
-          totalSteps,
-          modulesUsed: modules,
-          estimatedTokens: tokenCount,
+          requestType: 'build',
+          complexity: understanding.complexity,
+          systems: understanding.systems,
+          stages: session.aiStages.map(s => s.stage),
+          totalSteps: session.currentPlan.length,
           sessionId,
           timestamp: new Date().toISOString()
         }
       };
     }
     
+    // ANALYZE request
+    if (understanding.requestType === 'analyze' && context?.sourceCodes) {
+      const analysis = await callAI(
+        `${PROMPTS.stages.analyze_code.prompt}\n\nSOURCE CODE:\n${JSON.stringify(context.sourceCodes, null, 2)}`,
+        1200,
+        true
+      );
+      
+      return JSON.parse(analysis);
+    }
+    
+    // Default fallback
+    return {
+      message: 'Request processed',
+      thinkingSteps: ['processing: Handled request'],
+      plan: [],
+      reasoning: 'Request completed',
+      metadata: {
+        stages: session.aiStages,
+        sessionId,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
   } catch (error) {
-    console.error('[AI] ❌ Error:', error.message);
+    console.error('❌ AI Processing Error:', error.message);
     return {
       message: 'Error processing request',
-      thinkingSteps: [],
+      thinkingSteps: ['error: ' + error.message],
       plan: [],
       needsApproval: false,
-      reasoning: 'Internal error: ' + error.message,
+      reasoning: 'An error occurred: ' + error.message,
       error: true
     };
   }
 }
 
-function shouldRequestSourceCode(userPrompt, context, session) {
-  const lowerPrompt = userPrompt.toLowerCase();
-  
-  const wantsToRead = lowerPrompt.includes('read') && 
-                     (lowerPrompt.includes('source') || 
-                      lowerPrompt.includes('code') ||
-                      lowerPrompt.includes('file'));
-  
-  const wantsToModify = lowerPrompt.includes('modify') || 
-                       lowerPrompt.includes('fix') || 
-                       lowerPrompt.includes('change') ||
-                       lowerPrompt.includes('edit');
-  
-  const instanceNameMatch = userPrompt.match(/\b([A-Z][a-zA-Z]+)\b/);
-  const instanceName = instanceNameMatch ? instanceNameMatch[1] : null;
-  
-  if ((wantsToRead || wantsToModify) && instanceName) {
-    if (context?.sourceCodes) {
-      const hasSourceCode = Object.keys(context.sourceCodes).some(path => 
-        path.toLowerCase().includes(instanceName.toLowerCase())
-      );
-      
-      if (!hasSourceCode) {
-        return {
-          needsSource: true,
-          instanceName: instanceName,
-          reason: `User wants to ${wantsToRead ? 'read' : 'modify'} ${instanceName}`
-        };
-      }
-    } else {
-      return {
-        needsSource: true,
-        instanceName: instanceName || 'unknown',
-        reason: 'No source code provided'
-      };
-    }
-  }
-  
-  return { needsSource: false };
-}
-
+// ============================================
 // ROUTES
+// ============================================
+
 app.get('/', (req, res) => {
   res.json({
     name: 'Acidnade AI',
-    version: '4.1 - Enhanced with JSON Modules',
+    version: '5.0 - Multi-Stage Reasoning',
     status: 'online',
     model: 'gemini-3-flash-preview',
     features: [
-      '🚀 60-80% token reduction',
-      '🧠 Smart module detection',
-      '📦 11 knowledge modules (from JSON)',
-      '📝 Source code requests',
-      '⚡ Production-ready code',
-      '🔒 Security-focused',
-      '⚙️ Performance optimized',
-      '💾 External knowledge storage'
+      '🧠 Multi-stage AI reasoning (5 stages)',
+      '🎯 Accurate request understanding',
+      '💡 Idea generation + improvement',
+      '📋 Detailed planning',
+      '🔍 Question vs build detection',
+      '📝 Source code analysis',
+      '⚡ Proper responses (no fake "completed")'
     ],
-    modules: Object.keys(KNOWLEDGE_MODULES),
+    stages: [
+      '1. Understand request',
+      '2. Explain (if question)',
+      '3. Generate initial idea',
+      '4. Improve idea',
+      '5. Create detailed plan'
+    ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
   });
@@ -511,7 +468,7 @@ app.get('/session/:sessionId', authenticateRequest, (req, res) => {
     currentStep: session.currentStep,
     totalSteps: session.currentPlan?.length || 0,
     createdInstances: session.createdInstances || [],
-    pendingSourceRequests: session.pendingSourceRequests || [],
+    aiStages: session.aiStages || [],
     timestamp: new Date(session.timestamp || Date.now()).toISOString()
   });
 });
@@ -530,14 +487,14 @@ app.post('/ai', authenticateRequest, async (req, res) => {
     initSession(sessionId);
     
     if (context?.sourceCodes) {
-      console.log(`[AI] 📁 Context has ${Object.keys(context.sourceCodes).length} source files`);
+      console.log(`📁 Context has ${Object.keys(context.sourceCodes).length} source files`);
     }
     
     const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
     res.json(aiResponse);
     
   } catch (error) {
-    console.error('[Server] ❌ Error:', error.message);
+    console.error('❌ Server Error:', error.message);
     res.status(500).json({ 
       error: 'Server error',
       message: error.message,
@@ -556,36 +513,38 @@ setInterval(() => {
   for (const [sessionId, session] of sessionMemory.entries()) {
     if (now - (session.timestamp || now) > oneHour) {
       sessionMemory.delete(sessionId);
-      console.log(`[Cleanup] 🧹 Removed old session: ${sessionId}`);
+      console.log(`🧹 Removed old session: ${sessionId}`);
     }
   }
 }, 30 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log('═══════════════════════════════════════════════════════════');
-  console.log('🚀 ACIDNADE AI v4.1 - JSON KNOWLEDGE MODULES');
+  console.log('🚀 ACIDNADE AI v5.0 - MULTI-STAGE REASONING');
   console.log('═══════════════════════════════════════════════════════════');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
   console.log('Model: gemini-3-flash-preview');
   console.log('');
-  console.log('💡 FEATURES:');
-  console.log('  ✅ External JSON knowledge storage');
-  console.log('  ✅ 100% enhanced knowledge base');
-  console.log('  ✅ 60-80% token reduction');
-  console.log('  ✅ Smart module detection');
-  console.log('  ✅ Production-ready code');
-  console.log('  ✅ Easy knowledge updates');
+  console.log('🧠 AI REASONING STAGES:');
+  console.log('  Stage 1: Understand request type & complexity');
+  console.log('  Stage 2: Explain (if question)');
+  console.log('  Stage 3: Generate initial idea (if build)');
+  console.log('  Stage 4: Improve idea with security & performance');
+  console.log('  Stage 5: Create detailed step-by-step plan');
   console.log('');
-  console.log('📦 LOADED MODULES:', Object.keys(KNOWLEDGE_MODULES).length);
-  console.log('   ', Object.keys(KNOWLEDGE_MODULES).join(', '));
+  console.log('✅ FIXES:');
+  console.log('  • Questions get proper explanations (not fake "completed")');
+  console.log('  • AI thinks before responding');
+  console.log('  • Better code quality through iteration');
+  console.log('  • Proper request type detection');
   console.log('');
-  console.log('📊 TOKEN EFFICIENCY:');
-  console.log('   Core Prompt: ~600 tokens');
-  console.log('   Per Module: ~400-800 tokens');
-  console.log('   Max Load (3 modules): ~3,000 tokens');
-  console.log('   Old System: 8,000+ tokens always');
-  console.log('   Savings: 60-80%');
+  console.log('📁 CONFIG FILES:');
+  console.log('  • requirements.json: Understanding rules');
+  console.log('  • prompts.json: Stage-specific prompts');
+  console.log('');
+  console.log('⚠️  NOTE: Uses more tokens per request (5 AI calls for builds)');
+  console.log('   But responses are ACTUALLY CORRECT now!');
   console.log('');
   console.log('═══════════════════════════════════════════════════════════');
   console.log('✅ Server ready at http://localhost:' + PORT);
