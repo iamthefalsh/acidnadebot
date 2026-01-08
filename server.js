@@ -1,543 +1,429 @@
 import express from 'express';
 import cors from 'cors';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import rateLimit from 'express-rate-limit';
-import helmet from 'helmet';
-import compression from 'compression';
 import dotenv from 'dotenv';
-import fs from 'fs/promises';
-import path from 'path';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(process.cwd(), 'data');
-
-// Initialize data directory
-await fs.mkdir(DATA_DIR, { recursive: true }).catch(() => {});
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ============================================================================
-// MEMORY SYSTEM - Persistent storage for conversations and context
-// ============================================================================
-class SystemMemory {
-  constructor() {
-    this.conversations = new Map();
-    this.userContext = new Map();
-    this.loadMemory();
-  }
+// No sessions, no memory, no complex logic - pure AI decisions
+const sessions = new Map(); // Just for session tracking
 
-  async loadMemory() {
-    try {
-      const convPath = path.join(DATA_DIR, 'conversations.json');
-      const data = await fs.readFile(convPath, 'utf-8').catch(() => '{}');
-      const parsed = JSON.parse(data);
-      this.conversations = new Map(Object.entries(parsed));
-    } catch (error) {
-      console.log('[Memory] Starting fresh');
-    }
-  }
-
-  async saveMemory() {
-    try {
-      const convPath = path.join(DATA_DIR, 'conversations.json');
-      const obj = Object.fromEntries(this.conversations);
-      await fs.writeFile(convPath, JSON.stringify(obj, null, 2));
-    } catch (error) {
-      console.error('[Memory] Save error:', error.message);
-    }
-  }
-
-  getUserHistory(userId, limit = 10) {
-    if (!this.conversations.has(userId)) {
-      this.conversations.set(userId, []);
-    }
-    const history = this.conversations.get(userId);
-    return history.slice(-limit);
-  }
-
-  addMessage(userId, userMsg, aiResponse, context = {}) {
-    if (!this.conversations.has(userId)) {
-      this.conversations.set(userId, []);
-    }
-    
-    const history = this.conversations.get(userId);
-    history.push({
-      user: userMsg,
-      ai: aiResponse,
-      context: context,
-      timestamp: Date.now()
-    });
-    
-    // Keep last 50 messages
-    if (history.length > 50) {
-      this.conversations.set(userId, history.slice(-50));
-    }
-    
-    this.saveMemory();
-  }
-
-  setUserContext(userId, context) {
-    this.userContext.set(userId, {
-      ...context,
-      lastUpdate: Date.now()
-    });
-  }
-
-  getUserContext(userId) {
-    return this.userContext.get(userId) || {};
-  }
-}
-
-const memory = new SystemMemory();
-
-// ============================================================================
-// MIDDLEWARE
-// ============================================================================
-app.use(helmet());
 app.use(cors());
-app.use(compression());
-app.use(express.json({ limit: '5mb' }));
-app.set('trust proxy', 1);
+app.use(express.json({ limit: '10mb' })); // For large code responses
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  message: { error: 'Rate limit exceeded' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/ai', limiter);
-
-const authenticate = (req, res, next) => {
-  const key = req.headers['x-acidnade-key'];
-  if (!key || key !== process.env.ACIDNADE_API_KEY) {
+// Authentication middleware
+const authenticateRequest = (req, res, next) => {
+  const apiKey = req.headers['x-acidnade-key'];
+  if (!apiKey || apiKey !== process.env.ACIDNADE_API_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
 };
 
-// ============================================================================
-// CORE AI SYSTEM - Pure AI decision making
-// ============================================================================
-
-async function chatWithAI(userMessage, context, userId) {
+// PURE AI DECISION SYSTEM - NO KEYWORD DETECTION
+async function getAIResponse(userPrompt, context, sessionId, isPlanRequest = false) {
   try {
     const model = genAI.getGenerativeModel({
       model: 'gemini-3-flash-preview',
       generationConfig: {
-        temperature: 0.4,
-        maxOutputTokens: 8000,
+        temperature: 0.7,
+        maxOutputTokens: 4096,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `You are Acidnade AI, an autonomous Roblox Studio assistant.
+      systemInstruction: `You are Acidnade AI, a Roblox Studio assistant.
 
-YOUR CORE PHILOSOPHY:
-You make ALL decisions autonomously. No keyword matching. No pattern detection.
-You understand context, intent, and nuance. You decide everything based on pure reasoning.
+You must decide what the user wants:
+1. Are they chatting? → Return chat response
+2. Are they requesting work? → Return execution plan or code
 
-DECISION MAKING:
-- Analyze user's message deeply
-- Consider conversation history
-- Understand implicit and explicit intent
-- Decide whether to chat or execute
-- Plan system architecture when needed
+NO KEYWORD DETECTION - USE YOUR OWN JUDGMENT.
 
-RESPONSE TYPES:
+RESPONSE FORMATS:
 
-1. CHAT MODE - For conversations, questions, greetings, clarifications
+For CHAT (friendly conversation):
 {
   "type": "chat",
-  "message": "Your conversational response"
+  "message": "Your response here"
 }
 
-2. PLAN MODE - When user wants you to create/modify systems
-Create a high-level plan WITHOUT code. Keep it token-efficient.
+For EXECUTION PLAN (when user wants something created/changed):
 {
   "type": "plan",
-  "message": "What I'll create for you",
-  "understanding": "Brief analysis of requirements",
+  "message": "What I'll create",
   "steps": [
     {
-      "stepId": "step_1",
-      "description": "Brief description of what this step does",
-      "estimatedComplexity": "simple|medium|complex"
+      "step": 1,
+      "action": "create/modify/multiedit",
+      "name": "InstanceName",
+      "classtype": "Script/Part/TextLabel/etc",
+      "parent": "game.Workspace OR UniqueID",
+      "properties": {},
+      "description": "What this step will do"
     }
   ]
 }
 
-3. READY FOR EXECUTION - When plan is approved or direct creation requested
-{
-  "type": "ready",
-  "message": "Ready to execute the plan",
-  "nextStep": "step_1"
-}
-
-KEY PRINCIPLES:
-- Plans are lightweight (no code, just architecture)
-- Each step executes independently with its own AI call
-- You remember context across conversations
-- Parent references use UniqueID, not paths
-- Be natural, intelligent, and autonomous`
-    });
-
-    const history = memory.getUserHistory(userId, 8);
-    const userCtx = memory.getUserContext(userId);
-
-    let contextPrompt = `USER: ${userMessage}\n\n`;
-
-    if (history.length > 0) {
-      contextPrompt += `CONVERSATION HISTORY:\n`;
-      history.forEach(conv => {
-        contextPrompt += `User: ${conv.user}\n`;
-        contextPrompt += `You: ${conv.ai}\n\n`;
-      });
-    }
-
-    if (context?.selectedObjects?.length > 0) {
-      contextPrompt += `SELECTED OBJECTS:\n`;
-      context.selectedObjects.forEach(obj => {
-        contextPrompt += `- ${obj.Name} (${obj.ClassName}) [UID: ${obj.UniqueId}]\n`;
-      });
-      contextPrompt += '\n';
-    }
-
-    if (context?.workspaceInfo) {
-      contextPrompt += `WORKSPACE INFO:\n${JSON.stringify(context.workspaceInfo, null, 2)}\n\n`;
-    }
-
-    if (userCtx.currentPlan) {
-      contextPrompt += `CURRENT PLAN:\n${JSON.stringify(userCtx.currentPlan, null, 2)}\n\n`;
-    }
-
-    contextPrompt += `Analyze and respond appropriately. Make autonomous decisions.`;
-
-    const result = await model.generateContent(contextPrompt);
-    const response = JSON.parse(result.response.text());
-
-    // Store plan in context if created
-    if (response.type === 'plan') {
-      memory.setUserContext(userId, {
-        currentPlan: response,
-        planActive: true
-      });
-    }
-
-    // Store conversation
-    memory.addMessage(userId, userMessage, response.message, { type: response.type });
-
-    return response;
-
-  } catch (error) {
-    console.error('[AI] Error:', error.message);
-    return {
-      type: 'chat',
-      message: "I encountered an error processing your request. Could you rephrase that?"
-    };
-  }
-}
-
-async function executeStep(stepId, plan, context, userId) {
-  try {
-    const step = plan.steps.find(s => s.stepId === stepId);
-    if (!step) {
-      throw new Error('Step not found');
-    }
-
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 6000,
-        responseMimeType: 'application/json',
-      },
-      systemInstruction: `You are executing a specific step in a Roblox Studio plan.
-
-EXECUTION FORMAT:
+For CODE EXECUTION (when asked to generate actual code):
 {
   "type": "execution",
-  "stepId": "step_1",
-  "message": "Brief update on what you're creating",
-  "actions": [
+  "message": "Creating the instance",
+  "name": "InstanceName",
+  "classtype": "Script/Part/TextLabel/etc",
+  "parent": "game.Workspace OR UniqueID",
+  "properties": {
+    "Color3": "255,0,0",
+    "Position": "0,5,0"
+  },
+  "content": "-- Lua code here"
+}
+
+For MULTIPLE EDITS:
+{
+  "type": "multiedit",
+  "message": "Modifying existing instances",
+  "edits": [
     {
-      "action": "create",
-      "name": "InstanceName",
-      "classtype": "ModuleScript|Script|LocalScript|Part|Frame|TextLabel|etc",
-      "parent": "UNIQUE_ID_HERE",
+      "name": "EXACT_NAME_FROM_MATCHES",
+      "parent": "EXACT_PATH_FROM_MATCHES",
       "properties": {
-        "Color": [255, 0, 0],
-        "Position": "UDim2.new(0, 0, 0, 0)",
-        "Size": "UDim2.new(0, 100, 0, 50)",
-        "Text": "Hello"
-      },
-      "content": "-- Full Lua code here (for scripts only)"
-    },
-    {
-      "action": "modify",
-      "name": "ExistingInstance",
-      "parent": "UNIQUE_ID_OR_PATH",
-      "properties": {
-        "Color": [0, 255, 0]
+        "Color3": "0,255,0"
       },
       "sourceModifications": {
-        "action": "replace_lines",
-        "startLine": 5,
-        "endLine": 9,
-        "newCode": "-- Updated code"
+        "action": "replace/insert/delete",
+        "fromLine": 5,
+        "toLine": 9,
+        "newCode": "-- new code"
       }
     }
   ]
 }
 
 RULES:
-- Generate COMPLETE, PRODUCTION-READY code
-- Use UniqueID for parent when available
-- Include all necessary properties
-- Scripts must be fully functional
-- Be specific and detailed
-- Each action creates/modifies ONE instance`
+1. NEVER say "Working on your request" - be specific
+2. If user asks to create something: Return "plan" type first
+3. If user asks for code: Return "execution" type with content
+4. ALWAYS return valid JSON
+5. Make decisions purely based on understanding, not keywords`
     });
 
-    let prompt = `EXECUTE STEP: ${stepId}\n\n`;
-    prompt += `STEP DESCRIPTION: ${step.description}\n\n`;
-    prompt += `FULL PLAN CONTEXT:\n${JSON.stringify(plan, null, 2)}\n\n`;
+    const prompt = `User: ${userPrompt}
+
+Context: ${context ? JSON.stringify(context) : 'No context'}
+
+Session: ${sessionId}
+
+What does the user want? Decide and respond with the appropriate JSON.
+
+IMPORTANT: If the user is describing a complex system or multiple things, return a "plan" with steps.
+If the user is asking for specific code or a single instance, return "execution".
+If the user just wants to chat, return "chat".`;
+
+    console.log(`[AI] Processing: "${userPrompt.substring(0, 100)}..."`);
     
-    if (context?.selectedObjects?.length > 0) {
-      prompt += `SELECTED OBJECTS:\n`;
-      context.selectedObjects.forEach(obj => {
-        prompt += `- ${obj.Name} (${obj.ClassName}) [UID: ${obj.UniqueId}]\n`;
-      });
-      prompt += '\n';
-    }
-
-    prompt += `Generate the complete implementation for this step.`;
-
     const result = await model.generateContent(prompt);
-    const execution = JSON.parse(result.response.text());
-
-    return execution;
-
+    const text = result.response.text();
+    
+    // Clean and parse JSON
+    const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+    const response = JSON.parse(cleaned);
+    
+    // Validate response has minimum required fields
+    if (!response.type) {
+      response.type = 'chat';
+      response.message = "Hello! I'm Acidnade AI. What would you like to create?";
+    }
+    
+    // Ensure required fields for each type
+    switch(response.type) {
+      case 'plan':
+        if (!response.steps || !Array.isArray(response.steps)) {
+          response.steps = [];
+        }
+        if (!response.message) {
+          response.message = "I'll create that for you!";
+        }
+        break;
+        
+      case 'execution':
+        if (!response.name) response.name = 'Instance';
+        if (!response.classtype) response.classtype = 'Part';
+        if (!response.parent) response.parent = 'game.Workspace';
+        if (!response.properties) response.properties = {};
+        if (!response.content && response.classtype.toLowerCase().includes('script')) {
+          response.content = '-- Code will be generated here';
+        }
+        break;
+        
+      case 'multiedit':
+        if (!response.edits || !Array.isArray(response.edits)) {
+          response.edits = [];
+        }
+        break;
+        
+      case 'chat':
+      default:
+        if (!response.message) {
+          response.message = "Hello! I'm Acidnade AI. How can I help you?";
+        }
+    }
+    
+    return response;
+    
   } catch (error) {
-    console.error('[Execute] Error:', error.message);
-    throw error;
+    console.error('[AI] Error:', error.message);
+    return {
+      type: 'chat',
+      message: "Hello! I'm having trouble. Please ask me to create something in Roblox Studio!"
+    };
   }
 }
 
-// ============================================================================
-// API ENDPOINTS
-// ============================================================================
-
-// Main chat endpoint - AI decides everything
-app.post('/ai/chat', authenticate, async (req, res) => {
+// Generate code for a specific step
+async function generateCodeForStep(step, context, sessionId) {
   try {
-    const { message, context, userId = 'anonymous' } = req.body;
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+      },
+      systemInstruction: `You are Acidnade AI, generating Roblox Lua code.
 
-    if (!message) {
-      return res.status(400).json({ 
+Generate the exact code for this specific step.
+Include all necessary properties and logic.
+
+Return ONLY this JSON format:
+{
+  "type": "code",
+  "name": "InstanceName",
+  "classtype": "Script/Part/etc",
+  "parent": "game.Workspace",
+  "properties": {
+    "Color3": "255,0,0"
+  },
+  "content": "-- Lua code here"
+}
+
+If it's a script, include full working code.
+If it's a part, include properties like Position, Size, Color.`
+    });
+
+    const prompt = `Generate code for this step:
+
+Step Details:
+${JSON.stringify(step, null, 2)}
+
+Context: ${context ? JSON.stringify(context) : 'None'}
+
+Generate complete, working Roblox Lua code.
+Be specific and exact.`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    
+    const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(cleaned);
+    
+  } catch (error) {
+    console.error('[Code Gen] Error:', error.message);
+    return {
+      type: 'code',
+      name: step.name || 'Instance',
+      classtype: step.classtype || 'Part',
+      parent: step.parent || 'game.Workspace',
+      properties: step.properties || {},
+      content: step.classtype?.toLowerCase().includes('script') ? 
+        '-- Error generating code' : ''
+    };
+  }
+}
+
+// MAIN AI ENDPOINT - Pure AI decisions
+app.post('/ai', authenticateRequest, async (req, res) => {
+  try {
+    const { prompt, context, sessionId } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({
         type: 'chat',
-        message: "I need a message to respond to."
+        message: "Please send a message!"
       });
     }
-
-    console.log(`[${userId}] ${message.substring(0, 80)}${message.length > 80 ? '...' : ''}`);
-
-    const response = await chatWithAI(message, context, userId);
+    
+    const response = await getAIResponse(prompt, context, sessionId || 'session-' + Date.now());
     res.json(response);
-
+    
   } catch (error) {
-    console.error('[Chat] Error:', error.message);
+    console.error('[Server] Error:', error.message);
     res.status(500).json({
       type: 'chat',
-      message: "Something went wrong. Please try again."
+      message: "Oops! Something went wrong. Try again!"
     });
   }
 });
 
-// Execute a specific step from plan
-app.post('/ai/execute', authenticate, async (req, res) => {
+// PLAN EXECUTION ENDPOINT - Generate code for plan steps
+app.post('/ai/execute', authenticateRequest, async (req, res) => {
   try {
-    const { stepId, userId = 'anonymous', context } = req.body;
-
-    const userCtx = memory.getUserContext(userId);
-    const plan = userCtx.currentPlan;
-
-    if (!plan || plan.type !== 'plan') {
+    const { steps, context, sessionId, stepIndex } = req.body;
+    
+    if (!steps || !Array.isArray(steps)) {
       return res.status(400).json({
-        error: 'No active plan found. Chat first to create a plan.'
+        type: 'chat',
+        message: "Need steps to execute!"
       });
     }
-
-    if (!stepId) {
-      return res.status(400).json({
-        error: 'stepId required'
+    
+    // If stepIndex is provided, generate code for that specific step
+    if (stepIndex !== undefined) {
+      const step = steps[stepIndex];
+      if (!step) {
+        return res.status(400).json({
+          type: 'chat',
+          message: "Invalid step index!"
+        });
+      }
+      
+      const code = await generateCodeForStep(step, context, sessionId);
+      res.json({
+        type: 'step_execution',
+        step: stepIndex,
+        ...code
+      });
+      
+    } else {
+      // Generate code for all steps
+      const executions = [];
+      
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const code = await generateCodeForStep(step, context, sessionId);
+        executions.push({
+          step: i + 1,
+          ...code
+        });
+      }
+      
+      res.json({
+        type: 'batch_execution',
+        message: `Generated code for ${executions.length} steps`,
+        executions: executions
       });
     }
-
-    console.log(`[${userId}] Executing: ${stepId}`);
-
-    const execution = await executeStep(stepId, plan, context, userId);
-    res.json(execution);
-
+    
   } catch (error) {
     console.error('[Execute] Error:', error.message);
     res.status(500).json({
-      error: error.message
+      type: 'chat',
+      message: "Failed to generate code!"
     });
   }
 });
 
-// Execute entire plan at once
-app.post('/ai/execute-all', authenticate, async (req, res) => {
+// QUICK EXECUTION ENDPOINT - Direct code generation
+app.post('/ai/quick', authenticateRequest, async (req, res) => {
   try {
-    const { userId = 'anonymous', context } = req.body;
-
-    const userCtx = memory.getUserContext(userId);
-    const plan = userCtx.currentPlan;
-
-    if (!plan || plan.type !== 'plan') {
+    const { prompt, context, sessionId } = req.body;
+    
+    if (!prompt) {
       return res.status(400).json({
-        error: 'No active plan found'
+        type: 'execution',
+        name: 'Default',
+        classtype: 'Part',
+        parent: 'game.Workspace',
+        properties: {},
+        content: ''
       });
     }
+    
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
+      generationConfig: {
+        temperature: 0.4,
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+      },
+      systemInstruction: `Generate Roblox Studio code directly.
 
-    console.log(`[${userId}] Executing all ${plan.steps.length} steps`);
+User wants immediate code generation.
+Return ONLY this format:
 
-    const executions = [];
-    for (const step of plan.steps) {
-      try {
-        const execution = await executeStep(step.stepId, plan, context, userId);
-        executions.push(execution);
-      } catch (error) {
-        console.error(`[Execute] Failed step ${step.stepId}:`, error.message);
-        executions.push({
-          type: 'execution',
-          stepId: step.stepId,
-          error: error.message,
-          actions: []
-        });
-      }
-    }
+{
+  "type": "execution",
+  "message": "Brief description",
+  "name": "InstanceName",
+  "classtype": "Script/Part/TextLabel/etc",
+  "parent": "game.Workspace/game.ServerStorage/etc",
+  "properties": {},
+  "content": "-- Lua code here"
+}
 
-    res.json({
-      type: 'batch_execution',
-      message: `Executed ${executions.length} steps`,
-      executions: executions
+If user doesn't specify, make reasonable assumptions.`
     });
 
+    const result = await model.generateContent(`Generate Roblox code for: "${prompt}"`);
+    const text = result.response.text();
+    
+    const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+    const response = JSON.parse(cleaned);
+    
+    // Ensure it's execution type
+    response.type = 'execution';
+    
+    res.json(response);
+    
   } catch (error) {
-    console.error('[ExecuteAll] Error:', error.message);
+    console.error('[Quick] Error:', error.message);
     res.status(500).json({
-      error: error.message
+      type: 'execution',
+      name: 'Error',
+      classtype: 'Part',
+      parent: 'game.Workspace',
+      properties: {},
+      content: '-- Error generating code'
     });
   }
 });
 
-// Get current plan
-app.get('/ai/plan/:userId', authenticate, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const userCtx = memory.getUserContext(userId);
-    
-    res.json({
-      hasPlan: !!userCtx.currentPlan,
-      plan: userCtx.currentPlan || null
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Clear plan
-app.delete('/ai/plan/:userId', authenticate, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    memory.setUserContext(userId, { currentPlan: null, planActive: false });
-    
-    res.json({
-      success: true,
-      message: 'Plan cleared'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get conversation history
-app.get('/ai/history/:userId', authenticate, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const limit = parseInt(req.query.limit) || 20;
-    const history = memory.getUserHistory(userId, limit);
-    
-    res.json({
-      userId,
-      messages: history,
-      count: history.length
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Clear history
-app.delete('/ai/history/:userId', authenticate, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    memory.conversations.delete(userId);
-    memory.userContext.delete(userId);
-    await memory.saveMemory();
-    
-    res.json({
-      success: true,
-      message: `Cleared history for ${userId}`
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Health check
+// HEALTH CHECK
 app.get('/health', (req, res) => {
   res.json({
-    status: 'operational',
-    service: 'Acidnade AI - Pure Autonomous',
-    version: '2.0.0',
-    features: [
-      'Pure AI decision making',
-      'No keyword detection',
-      'Two-phase execution (plan → execute)',
-      'Low token usage for planning',
-      'Full code generation on execution',
-      'UniqueID-based parent references',
-      'Context-aware conversations',
-      'Multi-step plan support'
-    ],
-    users: memory.conversations.size
+    status: 'ok',
+    message: 'Pure AI Autonomous System',
+    mode: 'AI makes all decisions',
+    endpoints: {
+      '/ai': 'Main endpoint - AI decides chat/plan/execution',
+      '/ai/execute': 'Execute plan steps with code generation',
+      '/ai/quick': 'Direct code generation'
+    }
   });
 });
 
-// ============================================================================
-// STARTUP
-// ============================================================================
+// CLEANUP OLD SESSIONS (once an hour)
+setInterval(() => {
+  const hourAgo = Date.now() - 3600000;
+  for (const [sessionId, timestamp] of sessions.entries()) {
+    if (timestamp < hourAgo) {
+      sessions.delete(sessionId);
+    }
+  }
+}, 3600000);
+
 app.listen(PORT, () => {
-  console.log('╔════════════════════════════════════════╗');
-  console.log('║   ACIDNADE AI - PURE AUTONOMOUS        ║');
-  console.log('╚════════════════════════════════════════╝');
-  console.log(`\n🚀 Port: ${PORT}`);
-  console.log('\n✨ Features:');
-  console.log('  • 100% AI-driven decisions');
-  console.log('  • No keyword matching');
-  console.log('  • Plan → Execute workflow');
-  console.log('  • Low token planning');
-  console.log('  • Full code on execution');
-  console.log('  • Context memory');
-  console.log('\n📡 Endpoints:');
-  console.log('  POST /ai/chat - Main interaction');
-  console.log('  POST /ai/execute - Execute step');
-  console.log('  POST /ai/execute-all - Execute full plan');
-  console.log('  GET  /ai/plan/:userId - Get current plan');
-  console.log('  GET  /health - System status');
-  console.log('\n✅ Ready for autonomous operation\n');
+  console.log('🚀 PURE AI AUTONOMOUS SYSTEM');
+  console.log(`Port: ${PORT}`);
+  console.log('✨ Features:');
+  console.log('  • Pure AI decisions - no keyword detection');
+  console.log('  • Plan steps without code initially');
+  console.log('  • Separate code generation endpoint');
+  console.log('  • Low token usage for plans');
+  console.log('  • Direct execution endpoint');
+  console.log('  • Supports all your JSON formats');
+  console.log('\nReady! AI makes all decisions.');
 });
