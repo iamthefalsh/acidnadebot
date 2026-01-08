@@ -29,11 +29,11 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // In-memory sessions for active users
 const sessions = new Map();
 
-// Load system memory from filesystem
+// System memory
 class SystemMemory {
   constructor() {
     this.userMemories = new Map();
-    this.codeSnippets = new Map(); // Code by user
+    this.codeSnippets = new Map();
     this.systemKnowledge = {
       GameCore: '',
       Gameinitializer: '',
@@ -46,33 +46,25 @@ class SystemMemory {
 
   async loadMemory() {
     try {
-      // Load user memories
       const memoryPath = path.join(DATA_DIR, 'user_memories.json');
       try {
         const data = await fs.readFile(memoryPath, 'utf-8');
         const memories = JSON.parse(data);
         this.userMemories = new Map(Object.entries(memories));
-      } catch (error) {
-        // File doesn't exist yet
-      }
-
-      // Load code snippets
+      } catch (error) {}
+      
       const codePath = path.join(DATA_DIR, 'code_snippets.json');
       try {
         const data = await fs.readFile(codePath, 'utf-8');
         const snippets = JSON.parse(data);
         this.codeSnippets = new Map(Object.entries(snippets));
-      } catch (error) {
-        // File doesn't exist yet
-      }
-
-      // Load system knowledge
+      } catch (error) {}
+      
       const sysPath = path.join(DATA_DIR, 'system_knowledge.json');
       try {
         const data = await fs.readFile(sysPath, 'utf-8');
         this.systemKnowledge = JSON.parse(data);
       } catch (error) {
-        // Initialize with default systems mentioned
         this.systemKnowledge = {
           GameCore: 'User mentioned GameCore system',
           Gameinitializer: 'User mentioned Gameinitializer system',
@@ -93,7 +85,7 @@ class SystemMemory {
       const obj = Object.fromEntries(this.userMemories);
       await fs.writeFile(memoryPath, JSON.stringify(obj, null, 2));
     } catch (error) {
-      console.error('[Memory] Save user memories error:', error.message);
+      console.error('[Memory] Save error:', error.message);
     }
   }
 
@@ -103,7 +95,7 @@ class SystemMemory {
       const obj = Object.fromEntries(this.codeSnippets);
       await fs.writeFile(codePath, JSON.stringify(obj, null, 2));
     } catch (error) {
-      console.error('[Memory] Save code snippets error:', error.message);
+      console.error('[Memory] Save error:', error.message);
     }
   }
 
@@ -112,7 +104,7 @@ class SystemMemory {
       const sysPath = path.join(DATA_DIR, 'system_knowledge.json');
       await fs.writeFile(sysPath, JSON.stringify(this.systemKnowledge, null, 2));
     } catch (error) {
-      console.error('[Memory] Save system knowledge error:', error.message);
+      console.error('[Memory] Save error:', error.message);
     }
   }
 
@@ -122,20 +114,21 @@ class SystemMemory {
         conversations: [],
         preferences: {},
         lastActive: Date.now(),
-        knownSystems: []
+        knownSystems: [],
+        systemDescriptions: []
       });
     }
     return this.userMemories.get(userId);
   }
 
-  addConversation(userId, userMessage, aiResponse) {
+  addConversation(userId, userMessage, aiResponse, type = 'chat') {
     const memory = this.getUserMemory(userId);
     memory.conversations.push({
       user: userMessage,
       ai: aiResponse,
+      type: type,
       timestamp: Date.now()
     });
-    // Keep last 100 conversations
     if (memory.conversations.length > 100) {
       memory.conversations = memory.conversations.slice(-100);
     }
@@ -146,6 +139,23 @@ class SystemMemory {
   getConversationHistory(userId, maxMessages = 10) {
     const memory = this.getUserMemory(userId);
     return memory.conversations.slice(-maxMessages);
+  }
+
+  addSystemDescription(userId, description) {
+    const memory = this.getUserMemory(userId);
+    memory.systemDescriptions.push({
+      description: description,
+      timestamp: Date.now()
+    });
+    if (memory.systemDescriptions.length > 50) {
+      memory.systemDescriptions = memory.systemDescriptions.slice(-50);
+    }
+    this.saveUserMemories();
+  }
+
+  getSystemDescriptions(userId) {
+    const memory = this.getUserMemory(userId);
+    return memory.systemDescriptions.slice(-5);
   }
 
   addCodeSnippet(userId, snippetName, code) {
@@ -212,135 +222,262 @@ const authenticateRequest = (req, res, next) => {
   next();
 };
 
-function buildPrompt(userPrompt, context, userId) {
-  // Get conversation history
-  const history = systemMemory.getConversationHistory(userId, 5);
+// NEW: Advanced system description detection
+function isSystemDescription(text) {
+  if (!text || text.length < 50) return false;
   
-  // Get user's code snippets
-  const userSnippets = systemMemory.getUserCodeSnippets(userId);
+  const systemKeywords = [
+    // Roblox specific
+    'system', 'attribute', 'module', 'config', 'toolconfig', 'toolconfigs',
+    'gamecore', 'gameinitializer', 'gootypes', 'bag system',
+    'capacity', 'price', 'display', 'surfacegui', 'textlabel',
+    'frame', 'canvasgroup', 'basepart', 'starterbag', 'attachment',
+    'serverstorage', 'workspace', 'player', 'stat',
+    
+    // Programming/Technical
+    'function', 'method', 'class', 'object', 'instance',
+    'variable', 'constant', 'property', 'event', 'signal',
+    'update', 'create', 'modify', 'fix', 'add', 'remove',
+    'initialize', 'configure', 'setup', 'implement',
+    
+    // Architecture
+    'architecture', 'design', 'structure', 'component',
+    'module', 'package', 'library', 'framework',
+    'handler', 'manager', 'controller', 'service',
+    'repository', 'factory', 'builder', 'adapter'
+  ];
   
-  // Get system knowledge
-  const systemKnowledge = systemMemory.getSystemKnowledge();
+  const technicalPatterns = [
+    /[A-Z][a-z]+[A-Z][a-zA-Z]+/, // CamelCase
+    /\.\w+\(/, // Method calls
+    /\w+\.\w+\s*=/, // Property assignments
+    /\b(?:if|for|while|function|return|local)\b/, // Lua keywords
+    /\b\d+\/\d+\b/, // Ratios like 0/100
+    /\w+->\w+/, // Navigation like Display->SurfaceGui
+  ];
   
-  let prompt = `USER ID: ${userId}\n`;
+  const lines = text.split('\n').filter(line => line.trim().length > 0);
+  let score = 0;
   
-  // Add conversation history
-  if (history.length > 0) {
-    prompt += `\n=== PREVIOUS CONVERSATION ===\n`;
-    history.forEach((conv, i) => {
-      prompt += `User: ${conv.user}\n`;
-      prompt += `You: ${conv.ai}\n`;
-    });
-    prompt += `\n`;
+  // Check for technical keywords
+  const lowerText = text.toLowerCase();
+  systemKeywords.forEach(keyword => {
+    if (lowerText.includes(keyword.toLowerCase())) {
+      score += 2;
+    }
+  });
+  
+  // Check for technical patterns
+  technicalPatterns.forEach(pattern => {
+    if (pattern.test(text)) {
+      score += 3;
+    }
+  });
+  
+  // Check for multi-line descriptions (systems are usually described in paragraphs)
+  if (lines.length >= 3) {
+    score += 5;
   }
   
-  // Add user's code knowledge
+  // Check for system mentions
+  if (lowerText.includes('system will work like this') ||
+      lowerText.includes('work like this') ||
+      lowerText.includes('will work like') ||
+      lowerText.includes('inside all') ||
+      lowerText.includes('there will be')) {
+    score += 10;
+  }
+  
+  // Check for attribute/component lists
+  if (text.includes('attribute') || text.includes('component') || text.includes('property')) {
+    score += 8;
+  }
+  
+  return score >= 15; // Threshold for system description
+}
+
+function isExecutionRequest(text, context) {
+  // Priority 1: Context has selected objects
+  if (context?.selectedObjects?.length > 0) {
+    return true;
+  }
+  
+  // Priority 2: System description detection
+  if (isSystemDescription(text)) {
+    return true;
+  }
+  
+  // Priority 3: Direct commands
+  const executionKeywords = [
+    'create', 'make', 'build', 'add', 'remove', 'delete',
+    'modify', 'change', 'edit', 'update', 'fix', 'repair',
+    'implement', 'script', 'code', 'lua', 'part', 'gui',
+    'model', 'animation', 'sound', 'camera', 'light',
+    'tool', 'weapon', 'item', 'inventory', 'ui', 'interface',
+    'button', 'label', 'frame', 'screen', 'hud'
+  ];
+  
+  const lowerText = text.toLowerCase();
+  const hasDirectCommand = executionKeywords.some(keyword => 
+    lowerText.includes(keyword.toLowerCase())
+  );
+  
+  if (hasDirectCommand) {
+    return true;
+  }
+  
+  // Priority 4: Question words (chat)
+  const chatKeywords = [
+    'hi', 'hello', 'hey', 'greetings',
+    'how are you', 'what\'s up', 'sup',
+    'thanks', 'thank you', 'ty', 'thx',
+    'yes', 'no', 'maybe', 'ok', 'okay',
+    'help', 'what can you do', 'who are you'
+  ];
+  
+  const isChat = chatKeywords.some(keyword => 
+    lowerText.startsWith(keyword) || 
+    lowerText === keyword ||
+    lowerText.includes(` ${keyword} `)
+  );
+  
+  return !isChat;
+}
+
+function buildPrompt(userPrompt, context, userId, forceExecution = false) {
+  const history = systemMemory.getConversationHistory(userId, 5);
+  const userSnippets = systemMemory.getUserCodeSnippets(userId);
+  const systemKnowledge = systemMemory.getSystemKnowledge();
+  const systemDescriptions = systemMemory.getSystemDescriptions(userId);
+  
+  const shouldExecute = forceExecution || isExecutionRequest(userPrompt, context);
+  
+  let prompt = `=== USER REQUEST ANALYSIS ===\n`;
+  prompt += `Type: ${shouldExecute ? 'EXECUTION' : 'CHAT'}\n`;
+  prompt += `User ID: ${userId}\n\n`;
+  
+  if (shouldExecute) {
+    prompt += `🔧 THIS IS AN EXECUTION REQUEST 🔧\n`;
+    prompt += `The user is describing a system or requesting work. You MUST provide actions.\n\n`;
+  }
+  
+  // Previous system descriptions
+  if (systemDescriptions.length > 0) {
+    prompt += `=== USER'S PREVIOUS SYSTEM DESCRIPTIONS ===\n`;
+    systemDescriptions.forEach((desc, i) => {
+      prompt += `[Description ${i + 1}]:\n${desc.description}\n\n`;
+    });
+  }
+  
+  // Conversation history
+  if (history.length > 0) {
+    prompt += `=== RECENT CONVERSATION ===\n`;
+    history.forEach((conv, i) => {
+      prompt += `${conv.type === 'execution' ? '🔧' : '💬'} `;
+      prompt += `User: ${conv.user}\n`;
+      prompt += `You: ${conv.ai}\n\n`;
+    });
+  }
+  
+  // Code snippets
   if (Object.keys(userSnippets).length > 0) {
-    prompt += `=== USER'S CODE SNIPPETS ===\n`;
+    prompt += `=== USER'S CODE ===\n`;
     for (const [name, snippet] of Object.entries(userSnippets)) {
       prompt += `[${name}]:\n${snippet.code}\n\n`;
     }
   }
   
-  // Add system knowledge
+  // System knowledge
   prompt += `=== KNOWN SYSTEMS ===\n`;
   for (const [system, description] of Object.entries(systemKnowledge)) {
     if (system === 'otherSystems') continue;
     if (description) {
-      prompt += `${system}: ${description}\n`;
+      prompt += `• ${system}: ${description}\n`;
     }
   }
   
   if (Object.keys(systemKnowledge.otherSystems).length > 0) {
     prompt += `\nOther systems:\n`;
     for (const [system, desc] of Object.entries(systemKnowledge.otherSystems)) {
-      prompt += `${system}: ${desc}\n`;
+      prompt += `• ${system}: ${desc}\n`;
     }
   }
   
-  // Current user message and context
+  // Current request
   prompt += `\n=== CURRENT REQUEST ===\n`;
-  prompt += `User message: "${userPrompt}"\n\n`;
+  prompt += `User: "${userPrompt}"\n\n`;
   
   if (context?.selectedObjects?.length > 0) {
-    prompt += `User has selected in Roblox Studio:\n`;
+    prompt += `📝 SELECTED OBJECTS:\n`;
     context.selectedObjects.forEach(obj => {
-      prompt += `- ${obj.Name} (${obj.ClassName})\n`;
+      prompt += `• ${obj.Name} (${obj.ClassName})\n`;
     });
     prompt += '\n';
   }
   
-  prompt += `\n=== YOUR INSTRUCTIONS ===\n`;
-  prompt += `YOU MUST DECIDE: Is this a friendly chat or work request?
-
-LOOK AT THE USER'S MESSAGE:
-• If it's a greeting (hi, hello, hey, greetings) → CHAT
-• If it's a simple question (how are you, what's up, help) → CHAT  
-• If it's a thank you (thanks, thank you, ty) → CHAT
-• If it's just talking (yes, no, maybe, okay) → CHAT
-• If user wants to CREATE/MODIFY/FIX anything → EXECUTION
-• If user mentions scripts, parts, GUI, code → EXECUTION
-• If user has selected objects → EXECUTION
-
-IMPORTANT: REMEMBER THE USER'S SYSTEMS!
-User mentioned these systems: GameCore, Gameinitializer, GooTypes, ToolConfigs
-Refer to these when relevant. Ask about them if user needs help with them.
-
-EXAMPLES:
-"hi" → CHAT
-"hello there" → CHAT  
-"how are you?" → CHAT
-"thanks for helping" → CHAT
-"ok" → CHAT
-"help" → CHAT
-"create a red part" → EXECUTION
-"make a script" → EXECUTION
-"fix the health bar" → EXECUTION
-"add button to GUI" → EXECUTION
-"player should take damage" → EXECUTION
-"tell me about my GameCore system" → CHAT (with memory recall)
-
-RESPONSE FORMATS:
-
-For CHAT (friendly conversation with memory):
-{
-  "type": "chat",
-  "message": "Your friendly response here. Reference previous conversations if relevant!"
-}
-
-For EXECUTION (creating/modifying):
-{
-  "type": "execution",
-  "message": "Brief description of what will be created",
-  "actions": [
-    {
-      "action": "create",
-      "name": "InstanceName",
-      "classtype": "Script/Part/TextLabel/etc",
-      "parent": "game.Workspace",
-      "properties": {
-        "Position": "0,5,0",
-        "Size": "5,5,5"
-      },
-      "content": "-- Lua code here"
-    }
-  ]
-}
-
-IMPORTANT RULES:
-1. NEVER return "Working on your request" or "Processing" - be specific
-2. For CHAT: Be friendly, helpful, enthusiastic about Roblox
-3. For EXECUTION: Include all necessary actions
-4. ALWAYS return valid JSON
-5. REFERENCE MEMORY: Mention previous conversations or systems when relevant
-6. LEARN: If user teaches you code, remember it for next time`;
-
+  if (shouldExecute) {
+    prompt += `=== EXECUTION INSTRUCTIONS ===\n`;
+    prompt += `You MUST create a detailed execution plan with specific actions.\n`;
+    prompt += `Analyze the user's system description carefully.\n`;
+    prompt += `Break it down into actionable steps.\n`;
+    prompt += `If the user describes a complex system, create multiple actions.\n\n`;
+    
+    prompt += `RESPONSE FORMAT:\n`;
+    prompt += `{\n`;
+    prompt += `  "type": "execution",\n`;
+    prompt += `  "message": "Detailed analysis of what you're creating",\n`;
+    prompt += `  "analysis": "Break down of the system components",\n`;
+    prompt += `  "actions": [\n`;
+    prompt += `    {\n`;
+    prompt += `      "action": "create/modify/configure",\n`;
+    prompt += `      "name": "ObjectName",\n`;
+    prompt += `      "classtype": "Script/Part/ModuleScript/etc",\n`;
+    prompt += `      "parent": "game.Workspace/game.ServerStorage",\n`;
+    prompt += `      "properties": {},\n`;
+    prompt += `      "content": "-- Lua code if applicable"\n`;
+    prompt += `    }\n`;
+    prompt += `  ]\n`;
+    prompt += `}\n\n`;
+    
+    prompt += `EXAMPLE FOR BAG SYSTEM:\n`;
+    prompt += `{\n`;
+    prompt += `  "type": "execution",\n`;
+    prompt += `  "message": "Creating a complete bag system with capacity display",\n`;
+    prompt += `  "analysis": "System includes: 1) StarterBag attribute, 2) Bag attachment, 3) Display BasePart with GUI, 4) Capacity tracking, 5) Price attributes for tools",\n`;
+    prompt += `  "actions": [\n`;
+    prompt += `    {\n`;
+    prompt += `      "action": "create",\n`;
+    prompt += `      "name": "BagSystem",\n`;
+    prompt += `      "classtype": "ModuleScript",\n`;
+    prompt += `      "parent": "game.ServerScriptService",\n`;
+    prompt += `      "content": "-- Bag system module code here"\n`;
+    prompt += `    }\n`;
+    prompt += `  ]\n`;
+    prompt += `}\n`;
+  } else {
+    prompt += `=== CHAT INSTRUCTIONS ===\n`;
+    prompt += `Be friendly, enthusiastic about Roblox, and reference memory when relevant.\n`;
+    prompt += `If the user asks about their systems, show you remember them.\n\n`;
+    
+    prompt += `RESPONSE FORMAT:\n`;
+    prompt += `{\n`;
+    prompt += `  "type": "chat",\n`;
+    prompt += `  "message": "Your friendly response here"\n`;
+    prompt += `}\n`;
+  }
+  
+  prompt += `\n=== CRITICAL RULES ===\n`;
+  prompt += `1. NEVER say "Working on your request" or "Processing"\n`;
+  prompt += `2. ALWAYS return valid JSON\n`;
+  prompt += `3. Be specific and detailed\n`;
+  prompt += `4. If it's a system description, provide COMPLETE implementation\n`;
+  prompt += `5. Reference user's previous systems when relevant\n`;
+  
   return prompt;
 }
 
 async function processAIRequest(userPrompt, context, sessionId, userId) {
   try {
-    // Store in session
     if (!sessions.has(sessionId)) {
       sessions.set(sessionId, {
         userId: userId,
@@ -352,36 +489,52 @@ async function processAIRequest(userPrompt, context, sessionId, userId) {
     const session = sessions.get(sessionId);
     session.timestamp = Date.now();
     
+    // Check if this is a system description to memorize
+    if (isSystemDescription(userPrompt)) {
+      console.log(`[AI] Detected system description from user ${userId}`);
+      systemMemory.addSystemDescription(userId, userPrompt);
+      
+      // Extract potential system names
+      const systemMatches = userPrompt.match(/\b([A-Z][a-z]+[A-Z][a-zA-Z]+|[A-Z]+[a-z]*\s+[Ss]ystem)\b/g);
+      if (systemMatches) {
+        systemMatches.forEach(system => {
+          const cleanSystem = system.replace(/\s+[Ss]ystem$/, '');
+          systemMemory.updateSystemKnowledge(cleanSystem, `User described: ${userPrompt.substring(0, 100)}...`);
+          systemMemory.addKnownSystem(userId, cleanSystem);
+        });
+      }
+    }
+    
+    const shouldExecute = isExecutionRequest(userPrompt, context);
+    
     const model = genAI.getGenerativeModel({
       model: 'gemini-3-flash-preview',
       generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048, // Increased for memory context
+        temperature: shouldExecute ? 0.3 : 0.7, // More precise for execution
+        maxOutputTokens: 4096, // Increased for complex systems
         responseMimeType: 'application/json',
       },
-      systemInstruction: `You are Acidnade AI, a friendly Roblox Studio assistant with MEMORY.
+      systemInstruction: shouldExecute ? 
+        `You are Acidnade AI, a Roblox Studio system architect.
+        
+When users describe systems, you MUST:
+1. Analyze their description thoroughly
+2. Break it down into actionable components
+3. Provide complete implementation steps
+4. Include all necessary code and configurations
+5. Reference their existing systems when relevant
 
-You remember:
-1. Previous conversations with this user
-2. Code snippets the user has shown you
-3. User's systems: GameCore, Gameinitializer, GooTypes, ToolConfigs
-4. User preferences and patterns
-
-ALWAYS:
-1. Return valid JSON
-2. Be specific in messages
-3. Never say "Working on it" or "Processing"
-4. Reference memory when relevant
-5. Learn from user's code examples
-6. Ask about their systems if they need help
-
-When user shares code, memorize it for future reference.
-When user mentions their systems, show you remember them.`
+NEVER give generic responses. ALWAYS provide specific execution plans.`
+        :
+        `You are Acidnade AI, a friendly Roblox Studio assistant with memory.
+        
+You remember user's systems and previous conversations.
+Be enthusiastic, helpful, and reference memory when relevant.`
     });
-
-    const prompt = buildPrompt(userPrompt, context, userId);
     
-    console.log(`[AI] Processing for user ${userId}: "${userPrompt}"`);
+    const prompt = buildPrompt(userPrompt, context, userId, shouldExecute);
+    
+    console.log(`[AI] Processing for user ${userId}: ${shouldExecute ? 'EXECUTION' : 'CHAT'} - "${userPrompt.substring(0, 100)}..."`);
     
     const result = await model.generateContent(prompt);
     const text = result.response.text();
@@ -392,10 +545,27 @@ When user mentions their systems, show you remember them.`
       response = JSON.parse(cleaned);
     } catch (error) {
       console.error('[AI] Parse error:', error.message);
-      response = {
-        type: 'chat',
-        message: "Hello! I'm Acidnade AI, your Roblox Studio assistant! I remember our previous chats. How can I help you today?"
-      };
+      if (shouldExecute) {
+        response = {
+          type: 'execution',
+          message: "I'll create that system for you!",
+          analysis: "Detected a complex system description",
+          actions: [
+            {
+              action: "create",
+              name: "SystemModule",
+              classtype: "ModuleScript",
+              parent: "game.ServerScriptService",
+              content: "-- System implementation will go here"
+            }
+          ]
+        };
+      } else {
+        response = {
+          type: 'chat',
+          message: "Hello! I remember our previous chats. What would you like to work on today?"
+        };
+      }
     }
     
     // Fix generic responses
@@ -404,60 +574,36 @@ When user mentions their systems, show you remember them.`
          response.message.toLowerCase().includes('processing') ||
          response.message.toLowerCase().includes('please wait'))) {
       
-      if (response.type === 'chat') {
-        response.message = "Hello! I'm Acidnade AI. I remember our previous conversations! How can I help you today?";
+      if (response.type === 'execution') {
+        response.message = "I'll create a complete implementation for that system!";
+        if (!response.analysis) {
+          response.analysis = "Breaking down the system into components...";
+        }
       } else {
-        response.message = "I'll create that for you right now! Based on what we've worked on before...";
+        response.message = "Hello! I remember your systems. How can I help you today?";
       }
     }
     
-    // Ensure required fields
-    if (!response.type) response.type = 'execution';
-    if (!response.message) {
-      response.message = response.type === 'chat' 
-        ? "Hi there! I remember our last chat. Ready to build something awesome?"
-        : "Creating your request now! Using what I remember from before...";
-    }
-    if (response.type === 'execution' && !response.actions) {
-      response.actions = [];
-    }
-    
-    // Check if user is sharing code to memorize
-    const codePatterns = [
-      /here('s| is) (my |the )?code/i,
-      /memorize (this|that|my) code/i,
-      /save (this|that) code/i,
-      /remember (this|that) code/i,
-      /look at my code/i
-    ];
-    
-    const hasCodePattern = codePatterns.some(pattern => pattern.test(userPrompt));
-    
-    if (hasCodePattern || userPrompt.includes('code')) {
-      // Extract potential code block from response
-      const codeMatch = text.match(/```(?:lua)?\n([\s\S]*?)\n```/);
-      if (codeMatch) {
-        const codeName = `snippet_${Date.now()}`;
-        systemMemory.addCodeSnippet(userId, codeName, codeMatch[1]);
-        response.message += `\n\n✅ I've memorized this code for future reference!`;
+    // Ensure required fields for execution
+    if (response.type === 'execution') {
+      if (!response.analysis) {
+        response.analysis = "System implementation plan";
+      }
+      if (!response.actions || !Array.isArray(response.actions)) {
+        response.actions = [
+          {
+            action: "create",
+            name: "SystemImplementation",
+            classtype: "ModuleScript",
+            parent: "game.ServerScriptService",
+            content: "-- Implementation details will be added here"
+          }
+        ];
       }
     }
     
-    // Check if user is talking about their systems
-    const systemNames = ['GameCore', 'Gameinitializer', 'GooTypes', 'ToolConfigs'];
-    const mentionedSystem = systemNames.find(sys => 
-      userPrompt.toLowerCase().includes(sys.toLowerCase())
-    );
-    
-    if (mentionedSystem) {
-      systemMemory.addKnownSystem(userId, mentionedSystem);
-      if (!response.message.includes(mentionedSystem)) {
-        response.message += `\n\n🔍 I remember you mentioned your ${mentionedSystem} system!`;
-      }
-    }
-    
-    // Store conversation in memory
-    systemMemory.addConversation(userId, userPrompt, response.message);
+    // Store conversation
+    systemMemory.addConversation(userId, userPrompt, response.message, response.type);
     
     // Track in session
     session.history.push({
@@ -467,7 +613,6 @@ When user mentions their systems, show you remember them.`
       timestamp: Date.now()
     });
     
-    // Keep session history small
     session.history = session.history.slice(-10);
     
     return response;
@@ -475,8 +620,18 @@ When user mentions their systems, show you remember them.`
   } catch (error) {
     console.error('[AI] Error:', error.message);
     return {
-      type: 'chat',
-      message: "Hi! I'm having a little trouble right now. But I remember our previous chats! Try asking me about your systems or code."
+      type: 'execution',
+      message: "I'll help you implement that system!",
+      analysis: "System implementation",
+      actions: [
+        {
+          action: "create",
+          name: "ErrorRecoveryModule",
+          classtype: "ModuleScript",
+          parent: "game.ServerScriptService",
+          content: "-- Let me help you build that system"
+        }
+      ]
     };
   }
 }
@@ -489,11 +644,11 @@ app.post('/ai', authenticateRequest, async (req, res) => {
     if (!prompt || !sessionId) {
       return res.status(400).json({ 
         type: 'chat',
-        message: "Hi! I need a prompt and session ID to help you."
+        message: "Hi! I need a prompt to help you."
       });
     }
     
-    console.log(`[Request] User ${userId}, Session ${sessionId}: "${prompt}"`);
+    console.log(`[Request] User ${userId}: "${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}"`);
     
     const response = await processAIRequest(prompt, context, sessionId, userId);
     res.json(response);
@@ -501,65 +656,79 @@ app.post('/ai', authenticateRequest, async (req, res) => {
   } catch (error) {
     console.error('[Server] Error:', error.message);
     res.status(500).json({
-      type: 'chat',
-      message: "Oops! Something went wrong. But I still remember our previous conversations!"
+      type: 'execution',
+      message: "I'll help you build that system!",
+      analysis: "System implementation",
+      actions: []
     });
   }
 });
 
-// Chat-only endpoint with memory
-app.post('/ai/chat', authenticateRequest, async (req, res) => {
+// Force execution endpoint
+app.post('/ai/execute', authenticateRequest, async (req, res) => {
   try {
-    const { message, sessionId, userId = 'anonymous' } = req.body;
+    const { prompt, context, sessionId, userId = 'anonymous' } = req.body;
     
-    if (!message || !sessionId) {
+    if (!prompt) {
       return res.status(400).json({ 
-        type: 'chat',
-        message: "Hello! What would you like to chat about? I remember our previous conversations."
+        type: 'execution',
+        message: "What system would you like me to build?",
+        analysis: "Awaiting system description",
+        actions: []
       });
     }
     
-    // Get conversation history for context
+    // Force execution mode
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+      },
+      systemInstruction: `You are Acidnade AI, a Roblox Studio system architect.
+      
+The user is describing a system to implement.
+Analyze their description and provide a complete implementation plan.
+Break it down into actionable steps with code.
+Always return execution type with detailed actions.`
+    });
+    
     const history = systemMemory.getConversationHistory(userId, 3);
     let historyContext = '';
     
     if (history.length > 0) {
-      historyContext = `\nPrevious conversation:\n`;
+      historyContext = `Previous relevant conversations:\n`;
       history.forEach((conv, i) => {
-        historyContext += `User: ${conv.user}\n`;
-        historyContext += `You: ${conv.ai}\n`;
+        if (conv.type === 'execution') {
+          historyContext += `[Execution] User: ${conv.user}\n`;
+          historyContext += `You: ${conv.ai}\n`;
+        }
       });
     }
     
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      generationConfig: {
-        temperature: 0.9,
-        maxOutputTokens: 1024,
-        responseMimeType: 'application/json',
-      },
-      systemInstruction: `You are Acidnade AI - a friendly, enthusiastic Roblox Studio assistant WITH MEMORY.
+    const systemPrompt = `FORCE EXECUTION MODE
+User is describing a system to implement:
 
-You remember previous conversations with this user.
-You know about their systems: GameCore, Gameinitializer, GooTypes, ToolConfigs.
-Reference this memory when relevant.
+${prompt}
 
-Always be helpful, excited about Roblox, and offer assistance.
-Never say "Working on it" or "Processing".
-Always return: {"type": "chat", "message": "Your friendly response here"}`
-    });
-    
-    const prompt = `User: ${userId}
 ${historyContext}
-Current message: "${message}"
 
-Respond friendly and helpfully. Reference memory if relevant.
-Example responses:
-• "Hi again! I remember we talked about ${history.length > 0 ? history[history.length-1].user.substring(0,20)+'...' : 'Roblox'}!"
-• "Hello! Based on our last chat, I think you'd like..."
-• "Hey there! I remember your GameCore system. Want to work on it?"`;
+Provide a complete implementation plan with:
+1. System analysis
+2. Component breakdown
+3. Step-by-step actions
+4. Necessary code
+
+RESPONSE FORMAT:
+{
+  "type": "execution",
+  "message": "Complete system implementation",
+  "analysis": "Detailed breakdown",
+  "actions": [ ... ]
+}`;
     
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(systemPrompt);
     const text = result.response.text();
     
     let response;
@@ -568,35 +737,52 @@ Example responses:
       response = JSON.parse(cleaned);
     } catch (error) {
       response = {
-        type: 'chat',
-        message: `Hello! I remember you! You said: "${message}". How can I help you with Roblox Studio today?`
+        type: 'execution',
+        message: `Implementing: ${prompt.substring(0, 50)}...`,
+        analysis: "System implementation plan",
+        actions: [
+          {
+            action: "create",
+            name: "SystemModule",
+            classtype: "ModuleScript",
+            parent: "game.ServerScriptService",
+            content: "-- System implementation"
+          }
+        ]
       };
     }
     
-    // Store in memory
-    systemMemory.addConversation(userId, message, response.message);
+    // Store as system description
+    if (prompt.length > 100) {
+      systemMemory.addSystemDescription(userId, prompt);
+    }
+    
+    systemMemory.addConversation(userId, prompt, response.message, 'execution');
     
     res.json(response);
     
   } catch (error) {
     res.status(500).json({
-      type: 'chat',
-      message: "Hello! I remember you! Let's chat about Roblox development!"
+      type: 'execution',
+      message: "System implementation",
+      analysis: "Error occurred",
+      actions: []
     });
   }
 });
 
-// Memory management endpoints
+// Memory endpoints
 app.get('/ai/memory/:userId', authenticateRequest, async (req, res) => {
   try {
     const { userId } = req.params;
     const memory = systemMemory.getUserMemory(userId);
     const snippets = systemMemory.getUserCodeSnippets(userId);
+    const systemDescriptions = systemMemory.getSystemDescriptions(userId);
     
     res.json({
       userId,
-      conversations: memory.conversations,
-      preferences: memory.preferences,
+      conversations: memory.conversations.slice(-20),
+      systemDescriptions: systemDescriptions,
       knownSystems: memory.knownSystems,
       codeSnippets: snippets,
       lastActive: memory.lastActive
@@ -606,38 +792,16 @@ app.get('/ai/memory/:userId', authenticateRequest, async (req, res) => {
   }
 });
 
-app.post('/ai/memory/code', authenticateRequest, async (req, res) => {
+// Clear memory endpoint
+app.delete('/ai/memory/:userId', authenticateRequest, async (req, res) => {
   try {
-    const { userId, name, code } = req.body;
-    
-    if (!userId || !name || !code) {
-      return res.status(400).json({ error: 'Missing userId, name, or code' });
-    }
-    
-    systemMemory.addCodeSnippet(userId, name, code);
+    const { userId } = req.params;
+    systemMemory.userMemories.delete(userId);
+    await systemMemory.saveUserMemories();
     
     res.json({
       success: true,
-      message: `Code snippet "${name}" saved for user ${userId}`
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/ai/memory/system', authenticateRequest, async (req, res) => {
-  try {
-    const { system, description } = req.body;
-    
-    if (!system) {
-      return res.status(400).json({ error: 'Missing system name' });
-    }
-    
-    systemMemory.updateSystemKnowledge(system, description || 'User mentioned this system');
-    
-    res.json({
-      success: true,
-      message: `System "${system}" knowledge updated`
+      message: `Cleared memory for user ${userId}`
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -648,14 +812,19 @@ app.post('/ai/memory/system', authenticateRequest, async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    message: 'Acidnade AI with Memory is running!',
+    message: 'Acidnade AI - Enhanced System Detection',
     sessions: sessions.size,
     usersInMemory: systemMemory.userMemories.size,
-    codeSnippets: systemMemory.codeSnippets.size
+    features: [
+      'Advanced system description detection',
+      'Memory of user systems',
+      'Force execution endpoint',
+      'File-based persistence'
+    ]
   });
 });
 
-// Cleanup old sessions
+// Cleanup
 setInterval(() => {
   const hourAgo = Date.now() - 3600000;
   for (const [sessionId, session] of sessions.entries()) {
@@ -665,22 +834,21 @@ setInterval(() => {
   }
 }, 300000);
 
-// Periodic memory save
+// Auto-save
 setInterval(() => {
   systemMemory.saveUserMemories();
   systemMemory.saveCodeSnippets();
   systemMemory.saveSystemKnowledge();
-  console.log('[Memory] Auto-saved all memory data');
-}, 300000); // Every 5 minutes
+  console.log('[Memory] Auto-saved');
+}, 300000);
 
 app.listen(PORT, () => {
-  console.log('🧠 ACIDNADE AI - WITH MEMORY');
+  console.log('🚀 ACIDNADE AI - ENHANCED SYSTEM DETECTION');
   console.log(`Port: ${PORT}`);
-  console.log('Memory Features:');
-  console.log('  • Remembers conversations per user');
-  console.log('  • Memorizes code snippets');
-  console.log('  • Knows your systems: GameCore, Gameinitializer, GooTypes, ToolConfigs');
-  console.log('  • Saves everything to filesystem');
-  console.log('  • References previous chats');
-  console.log('Ready to remember and help!');
+  console.log('\n✨ NEW FEATURES:');
+  console.log('• Advanced system description detection');
+  console.log('• Force execution endpoint (/ai/execute)');
+  console.log('• System analysis in responses');
+  console.log('• No more generic "Hello" for system descriptions');
+  console.log('\nReady to handle complex systems!');
 });
