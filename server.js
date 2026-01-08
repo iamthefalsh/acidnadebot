@@ -14,20 +14,16 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Session memory store - optimized for low memory usage
+// Session memory
 const sessionMemory = new Map();
 
 function initSession(sessionId) {
   if (!sessionMemory.has(sessionId)) {
     sessionMemory.set(sessionId, {
-      currentPlan: [],           // Steps to execute
-      currentStep: 0,            // Current step index
-      executionState: 'idle',    // idle, planning, executing, complete
-      createdInstances: [],      // Instances created in this session
-      modifiedInstances: [],     // Instances modified in this session
-      pendingActions: [],        // Actions waiting for execution
-      timestamp: Date.now(),
-      tokenUsage: 0
+      createdInstances: [],
+      chatHistory: [],
+      tokenUsage: 0,
+      timestamp: Date.now()
     });
   }
   return sessionMemory.get(sessionId);
@@ -36,12 +32,12 @@ function initSession(sessionId) {
 app.use(helmet());
 app.use(cors());
 app.use(compression());
-app.use(express.json({ limit: '5mb' })); // Reduced from 10mb
+app.use(express.json({ limit: '2mb' }));
 app.set('trust proxy', 1);
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200, // Increased for more frequent small requests
+  max: 100,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -57,151 +53,202 @@ const authenticateRequest = (req, res, next) => {
 };
 
 const logRequest = (req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${req.ip}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
 };
 
 app.use(logRequest);
 
-// Optimized System Prompt - Minimal token usage
-const SYSTEM_PROMPT = `You are Acidnade AI, a Roblox Studio assistant. Respond in JSON only.
+// SMART SYSTEM PROMPT - Handles chat and code
+const SYSTEM_PROMPT = `You are Acidnade AI, a Roblox Studio assistant.
 
-RESPONSE FORMATS:
+RESPOND IN JSON ONLY.
 
-1. PLANNING (when asked to do multiple things):
+DETECT REQUEST TYPE:
+
+1. NORMAL CHAT (greetings, questions, help):
 {
-  "mode": "plan",
-  "message": "Brief description of plan",
-  "plan": [
+  "type": "chat",
+  "message": "Friendly response here",
+  "actions": []
+}
+
+2. CODE/CREATION REQUEST (when user wants to build something):
+{
+  "type": "execution",
+  "message": "Brief description of what will be created",
+  "actions": [
     {
-      "stepId": 1,
-      "action": "create/modify",
-      "description": "Short description",
-      "target": "instance name if known"
-    }
-  ],
-  "reasoning": "Short explanation"
-}
-
-2. CREATE ACTION (when creating something):
-{
-  "mode": "execute",
-  "action": "create",
-  "message": "Creating [instance]",
-  "data": {
-    "name": "InstanceName",
-    "classtype": "Script/LocalScript/ModuleScript/Part/TextLabel/etc",
-    "properties": {
-      "Position": "0, 5, 0",
-      "Size": "5, 5, 5",
-      "Color": "255, 0, 0"
+      "action": "create",
+      "name": "InstanceName",
+      "classtype": "Script/Part/TextLabel/etc",
+      "properties": {
+        "Position": "0,5,0",
+        "Size": "5,5,5",
+        "Color": "255,0,0"
+      },
+      "parent": "game.Workspace",
+      "content": "-- Lua code here"
     },
-    "parent": "game.Workspace",
-    "content": "-- Lua code here (for scripts)"
-  },
-  "reasoning": "Why this is needed"
-}
-
-3. MODIFY ACTION (when changing existing):
-{
-  "mode": "execute",
-  "action": "modify",
-  "message": "Modifying [instance]",
-  "data": {
-    "type": "multiedit",
-    "name": "EXACT_NAME_FROM_MATCHES",
-    "parent": "EXACT_PATH_FROM_MATCHES",
-    "properties": {
-      "Color": "0, 255, 0"
-    },
-    "sourceModifications": {
-      "action": "select lines 5-9 and replace",
-      "newCode": "-- new code here"
+    {
+      "action": "modify",
+      "type": "multiedit",
+      "name": "EXACT_NAME",
+      "parent": "EXACT_PATH",
+      "sourceModifications": {
+        "action": "replace lines 5-9",
+        "newCode": "-- new code"
+      }
     }
-  },
-  "reasoning": "Why this change"
+  ]
 }
 
-4. NEED INFO (when you need source code):
-{
-  "mode": "request",
-  "message": "I need to read [filename]",
-  "needs": {
-    "type": "source_code",
-    "instanceName": "FieldSystem",
-    "reason": "To understand image loading"
-  },
-  "reasoning": "Cannot proceed without this"
+DETECTION RULES:
+- Chat: hi, hello, how are you, help, what can you do
+- Execution: create, make, build, fix, modify, add, remove, change
+- If uncertain, treat as execution
+
+ALWAYS:
+- Include multiple actions in one response when related
+- For complex requests, break into logical steps
+- Keep messages brief
+- Use exact names/paths from context`;
+
+// Detect if user wants code or just chat
+function detectRequestType(userPrompt, context) {
+  const lowerPrompt = userPrompt.toLowerCase().trim();
+  
+  // Chat patterns
+  const chatPatterns = [
+    /^hi$|^hello$|^hey$|^greetings$/i,
+    /how are you/i,
+    /what can you do/i,
+    /^help$/i,
+    /^thanks|thank you/i,
+    /^ok$|^okay$/i,
+    /^bye$|goodbye/i
+  ];
+  
+  // Code/execution patterns (but NO keywords like "code" required)
+  const executionPatterns = [
+    /\b(create|make|build|add)\b/i,
+    /\b(fix|modify|change|edit|update)\b/i,
+    /\b(remove|delete|destroy)\b/i,
+    /\b(part|script|gui|ui|model)\b/i,
+    /\b(color|size|position)\b/i,
+    /\b(health|damage|money|currency)\b/i,
+    /\b(system|manager|handler|controller)\b/i,
+    /\b(button|text|label|frame)\b/i
+  ];
+  
+  // Check for chat first
+  for (const pattern of chatPatterns) {
+    if (pattern.test(lowerPrompt)) {
+      return 'chat';
+    }
+  }
+  
+  // Check for execution patterns
+  let executionScore = 0;
+  for (const pattern of executionPatterns) {
+    const matches = lowerPrompt.match(pattern);
+    if (matches) {
+      executionScore += matches.length;
+    }
+  }
+  
+  // If user mentions specific instances or has context, likely execution
+  if (context?.selectedObjects?.length > 0) {
+    executionScore += 2;
+  }
+  
+  if (context?.sourceCodes && Object.keys(context.sourceCodes).length > 0) {
+    executionScore += 1;
+  }
+  
+  // Check for technical terms (even without keywords)
+  const technicalTerms = ['lua', 'function', 'variable', 'module', 'service', 'event'];
+  for (const term of technicalTerms) {
+    if (lowerPrompt.includes(term)) {
+      executionScore += 1;
+    }
+  }
+  
+  // Default to execution if score > 0, otherwise chat
+  return executionScore > 0 ? 'execution' : 'chat';
 }
 
-RULES:
-1. Keep responses minimal - use few tokens
-2. For multi-step requests, first return a plan
-3. Execute one action per response
-4. Only include source code when absolutely necessary
-5. Use "request" mode to ask for missing info
-6. Never use replaceAll - use targeted modifications`;
-
-// Build optimized prompt - minimal token usage
-function buildPrompt(userPrompt, context, sessionId, mode = 'planning') {
+// Build smart prompt based on request type
+function buildPrompt(userPrompt, context, sessionId) {
   const session = initSession(sessionId);
+  const requestType = detectRequestType(userPrompt, context);
+  
   let prompt = '';
   
-  // Track token usage
-  session.tokenUsage = (session.tokenUsage || 0) + userPrompt.length;
-  
-  if (mode === 'planning') {
-    // Ultra-minimal planning prompt
+  if (requestType === 'chat') {
+    // Simple chat prompt
     prompt = `User: ${userPrompt}\n\n`;
+    prompt += 'This is a normal conversation. Respond friendly and helpfully.\n';
     
-    // Add only essential context
+  } else {
+    // Execution prompt - include context efficiently
+    prompt = `User Request: ${userPrompt}\n\n`;
+    
+    // Add minimal context
     if (session.createdInstances?.length > 0) {
-      prompt += 'Recent creations: ';
+      prompt += 'Recently created:\n';
       session.createdInstances.slice(-3).forEach(inst => {
-        prompt += `${inst.name}(${inst.type}), `;
+        prompt += `- ${inst.name} (${inst.type}) at ${inst.parent}\n`;
       });
       prompt += '\n';
     }
     
+    // Add selected objects if any
     if (context?.selectedObjects?.length > 0) {
-      prompt += `Selected: ${context.selectedObjects.map(o => o.Name).join(', ')}\n`;
+      prompt += 'Selected objects:\n';
+      context.selectedObjects.forEach(obj => {
+        prompt += `- ${obj.Name} (${obj.ClassName}) at ${obj.Path}\n`;
+      });
+      prompt += '\n';
     }
     
-    prompt += 'Instructions:\n';
-    prompt += '1. If multiple actions needed, return plan mode\n';
-    prompt += '2. If single action, return execute mode\n';
-    prompt += '3. Be brief, use few tokens\n';
-    prompt += '4. If missing info, use request mode\n';
-    
-  } else if (mode === 'execution') {
-    // Execution prompt - minimal
-    const currentStep = session.currentStep;
-    const step = session.currentPlan?.[currentStep];
-    
-    prompt = `Execute step ${currentStep + 1}: ${step?.description || 'unknown'}\n`;
-    
-    if (step?.target) {
-      prompt += `Target: ${step.target}\n`;
-    }
-    
-    // Only include source code if provided and relevant
-    if (context?.sourceCodes && step?.target) {
-      const targetName = step.target.toLowerCase();
-      for (const [path, code] of Object.entries(context.sourceCodes)) {
-        if (path.toLowerCase().includes(targetName)) {
-          prompt += `Source (${path}):\n${code.substring(0, 500)}...\n`;
-          break;
+    // Add source code ONLY if mentioned
+    if (context?.sourceCodes) {
+      const lowerPrompt = userPrompt.toLowerCase();
+      const mentionedInstances = [];
+      
+      // Find instances mentioned in prompt
+      Object.keys(context.sourceCodes).forEach(path => {
+        const instanceName = path.split('.').pop().toLowerCase();
+        if (lowerPrompt.includes(instanceName)) {
+          mentionedInstances.push({ path, code: context.sourceCodes[path] });
         }
+      });
+      
+      if (mentionedInstances.length > 0) {
+        prompt += 'Relevant source code:\n';
+        mentionedInstances.forEach(({ path, code }) => {
+          prompt += `--- ${path} ---\n`;
+          prompt += code.substring(0, 800) + (code.length > 800 ? '...' : '') + '\n\n';
+        });
       }
     }
     
-    prompt += 'Instructions: Return execute mode with full details.\n';
+    prompt += 'Instructions:\n';
+    prompt += '1. Analyze the full request\n';
+    prompt += '2. Return MULTIPLE actions if needed\n';
+    prompt += '3. Each action must be complete\n';
+    prompt += '4. Use exact names/paths\n';
+    prompt += '5. Include all necessary properties\n';
   }
   
-  return prompt;
+  // Add token usage tracking
+  session.tokenUsage = (session.tokenUsage || 0) + prompt.length;
+  
+  return { prompt, requestType };
 }
 
-// Process AI request with step-by-step execution
+// Process AI request
 async function processAIRequest(prompt, context, sessionId) {
   try {
     const session = initSession(sessionId);
@@ -211,33 +258,16 @@ async function processAIRequest(prompt, context, sessionId) {
         temperature: 0.7,
         topP: 0.95,
         topK: 40,
-        maxOutputTokens: 1024, // Reduced for efficiency
+        maxOutputTokens: 2048,
         responseMimeType: 'application/json',
       },
       systemInstruction: SYSTEM_PROMPT
     });
 
-    // Determine mode based on conversation state
-    let mode = 'planning';
-    const lowerPrompt = prompt.toLowerCase();
+    // Build prompt with detection
+    const { prompt: aiPrompt, requestType } = buildPrompt(prompt, context, sessionId);
     
-    // Check if we're executing a step
-    if (session.executionState === 'executing' && session.currentPlan?.length > 0) {
-      mode = 'execution';
-    }
-    // Check if this is a simple single action
-    else if (lowerPrompt.includes('create') || lowerPrompt.includes('add') || 
-             lowerPrompt.includes('make') || lowerPrompt.includes('build')) {
-      mode = 'execution';
-    }
-    // Check if user is asking for analysis/planning
-    else if (lowerPrompt.includes('plan') || lowerPrompt.includes('how to') || 
-             lowerPrompt.includes('multiple') || lowerPrompt.includes('several')) {
-      mode = 'planning';
-    }
-
-    const aiPrompt = buildPrompt(prompt, context, sessionId, mode);
-    console.log(`[AI] Mode: ${mode}, Prompt length: ${aiPrompt.length}`);
+    console.log(`[AI] Request type: ${requestType}, Prompt length: ${aiPrompt.length}`);
     
     const startTime = Date.now();
     const result = await model.generateContent(aiPrompt);
@@ -251,220 +281,100 @@ async function processAIRequest(prompt, context, sessionId) {
       aiResponse = JSON.parse(cleanedText);
     } catch (parseError) {
       console.error('[AI] Parse error:', parseError.message);
-      aiResponse = {
-        mode: 'error',
-        message: 'Processing error',
-        error: parseError.message
-      };
-    }
-
-    // Handle different response modes
-    switch (aiResponse.mode) {
-      case 'plan':
-        // Store plan for step-by-step execution
-        session.currentPlan = aiResponse.plan || [];
-        session.currentStep = 0;
-        session.executionState = 'executing';
-        
-        // Auto-execute first step if plan is small
-        if (session.currentPlan.length === 1) {
-          session.currentStep = 1; // Mark as completed
-          return {
-            ...aiResponse,
-            autoExecute: true,
-            metadata: {
-              planSteps: session.currentPlan.length,
-              nextAction: 'Execute first step automatically'
-            }
-          };
-        }
-        
-        return {
-          ...aiResponse,
-          metadata: {
-            planSteps: session.currentPlan.length,
-            nextAction: 'Ready to execute step by step'
-          }
+      
+      // Fallback based on request type
+      if (requestType === 'chat') {
+        aiResponse = {
+          type: 'chat',
+          message: 'Hello! How can I help you with Roblox Studio today?',
+          actions: []
         };
-        
-      case 'execute':
-        // Update session with executed action
-        if (aiResponse.action === 'create') {
+      } else {
+        aiResponse = {
+          type: 'execution',
+          message: 'Processing your request...',
+          actions: []
+        };
+      }
+    }
+    
+    // Validate response
+    if (!aiResponse.type) {
+      aiResponse.type = requestType;
+    }
+    
+    if (!aiResponse.message) {
+      aiResponse.message = requestType === 'chat' ? 'Hello!' : 'Processing request';
+    }
+    
+    if (!aiResponse.actions) {
+      aiResponse.actions = [];
+    }
+    
+    // Track created instances
+    if (aiResponse.type === 'execution' && aiResponse.actions?.length > 0) {
+      aiResponse.actions.forEach(action => {
+        if (action.action === 'create') {
           session.createdInstances.push({
-            name: aiResponse.data?.name || 'unknown',
-            type: aiResponse.data?.classtype || 'unknown',
-            parent: aiResponse.data?.parent || 'unknown',
-            timestamp: new Date().toISOString()
-          });
-        } else if (aiResponse.action === 'modify') {
-          session.modifiedInstances.push({
-            name: aiResponse.data?.name || 'unknown',
-            changes: aiResponse.data?.sourceModifications?.action || 'unknown',
+            name: action.name || 'unknown',
+            type: action.classtype || 'unknown',
+            parent: action.parent || 'game.Workspace',
             timestamp: new Date().toISOString()
           });
         }
-        
-        // Check if we have more steps in plan
-        if (session.executionState === 'executing' && session.currentStep < session.currentPlan.length) {
-          session.currentStep++;
-          
-          if (session.currentStep >= session.currentPlan.length) {
-            session.executionState = 'complete';
-          }
-        }
-        
-        return {
-          ...aiResponse,
-          metadata: {
-            responseTime,
-            tokenUsage: text.length,
-            sessionStep: session.currentStep,
-            totalSteps: session.currentPlan.length,
-            executionState: session.executionState
-          }
-        };
-        
-      case 'request':
-        // AI needs information - store request
-        session.pendingActions = session.pendingActions || [];
-        session.pendingActions.push({
-          type: aiResponse.needs?.type || 'unknown',
-          instanceName: aiResponse.needs?.instanceName,
-          reason: aiResponse.needs?.reason,
-          timestamp: new Date().toISOString()
-        });
-        
-        return {
-          ...aiResponse,
-          metadata: {
-            needsInfo: true,
-            requestedItem: aiResponse.needs?.instanceName
-          }
-        };
-        
-      default:
-        return {
-          mode: 'execute',
-          action: 'create',
-          message: 'Processing your request',
-          data: {
-            name: 'Placeholder',
-            classtype: 'Part',
-            properties: {},
-            parent: 'game.Workspace',
-            content: '-- Processing...'
-          },
-          reasoning: 'Default response'
-        };
+      });
     }
+    
+    // Update chat history
+    session.chatHistory.push({
+      user: prompt.substring(0, 100),
+      ai: aiResponse.message.substring(0, 100),
+      type: aiResponse.type,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Keep history small
+    session.chatHistory = session.chatHistory.slice(-10);
+    session.createdInstances = session.createdInstances.slice(-20);
+    
+    // Add metadata
+    aiResponse.metadata = {
+      requestType,
+      responseTime,
+      tokenUsage: text.length,
+      actionsCount: aiResponse.actions?.length || 0,
+      sessionId,
+      timestamp: new Date().toISOString()
+    };
+    
+    return aiResponse;
     
   } catch (error) {
     console.error('[AI] Error:', error.message);
     return {
-      mode: 'error',
-      message: 'AI processing failed',
-      error: error.message,
-      metadata: { error: true }
+      type: 'chat',
+      message: 'I encountered an error. Please try again.',
+      actions: [],
+      error: true
     };
   }
-}
-
-// Enhanced instance finding with exact matching
-function findExactInstance(instanceName, context) {
-  if (!instanceName || !context) return null;
-  
-  const nameLower = instanceName.toLowerCase();
-  
-  // Check in existing instances
-  if (context.existingInstances && Array.isArray(context.existingInstances)) {
-    for (const inst of context.existingInstances) {
-      if (inst.Name && inst.Name.toLowerCase() === nameLower) {
-        return {
-          name: inst.Name,
-          className: inst.ClassName,
-          path: inst.Path,
-          fullObject: inst
-        };
-      }
-    }
-  }
-  
-  // Check in source codes keys
-  if (context.sourceCodes) {
-    for (const path of Object.keys(context.sourceCodes)) {
-      const parts = path.split('.');
-      const lastPart = parts[parts.length - 1];
-      if (lastPart.toLowerCase() === nameLower) {
-        return {
-          name: lastPart,
-          path: path,
-          hasSource: true
-        };
-      }
-    }
-  }
-  
-  return null;
 }
 
 // Routes
 app.get('/', (req, res) => {
   res.json({
-    name: 'Acidnade AI v4.0',
-    version: '4.0',
+    name: 'Acidnade AI',
+    version: '5.0',
     status: 'online',
-    model: 'gemini-3-flash-preview',
     features: [
-      'Step-by-step execution',
-      'Low token usage',
-      'Real-time instance creation',
-      'Smart planning system',
-      'No replaceAll - targeted edits only'
+      'Smart request detection',
+      'Multiple actions per request',
+      'Natural conversation',
+      'Code generation without keywords',
+      'Low token usage'
     ],
     sessions: sessionMemory.size,
     timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/ping', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    model: 'gemini-3-flash-preview',
-    uptime: process.uptime(),
-    sessions: sessionMemory.size,
-    memory: process.memoryUsage()
-  });
-});
-
-app.get('/session/:sessionId', authenticateRequest, (req, res) => {
-  const sessionId = req.params.sessionId;
-  const session = sessionMemory.get(sessionId);
-  
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-  
-  res.json({
-    sessionId,
-    executionState: session.executionState,
-    currentStep: session.currentStep,
-    totalSteps: session.currentPlan?.length || 0,
-    createdInstances: session.createdInstances?.length || 0,
-    modifiedInstances: session.modifiedInstances?.length || 0,
-    tokenUsage: session.tokenUsage || 0,
-    pendingActions: session.pendingActions?.length || 0,
-    timestamp: new Date(session.timestamp).toISOString()
-  });
-});
-
-app.delete('/session/:sessionId', authenticateRequest, (req, res) => {
-  const sessionId = req.params.sessionId;
-  const deleted = sessionMemory.delete(sessionId);
-  
-  res.json({
-    success: deleted,
-    message: deleted ? 'Session cleared' : 'Session not found',
-    remainingSessions: sessionMemory.size
   });
 });
 
@@ -479,31 +389,18 @@ app.post('/ai', authenticateRequest, async (req, res) => {
       });
     }
     
-    console.log(`[Request] Session: ${sessionId}, Prompt: "${prompt.substring(0, 50)}..."`);
+    console.log(`[AI Request] Session: ${sessionId}, Prompt: "${prompt.substring(0, 80)}..."`);
     
-    // Process the request
     const aiResponse = await processAIRequest(prompt, context || {}, sessionId);
-    
-    // Add session info to response
-    const session = sessionMemory.get(sessionId);
-    if (session) {
-      aiResponse.sessionInfo = {
-        state: session.executionState,
-        step: session.currentStep,
-        totalSteps: session.currentPlan?.length || 0,
-        createdCount: session.createdInstances?.length || 0
-      };
-    }
-    
     res.json(aiResponse);
     
   } catch (error) {
     console.error('[Server Error]:', error.message);
     res.status(500).json({ 
-      mode: 'error',
-      message: 'Server error',
-      error: error.message,
-      metadata: { serverError: true }
+      type: 'chat',
+      message: 'Server error occurred. Please try again.',
+      actions: [],
+      error: true
     });
   }
 });
@@ -511,65 +408,29 @@ app.post('/ai', authenticateRequest, async (req, res) => {
 // Session cleanup
 setInterval(() => {
   const now = Date.now();
-  const oneHour = 60 * 60 * 1000;
-  let cleaned = 0;
+  const twoHours = 2 * 60 * 60 * 1000;
   
   for (const [sessionId, session] of sessionMemory.entries()) {
-    if (now - session.timestamp > oneHour) {
+    if (now - session.timestamp > twoHours) {
       sessionMemory.delete(sessionId);
-      cleaned++;
+      console.log(`[Cleanup] Removed session: ${sessionId}`);
     }
-  }
-  
-  if (cleaned > 0) {
-    console.log(`[Cleanup] Removed ${cleaned} old sessions`);
   }
 }, 30 * 60 * 1000);
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('[Middleware Error]:', err.stack);
-  res.status(500).json({ 
-    mode: 'error',
-    message: 'Internal server error',
-    error: err.message
-  });
-});
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ 
-    mode: 'error',
-    message: 'Route not found',
-    path: req.path
-  });
-});
-
 app.listen(PORT, () => {
   console.log('==========================================');
-  console.log('ACIDNADE AI v4.0 - OPTIMIZED EXECUTION');
+  console.log('ACIDNADE AI v5.0 - SMART DETECTION');
   console.log('==========================================');
   console.log('Port:', PORT);
   console.log('Environment:', NODE_ENV);
-  console.log('Optimizations:');
-  console.log('  • ✅ Step-by-step execution');
-  console.log('  • ✅ Ultra-low token usage');
-  console.log('  • ✅ Real-time instance creation');
-  console.log('  • ✅ Smart mode detection');
-  console.log('  • ✅ No unnecessary source code');
-  console.log('  • ✅ Auto-plan for multi-step requests');
+  console.log('Features:');
+  console.log('  • ✅ Smart request detection');
+  console.log('  • ✅ Multiple actions per response');
+  console.log('  • ✅ Natural chat conversations');
+  console.log('  • ✅ Code without keywords');
+  console.log('  • ✅ Efficient context usage');
   console.log('==========================================');
   console.log('Server ready at http://localhost:' + PORT);
   console.log('==========================================');
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down...');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down...');
-  process.exit(0);
 });
