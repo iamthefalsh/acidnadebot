@@ -1,0 +1,112 @@
+{
+  "understanding": {
+    "request_types": {
+      "question": {
+        "keywords": ["do you know", "what is", "tell me about", "explain", "?"],
+        "response": "conversational",
+        "load_prompts": ["explain", "knowledge"],
+        "example": "Do you know Bee Swarm Simulator?"
+      },
+      "build": {
+        "keywords": ["create", "make", "build", "add", "implement"],
+        "response": "technical",
+        "load_prompts": ["plan", "code", "structure"],
+        "example": "Make a bag system with UI"
+      },
+      "analyze": {
+        "keywords": ["check", "analyze", "look at", "review", "read"],
+        "response": "analytical",
+        "load_prompts": ["analyze", "review"],
+        "needs_source": true,
+        "example": "Check my current FieldSystem"
+      },
+      "modify": {
+        "keywords": ["fix", "change", "update", "improve", "modify"],
+        "response": "technical",
+        "load_prompts": ["modify", "code"],
+        "needs_source": true,
+        "example": "Fix the bug in my script"
+      }
+    },
+    
+    "complexity_detection": {
+      "simple": {
+        "indicators": ["basic", "simple", "easy", "quick"],
+        "steps": "1-3",
+        "prompts_needed": ["basic_code"]
+      },
+      "medium": {
+        "indicators": ["system", "with", "and", "including"],
+        "steps": "3-7",
+        "prompts_needed": ["code", "structure", "integration"]
+      },
+      "complex": {
+        "indicators": ["complete", "full", "advanced", "entire game"],
+        "steps": "7-15",
+        "prompts_needed": ["code", "structure", "integration", "optimization", "security"]
+      }
+    },
+    
+    "system_detection": {
+      "inventory": ["bag", "inventory", "item", "storage", "backpack"],
+      "gui": ["ui", "interface", "button", "menu", "screen"],
+      "combat": ["damage", "health", "attack", "weapon", "fight"],
+      "data": ["save", "load", "datastore", "leaderstats"],
+      "shop": ["shop", "buy", "purchase", "sell", "store"],
+      "quest": ["quest", "mission", "task", "objective"],
+      "collection": ["collect", "gather", "pick up", "harvest"],
+      "simulation": ["physics", "particle", "gravity", "simulate"]
+    },
+    
+    "game_references": {
+      "bee_swarm": {
+        "name": "Bee Swarm Simulator",
+        "systems": ["collection", "bees", "flowers", "pollen", "honey", "hive", "field", "tools"],
+        "core_mechanics": "Players collect pollen from flowers using bees, convert to honey, upgrade hive"
+      },
+      "adopt_me": {
+        "name": "Adopt Me",
+        "systems": ["pets", "trading", "housing", "minigames"],
+        "core_mechanics": "Pet collection and trading game with housing"
+      },
+      "jailbreak": {
+        "name": "Jailbreak",
+        "systems": ["vehicles", "weapons", "heists", "teams", "cops vs robbers"],
+        "core_mechanics": "Cops try to stop robbers from escaping and robbing"
+      }
+    }
+  },
+  
+  "response_rules": {
+    "for_questions": {
+      "never_create_plan": true,
+      "response_format": "Explain the topic + Ask what they want to build",
+      "example": "Yes! Bee Swarm is a collection game. Would you like me to create a similar flower collection system?"
+    },
+    
+    "for_build_requests": {
+      "always_create_plan": true,
+      "process": [
+        "1. Understand what systems are needed",
+        "2. Generate initial idea",
+        "3. Think and improve the idea",
+        "4. Create detailed plan with steps"
+      ]
+    },
+    
+    "for_analyze_requests": {
+      "check_source_first": true,
+      "if_no_source": "Request source code with needsSourceCode",
+      "if_has_source": "Analyze and provide detailed review"
+    }
+  },
+  
+  "json_structure": {
+    "always_include": ["message", "thinkingSteps", "plan", "reasoning"],
+    "conditional": {
+      "needsSourceCode": "Only when analyzing/modifying without source",
+      "warnings": "For security or performance concerns",
+      "nextSteps": "For multi-part implementations"
+    }
+  }
+}
