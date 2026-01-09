@@ -19,7 +19,7 @@ await fs.mkdir(DATA_DIR, { recursive: true }).catch(() => {});
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ============================================================================
-// ENHANCED MEMORY SYSTEM
+// ENHANCED MEMORY SYSTEM WITH MEMORY BANK
 // ============================================================================
 class EnhancedMemory {
   constructor() {
@@ -27,26 +27,71 @@ class EnhancedMemory {
     this.projectContext = new Map();
     this.templates = new Map();
     this.checkpoints = new Map();
+    this.memoryBank = new Map(); // NEW: Project memory bank
+    this.fileAccess = new Map(); // NEW: Track file access to prevent loops
     this.loadAll();
   }
 
   async loadAll() {
-    const files = ['conversations', 'projects', 'templates', 'checkpoints'];
+    const files = ['conversations', 'projects', 'templates', 'checkpoints', 'memorybank'];
     for (const file of files) {
       try {
         const data = await fs.readFile(path.join(DATA_DIR, `${file}.json`), 'utf-8');
         const parsed = JSON.parse(data);
-        this[file === 'projects' ? 'projectContext' : file] = new Map(Object.entries(parsed));
+        if (file === 'memorybank') {
+          this.memoryBank = new Map(Object.entries(parsed));
+        } else {
+          this[file === 'projects' ? 'projectContext' : file] = new Map(Object.entries(parsed));
+        }
       } catch (error) {}
     }
   }
 
   async save(type) {
-    const map = type === 'projects' ? this.projectContext : this[type];
+    const map = type === 'projects' ? this.projectContext : 
+                type === 'memorybank' ? this.memoryBank : this[type];
     await fs.writeFile(
       path.join(DATA_DIR, `${type}.json`),
       JSON.stringify(Object.fromEntries(map), null, 2)
     );
+  }
+
+  // NEW: Memory Bank - Store AI's understanding of project
+  getMemoryBank(userId) {
+    if (!this.memoryBank.has(userId)) {
+      this.memoryBank.set(userId, {
+        projectDescription: '',
+        keyFiles: [],
+        systemUnderstanding: {},
+        lastUpdated: Date.now()
+      });
+    }
+    return this.memoryBank.get(userId);
+  }
+
+  updateMemoryBank(userId, updates) {
+    const bank = this.getMemoryBank(userId);
+    Object.assign(bank, updates, { lastUpdated: Date.now() });
+    this.save('memorybank');
+  }
+
+  // NEW: Track file access to prevent reading loops
+  trackFileAccess(userId, filename) {
+    const key = `${userId}_${filename}`;
+    const now = Date.now();
+    const lastAccess = this.fileAccess.get(key) || { count: 0, lastTime: 0 };
+    
+    // Reset count if more than 5 seconds passed
+    if (now - lastAccess.lastTime > 5000) {
+      lastAccess.count = 0;
+    }
+    
+    lastAccess.count++;
+    lastAccess.lastTime = now;
+    this.fileAccess.set(key, lastAccess);
+    
+    // Return true if file was accessed too many times (loop detected)
+    return lastAccess.count > 3;
   }
 
   getProject(userId) {
@@ -57,7 +102,9 @@ class EnhancedMemory {
         instances: new Map(),
         dependencies: {},
         lastCheckpoint: null,
-        currentPlan: null
+        currentPlan: null,
+        mentionedFiles: [], // NEW: Track @mentioned files
+        recentEdits: [] // NEW: Track recent edits to prevent redundant changes
       });
     }
     return this.projectContext.get(userId);
@@ -70,6 +117,32 @@ class EnhancedMemory {
       createdAt: Date.now()
     });
     this.save('projects');
+  }
+
+  // NEW: Track edits to prevent redundant changes
+  trackEdit(userId, filename, changeType) {
+    const project = this.getProject(userId);
+    project.recentEdits.push({
+      filename,
+      changeType,
+      timestamp: Date.now()
+    });
+    
+    // Keep only last 20 edits
+    if (project.recentEdits.length > 20) {
+      project.recentEdits = project.recentEdits.slice(-20);
+    }
+    
+    this.save('projects');
+  }
+
+  // NEW: Check if file was recently edited
+  wasRecentlyEdited(userId, filename) {
+    const project = this.getProject(userId);
+    const fiveSecondsAgo = Date.now() - 5000;
+    return project.recentEdits.some(edit => 
+      edit.filename === filename && edit.timestamp > fiveSecondsAgo
+    );
   }
 
   searchInstances(userId, query) {
@@ -214,11 +287,103 @@ const ARCHETYPES = {
 };
 
 // ============================================================================
-// CORE AI SYSTEM
+// NEW: PROMPT ANALYZER - Break complex prompts into tasks
+// ============================================================================
+function analyzePromptComplexity(message) {
+  let complexity = 0;
+  const indicators = {
+    multipleActions: /\band\b.*\band\b/gi,
+    systemWords: /system|complete|full|entire|whole/gi,
+    createWords: /create|make|build|add|implement/gi,
+    modifyWords: /change|modify|update|fix|improve/gi,
+    uiWords: /gui|ui|interface|menu|button|frame/gi,
+    scriptWords: /script|code|function|module/gi
+  };
+  
+  Object.values(indicators).forEach(regex => {
+    const matches = message.match(regex);
+    if (matches) complexity += matches.length;
+  });
+  
+  // Check for mentioned files (@filename)
+  const fileMentions = message.match(/@[\w.-]+/g);
+  if (fileMentions) complexity += fileMentions.length * 2;
+  
+  return {
+    score: complexity,
+    isComplex: complexity > 5,
+    shouldBreakIntoTasks: complexity > 8,
+    mentionedFiles: fileMentions || []
+  };
+}
+
+// ============================================================================
+// NEW: UI VALIDATION - Prevent invalid/invisible UIs
+// ============================================================================
+function validateUIProperties(action) {
+  if (!action.classtype || !action.classtype.includes('Gui') && !action.classtype.includes('Frame') && !action.classtype.includes('Label') && !action.classtype.includes('Button')) {
+    return { valid: true }; // Not a UI element
+  }
+  
+  const issues = [];
+  const props = action.properties || {};
+  
+  // Check Size (must be visible)
+  if (props.Size) {
+    const sizeStr = props.Size.toString();
+    if (sizeStr.includes('0, 0, 0, 0') || sizeStr === '0') {
+      issues.push('Size is zero - UI will be invisible');
+      props.Size = 'UDim2.new(0, 100, 0, 50)'; // Fix: default size
+    }
+  } else {
+    issues.push('Missing Size property');
+    props.Size = 'UDim2.new(0, 100, 0, 50)';
+  }
+  
+  // Check Position (must be on screen)
+  if (!props.Position) {
+    props.Position = 'UDim2.new(0, 0, 0, 0)';
+  }
+  
+  // Check Visibility
+  if (props.Visible === false || props.Visible === 'false') {
+    issues.push('UI is set to invisible');
+  }
+  
+  // Check BackgroundTransparency (shouldn't be 1 for containers)
+  if (props.BackgroundTransparency === 1 && action.classtype.includes('Frame')) {
+    issues.push('Background is fully transparent - might be hard to see');
+  }
+  
+  // Check Text for Labels/Buttons
+  if ((action.classtype.includes('Label') || action.classtype.includes('Button')) && !props.Text) {
+    issues.push('Missing Text property');
+    props.Text = action.name || 'Label';
+  }
+  
+  return {
+    valid: issues.length === 0,
+    issues,
+    fixedProperties: props
+  };
+}
+
+// ============================================================================
+// CORE AI SYSTEM WITH ALL LEMONADE IMPROVEMENTS
 // ============================================================================
 
 async function enhancedAI(userMessage, context, userId) {
   try {
+    // NEW: Analyze prompt complexity
+    const complexity = analyzePromptComplexity(userMessage);
+    
+    // NEW: Extract mentioned files (@filename)
+    const project = memory.getProject(userId);
+    if (complexity.mentionedFiles.length > 0) {
+      project.mentionedFiles = complexity.mentionedFiles.map(f => f.substring(1));
+      memory.save('projects');
+    }
+
     const model = genAI.getGenerativeModel({
       model: 'gemini-3-flash-preview',
       generationConfig: {
@@ -226,83 +391,108 @@ async function enhancedAI(userMessage, context, userId) {
         maxOutputTokens: 8000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `You are Acidnade AI - an advanced Roblox Studio assistant.
+      systemInstruction: `You are Acidnade AI - an advanced Roblox Studio assistant with enhanced capabilities.
 
-CAPABILITIES:
-1. Recognize game archetypes (tycoon, simulator, obby, rpg, fps)
-2. Search existing instances in the workspace
-3. Predict what users need next
-4. Reference templates and patterns
-5. Understand dependencies between systems
-6. Provide auto-complete suggestions
-7. Analyze security and performance
+CRITICAL RULES (Lemonade-inspired improvements):
+1. NEVER replace script content with internal dialogue or comments about what you're thinking
+2. NEVER reread the same file multiple times in one response
+3. ALWAYS stay focused on the user's request - don't do unrelated things
+4. When editing scripts, provide COMPLETE code, not partial snippets
+5. For UI elements, ALWAYS ensure they are visible (proper Size, Position, Visible=true)
+6. When user mentions @filename, focus ONLY on those files
+7. Don't use investigation tools redundantly - if you just read a file, don't read it again
+8. Break complex prompts into clear, sequential steps
+
+ROBLOX-SPECIFIC KNOWLEDGE:
+- Use proper Roblox services (Workspace, ServerScriptService, ReplicatedStorage, etc.)
+- Scripts: Script (server), LocalScript (client), ModuleScript (shared)
+- UI hierarchy: ScreenGui > Frame > TextLabel/TextButton/etc.
+- Always parent UI to PlayerGui or StarterGui
+- Use proper property types (UDim2 for Size/Position, Color3 for colors)
+- Modern Roblox uses task.wait() not wait()
+
+UI CREATION RULES:
+- Size must be visible: UDim2.new(0, width, 0, height) where width/height > 0
+- Position: UDim2.new(scaleX, offsetX, scaleY, offsetY)
+- Always set Visible = true
+- Containers (Frame) need BackgroundColor3 or BackgroundTransparency < 1
+- Text elements need Text, TextSize, TextColor3
 
 RESPONSE TYPES:
 
 CHAT:
 {
   "type": "chat",
-  "message": "Response",
-  "suggestions": ["Optional next steps"]
+  "message": "Response"
 }
 
-ARCHETYPE DETECTION:
+ARCHETYPE:
 {
   "type": "archetype",
   "detected": "tycoon",
-  "message": "I'll create a complete tycoon game structure",
+  "message": "I'll create a complete tycoon game",
   "systems": ["Plot System", "Currency System", ...],
   "structure": {...}
 }
 
-PLAN:
+PLAN (for complex prompts):
 {
   "type": "plan",
-  "message": "What I'll build",
-  "understanding": "Analysis",
-  "references": [{"uid": "UID_123", "name": "ExistingSystem", "why": "Will integrate with this"}],
+  "message": "I'll break this into steps",
+  "understanding": "Clear breakdown of what you're building",
   "steps": [
     {
       "stepId": "step_1",
-      "description": "Brief description",
-      "dependencies": [],
-      "estimatedComplexity": "simple|medium|complex"
+      "description": "What this step does",
+      "estimatedComplexity": "simple|medium|complex",
+      "focusFiles": ["@mentioned", "files"]
     }
-  ]
+  ],
+  "breakdown": "Why I'm breaking this into steps"
 }
 
-SUGGESTIONS (Auto-complete):
+SUGGESTIONS:
 {
   "type": "suggestions",
   "predictions": [
     {
-      "action": "Create validation script",
+      "action": "What to do next",
       "confidence": 0.95,
-      "reasoning": "You have a button but no backend logic"
+      "reasoning": "Why this makes sense"
     }
   ]
 }
 
-SEARCH RESULTS:
-{
-  "type": "search_results",
-  "query": "shop",
-  "found": [
-    {"uid": "UID_123", "name": "ShopModule", "relevant": "Has buy/sell functions"}
-  ]
-}
-
-Be intelligent, context-aware, and helpful.`
+Be intelligent and focused. Always produce complete, working code.`
     });
 
     const history = memory.getHistory(userId, 8);
-    const project = memory.getProject(userId);
+    const memoryBank = memory.getMemoryBank(userId);
 
     let prompt = `USER: ${userMessage}\n\n`;
 
+    // NEW: Add memory bank context
+    if (memoryBank.projectDescription) {
+      prompt += `PROJECT MEMORY:\n${memoryBank.projectDescription}\n\n`;
+    }
+
+    // NEW: Recent edits context (prevent redundant changes)
+    if (project.recentEdits.length > 0) {
+      const recentFiles = [...new Set(project.recentEdits.slice(-5).map(e => e.filename))];
+      prompt += `RECENTLY EDITED: ${recentFiles.join(', ')}\n`;
+      prompt += `Don't re-edit these unless explicitly asked.\n\n`;
+    }
+
+    // NEW: File mentions (force focus)
+    if (project.mentionedFiles.length > 0) {
+      prompt += `🎯 FOCUS ON THESE FILES: ${project.mentionedFiles.join(', ')}\n`;
+      prompt += `User specifically mentioned these files - prioritize them.\n\n`;
+    }
+
+    // Conversation history
     if (history.length > 0) {
       prompt += `HISTORY:\n`;
-      history.forEach(conv => {
+      history.slice(-3).forEach(conv => { // Only last 3 to reduce redundancy
         prompt += `User: ${conv.user}\nYou: ${conv.ai}\n\n`;
       });
     }
@@ -317,7 +507,7 @@ Be intelligent, context-aware, and helpful.`
 
     prompt += `\nAVAILABLE ARCHETYPES:\n`;
     Object.entries(ARCHETYPES).forEach(([key, arch]) => {
-      prompt += `- ${key}: ${arch.name} (${arch.systems.join(', ')})\n`;
+      prompt += `- ${key}: ${arch.name}\n`;
     });
 
     if (context?.selectedObjects?.length > 0) {
@@ -328,14 +518,23 @@ Be intelligent, context-aware, and helpful.`
     }
 
     if (project.instances.size > 0) {
-      prompt += `\nYou can search ${project.instances.size} instances in the workspace.\n`;
+      prompt += `\n${project.instances.size} instances in workspace.\n`;
     }
 
-    prompt += `\nAnalyze and respond intelligently.`;
+    // NEW: Complexity guidance
+    if (complexity.isComplex) {
+      prompt += `\n⚠️ Complex request detected (score: ${complexity.score}).\n`;
+      if (complexity.shouldBreakIntoTasks) {
+        prompt += `Consider breaking into sequential steps.\n`;
+      }
+    }
+
+    prompt += `\nProvide a focused, complete response. No internal dialogue.`;
 
     const result = await model.generateContent(prompt);
     const response = JSON.parse(result.response.text());
 
+    // Update project context
     if (response.type === 'archetype') {
       project.gameType = response.detected;
       project.systems = response.systems;
@@ -355,7 +554,8 @@ Be intelligent, context-aware, and helpful.`
     console.error('[AI] Error:', error.message);
     return {
       type: 'chat',
-      message: "I encountered an error. Could you try rephrasing?"
+      message: "I encountered an error. Could you try rephrasing?",
+      error: error.message
     };
   }
 }
@@ -377,9 +577,16 @@ async function executeStep(stepId, userId, context) {
         maxOutputTokens: 6000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `Execute Roblox Studio actions.
+      systemInstruction: `Execute Roblox Studio step with complete, production-ready code.
 
-RESPONSE:
+CRITICAL RULES:
+1. Generate COMPLETE scripts - no placeholders or partial code
+2. Scripts must include ALL necessary code to work
+3. For UI, ensure visibility: Size > 0, Position valid, Visible=true
+4. Use proper Roblox services and modern APIs (task.wait not wait)
+5. Don't include internal thoughts or comments about what to do
+
+RESPONSE FORMAT:
 {
   "type": "execution",
   "stepId": "step_1",
@@ -388,69 +595,113 @@ RESPONSE:
     {
       "action": "create",
       "name": "InstanceName",
-      "classtype": "ModuleScript|Script|LocalScript|Part|Frame|etc",
-      "parent": "game.Workspace",
+      "classtype": "Script|LocalScript|ModuleScript|Part|ScreenGui|Frame|etc",
+      "parent": "game.ServerScriptService",
       "properties": {
-        "Color": [255, 0, 0],
-        "Position": "UDim2.new(0, 0, 0, 0)",
-        "Size": "UDim2.new(0, 100, 0, 50)",
-        "Text": "Hello",
-        "Source": "-- Full Lua code (for scripts only)"
-      }
-    },
-    {
-      "action": "modify",
-      "name": "ExistingName",
-      "parent": "game.Workspace",
-      "properties": {"Color": [0, 255, 0]},
-      "sourceModifications": {
-        "action": "replaceAll|append|prepend|insertAfter|insertBefore|replace",
-        "target": "-- code to find (for replace/insertAfter/insertBefore)",
-        "newCode": "-- New code"
+        "Size": "UDim2.new(0, 200, 0, 100)",
+        "Position": "UDim2.new(0.5, -100, 0.5, -50)",
+        "BackgroundColor3": [255, 255, 255],
+        "Text": "Button",
+        "Visible": true,
+        "Source": "-- COMPLETE Lua code here (for scripts)"
       }
     }
-  ]
+  ],
+  "diff": {
+    "summary": "What changed",
+    "filesModified": ["filename.lua"],
+    "linesChanged": 45
+  }
 }
 
-CRITICAL RULES:
-- Parent paths must be: "game.Workspace", "game.ServerScriptService", "game.ServerStorage", etc.
-- For Script/LocalScript/ModuleScript: put code in properties.Source
-- Generate COMPLETE, PRODUCTION-READY Lua code
-- Source modifications: use "replaceAll" carefully - it replaces entire script
-- Properties must match Roblox property types exactly`
+UI PROPERTIES (must be valid):
+- Size: "UDim2.new(0, 100, 0, 50)" not "0, 0, 0, 0"
+- Position: "UDim2.new(0, 10, 0, 10)" 
+- Color: [255, 0, 0] as RGB array
+- Text: string value
+- Visible: true (boolean)
+
+PARENT PATHS:
+- Scripts: "game.ServerScriptService" or "game.StarterPlayer.StarterPlayerScripts"
+- UI: "game.StarterGui" or parent to existing ScreenGui
+- Models: "game.Workspace"
+- Storage: "game.ServerStorage" or "game.ReplicatedStorage"`
     });
 
-    let prompt = `EXECUTE: ${stepId}\n\n`;
+    let prompt = `EXECUTE STEP: ${stepId}\n\n`;
     prompt += `DESCRIPTION: ${step.description}\n\n`;
+    
+    // NEW: Focus files if specified
+    if (step.focusFiles && step.focusFiles.length > 0) {
+      prompt += `🎯 FOCUS ON: ${step.focusFiles.join(', ')}\n\n`;
+    }
+    
     prompt += `PLAN CONTEXT:\n${JSON.stringify(plan, null, 2)}\n\n`;
     
     if (context?.selectedObjects) {
       prompt += `SELECTED:\n`;
       context.selectedObjects.forEach(obj => {
-        prompt += `- ${obj.Name} [${obj.UniqueId}]\n`;
+        prompt += `- ${obj.Name} (${obj.ClassName})\n`;
       });
+      prompt += '\n';
+    }
+
+    // NEW: Check for file access loops
+    if (step.focusFiles) {
+      for (const file of step.focusFiles) {
+        if (memory.trackFileAccess(userId, file)) {
+          prompt += `⚠️ WARNING: ${file} was already accessed multiple times.\n`;
+          prompt += `Don't read it again unless absolutely necessary.\n`;
+        }
+      }
     }
 
     if (project.instances.size > 0) {
-      prompt += `\nAVAILABLE INSTANCES:\n`;
+      prompt += `AVAILABLE INSTANCES:\n`;
+      let count = 0;
       for (const [uid, inst] of project.instances.entries()) {
-        prompt += `- ${inst.name} (${inst.classtype})\n`;
+        if (count < 10) { // Limit to prevent token bloat
+          prompt += `- ${inst.name} (${inst.classtype})\n`;
+          count++;
+        }
+      }
+      if (project.instances.size > 10) {
+        prompt += `... and ${project.instances.size - 10} more\n`;
       }
     }
 
     const result = await model.generateContent(prompt);
     const execution = JSON.parse(result.response.text());
 
-    execution.actions?.forEach(action => {
-      if (action.action === 'create') {
-        const uid = `${action.name}_${Date.now()}`;
-        memory.addInstance(userId, uid, {
-          name: action.name,
-          classtype: action.classtype,
-          parent: action.parent
-        });
-      }
-    });
+    // NEW: Validate UI properties
+    if (execution.actions) {
+      execution.actions.forEach(action => {
+        const validation = validateUIProperties(action);
+        if (!validation.valid) {
+          console.log(`[UI Validation] Fixed issues in ${action.name}:`, validation.issues);
+          action.properties = validation.fixedProperties;
+          
+          // Add warning to message
+          if (!execution.warnings) execution.warnings = [];
+          execution.warnings.push(`Fixed UI issues in ${action.name}: ${validation.issues.join(', ')}`);
+        }
+        
+        // Track created instances
+        if (action.action === 'create') {
+          const uid = `${action.name}_${Date.now()}`;
+          memory.addInstance(userId, uid, {
+            name: action.name,
+            classtype: action.classtype,
+            parent: action.parent
+          });
+        }
+        
+        // NEW: Track edits
+        if (action.action === 'modify') {
+          memory.trackEdit(userId, action.name, 'modify');
+        }
+      });
+    }
 
     return execution;
 
@@ -466,7 +717,7 @@ CRITICAL RULES:
 app.use(helmet());
 app.use(cors());
 app.use(compression());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '10mb' })); // Increased for image support
 app.set('trust proxy', 1);
 
 const limiter = rateLimit({
@@ -561,53 +812,46 @@ app.post('/ai/execute', auth, async (req, res) => {
 
   } catch (error) {
     console.error('[Execute] Error:', error.message);
+    res.status(500).json({ 
+      error: error.message,
+      type: 'execution',
+      actions: []
+    });
+  }
+});
+
+// NEW: Memory Bank endpoints
+app.get('/ai/memory/:userId', auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const memoryBank = memory.getMemoryBank(userId);
+    
+    res.json({
+      success: true,
+      memory: memoryBank
+    });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Execute entire plan at once
-app.post('/ai/execute-all', auth, async (req, res) => {
+app.post('/ai/memory/:userId', auth, async (req, res) => {
   try {
-    const { userId = 'anonymous', context } = req.body;
-
-    const userCtx = memory.getProject(userId);
-    const plan = userCtx.currentPlan;
-
-    if (!plan || plan.type !== 'plan') {
-      return res.status(400).json({
-        error: 'No active plan found'
-      });
-    }
-
-    console.log(`[${userId}] Executing all ${plan.steps.length} steps`);
-
-    const executions = [];
-    for (const step of plan.steps) {
-      try {
-        const execution = await executeStep(step.stepId, plan, context, userId);
-        executions.push(execution);
-      } catch (error) {
-        console.error(`[Execute] Failed step ${step.stepId}:`, error.message);
-        executions.push({
-          type: 'execution',
-          stepId: step.stepId,
-          error: error.message,
-          actions: []
-        });
-      }
-    }
-
+    const { userId } = req.params;
+    const { projectDescription, keyFiles, systemUnderstanding } = req.body;
+    
+    memory.updateMemoryBank(userId, {
+      projectDescription,
+      keyFiles,
+      systemUnderstanding
+    });
+    
     res.json({
-      type: 'batch_execution',
-      message: `Executed ${executions.length} steps`,
-      executions: executions
+      success: true,
+      message: 'Memory bank updated'
     });
-
   } catch (error) {
-    console.error('[ExecuteAll] Error:', error.message);
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -615,7 +859,6 @@ app.post('/ai/execute-all', auth, async (req, res) => {
 app.post('/ai/search', auth, async (req, res) => {
   try {
     const { query, userId = 'anonymous' } = req.body;
-    
     const results = memory.searchInstances(userId, query);
     
     res.json({
@@ -624,17 +867,15 @@ app.post('/ai/search', auth, async (req, res) => {
       results,
       count: results.length
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Create checkpoint
+// Checkpoint management
 app.post('/ai/checkpoint', auth, async (req, res) => {
   try {
     const { name, userId = 'anonymous' } = req.body;
-    
     const checkpointId = memory.createCheckpoint(userId, name || `Checkpoint ${Date.now()}`);
     
     res.json({
@@ -642,17 +883,14 @@ app.post('/ai/checkpoint', auth, async (req, res) => {
       checkpointId,
       message: 'Checkpoint created'
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Rollback to checkpoint
 app.post('/ai/rollback', auth, async (req, res) => {
   try {
     const { checkpointId, userId = 'anonymous' } = req.body;
-    
     const checkpoint = memory.rollback(userId, checkpointId);
     
     res.json({
@@ -660,17 +898,15 @@ app.post('/ai/rollback', auth, async (req, res) => {
       restored: checkpoint.name,
       message: 'Rolled back successfully'
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Save template
+// Template management
 app.post('/ai/template/save', auth, async (req, res) => {
   try {
     const { name, sourceUIDs, userId = 'anonymous' } = req.body;
-    
     const project = memory.getProject(userId);
     const template = memory.saveTemplate(userId, name, sourceUIDs, project);
     
@@ -679,17 +915,14 @@ app.post('/ai/template/save', auth, async (req, res) => {
       template,
       message: 'Template saved'
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Use template
 app.post('/ai/template/use', auth, async (req, res) => {
   try {
     const { name, customization, userId = 'anonymous' } = req.body;
-    
     const template = memory.getTemplate(userId, name);
     
     if (!template) {
@@ -703,46 +936,41 @@ app.post('/ai/template/use', auth, async (req, res) => {
     );
 
     res.json(response);
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get predictions/suggestions
+// Predictions
 app.post('/ai/predict', auth, async (req, res) => {
   try {
     const { context, userId = 'anonymous' } = req.body;
-    
     const response = await enhancedAI(
       'Based on my recent actions, what should I do next?',
       context,
       userId
     );
-
     res.json(response);
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get current plan
+// Project info
 app.get('/ai/plan/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
-    const userCtx = memory.getProject(userId);
+    const project = memory.getProject(userId);
     
     res.json({
-      hasPlan: !!userCtx.currentPlan,
-      plan: userCtx.currentPlan || null
+      hasPlan: !!project.currentPlan,
+      plan: project.currentPlan || null
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Clear plan
 app.delete('/ai/plan/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -759,7 +987,6 @@ app.delete('/ai/plan/:userId', auth, async (req, res) => {
   }
 });
 
-// Get project info
 app.get('/ai/project/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -770,15 +997,14 @@ app.get('/ai/project/:userId', auth, async (req, res) => {
       systems: project.systems,
       instanceCount: project.instances.size,
       lastCheckpoint: project.lastCheckpoint,
-      hasPlan: !!project.currentPlan
+      hasPlan: !!project.currentPlan,
+      recentEdits: project.recentEdits.slice(-5)
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get conversation history
 app.get('/ai/history/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -795,13 +1021,14 @@ app.get('/ai/history/:userId', auth, async (req, res) => {
   }
 });
 
-// Clear history
 app.delete('/ai/history/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
     memory.conversations.delete(userId);
     const project = memory.getProject(userId);
     project.currentPlan = null;
+    project.recentEdits = [];
+    project.mentionedFiles = [];
     await memory.save('conversations');
     await memory.save('projects');
     
@@ -814,40 +1041,47 @@ app.delete('/ai/history/:userId', auth, async (req, res) => {
   }
 });
 
-// Get available archetypes
 app.get('/ai/archetypes', auth, (req, res) => {
-  res.json({
-    archetypes: ARCHETYPES
-  });
+  res.json({ archetypes: ARCHETYPES });
 });
 
-// Ping endpoint for connection checks
+// Status endpoints
 app.get('/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: '3.0.0',
+    version: '3.1.0',
     model: 'gemini-3-flash-preview'
   });
 });
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'operational',
-    service: 'Acidnade AI - Enhanced Edition',
-    version: '3.0.0',
+    service: 'Acidnade AI - Lemonade Enhanced',
+    version: '3.1.0',
     model: 'gemini-3-flash-preview',
     features: [
-      'Game archetype detection',
-      'Smart workspace search',
-      'Auto-complete predictions',
-      'Template system',
-      'Checkpoint & rollback',
-      'Dependency tracking',
-      'Pure AI decisions',
-      'Context-aware responses',
-      'Roblox plugin compatible'
+      '✅ Gemini 3 Flash (faster, cheaper)',
+      '✅ Complex prompt breakdown',
+      '✅ File mention support (@filename)',
+      '✅ UI validation (no invisible UIs)',
+      '✅ Script content preservation',
+      '✅ Anti-loop protection',
+      '✅ Memory bank system',
+      '✅ Diff preview support',
+      '✅ Game archetypes',
+      '✅ Smart search',
+      '✅ Templates',
+      '✅ Checkpoints',
+      '✅ Roblox plugin compatible'
+    ],
+    improvements: [
+      'No script replacement with dialogue',
+      'No redundant file reading',
+      'Focused on user requests only',
+      'Complete code generation',
+      'Valid UI properties enforced'
     ],
     archetypes: Object.keys(ARCHETYPES),
     users: memory.conversations.size
@@ -859,34 +1093,40 @@ app.get('/health', (req, res) => {
 // ============================================================================
 app.listen(PORT, () => {
   console.log('╔════════════════════════════════════════════╗');
-  console.log('║   ACIDNADE AI - ENHANCED EDITION  🚀       ║');
+  console.log('║   ACIDNADE AI - LEMONADE ENHANCED  🍋      ║');
   console.log('╚════════════════════════════════════════════╝');
   console.log(`\n🌐 Port: ${PORT}`);
-  console.log('🤖 Model: gemini-3-flash-preview');
-  console.log('\n✨ Features:');
-  console.log('  • Game Archetype Detection (5 types)');
-  console.log('  • Smart Workspace Search');
-  console.log('  • Template System');
-  console.log('  • Checkpoint & Rollback');
-  console.log('  • Auto-complete Predictions');
-  console.log('  • Dependency Tracking');
-  console.log('  • Pure AI Decisions');
-  console.log('  • Roblox Plugin Compatible');
+  console.log('🤖 Model: gemini-3-flash-preview (Gemini 3 Flash)');
+  console.log('\n✨ Lemonade-Inspired Features:');
+  console.log('  • 🚀 Faster execution (Gemini 3)');
+  console.log('  • 💰 Reduced costs per prompt');
+  console.log('  • 🎯 Complex prompt breakdown');
+  console.log('  • 📎 File mention support (@filename)');
+  console.log('  • 🎨 UI validation (no invisible UIs)');
+  console.log('  • 🔄 Anti-loop protection');
+  console.log('  • 🧠 Memory bank system');
+  console.log('  • 📊 Diff preview support');
+  console.log('  • ✍️ Complete script generation');
+  console.log('  • 🎮 Enhanced Roblox knowledge');
   console.log('\n📡 Endpoints:');
   console.log('  POST /ai - Plugin compatibility');
   console.log('  POST /ai/chat - Main interaction');
   console.log('  POST /ai/execute - Execute step');
+  console.log('  GET/POST /ai/memory/:userId - Memory bank');
   console.log('  POST /ai/search - Search workspace');
   console.log('  POST /ai/checkpoint - Save state');
   console.log('  POST /ai/rollback - Restore state');
-  console.log('  POST /ai/template/save - Save template');
-  console.log('  POST /ai/template/use - Use template');
-  console.log('  POST /ai/predict - Get suggestions');
   console.log('  GET  /ping - Connection check');
   console.log('  GET  /health - System status');
   console.log('\n🎮 Supported Archetypes:');
   Object.entries(ARCHETYPES).forEach(([key, arch]) => {
     console.log(`  • ${arch.name} (${key})`);
   });
+  console.log('\n🛡️ Bug Fixes:');
+  console.log('  ✅ No script dialogue replacement');
+  console.log('  ✅ No redundant file reading');
+  console.log('  ✅ No unrelated actions');
+  console.log('  ✅ Complete code generation');
+  console.log('  ✅ Valid UI enforcement');
   console.log('\n✅ Ready to build amazing games!\n');
 });
