@@ -12,7 +12,9 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(process.cwd(), 'data');
+// NEW (For Vercel /tmp access)
+const os = require('os');
+const DATA_DIR = path.join(os.tmpdir(), 'acidnade_data');
 
 await fs.mkdir(DATA_DIR, { recursive: true }).catch(() => {});
 
@@ -369,7 +371,7 @@ function validateUIProperties(action) {
 }
 
 // ============================================================================
-// CORE AI SYSTEM - FIXED TO HANDLE RAW CODE RESPONSES
+// CORE AI SYSTEM WITH ALL LEMONADE IMPROVEMENTS
 // ============================================================================
 
 async function enhancedAI(userMessage, context, userId) {
@@ -391,65 +393,79 @@ async function enhancedAI(userMessage, context, userId) {
         maxOutputTokens: 8000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanations outside JSON.
+      systemInstruction: `You are Acidnade AI - an advanced Roblox Studio assistant with enhanced capabilities.
 
-You are Acidnade AI - a Roblox Studio assistant. Your responses must ALWAYS be JSON objects.
+CRITICAL RULES (Lemonade-inspired improvements):
+1. NEVER replace script content with internal dialogue or comments about what you're thinking
+2. NEVER reread the same file multiple times in one response
+3. ALWAYS stay focused on the user's request - don't do unrelated things
+4. When editing scripts, provide COMPLETE code, not partial snippets
+5. For UI elements, ALWAYS ensure they are visible (proper Size, Position, Visible=true)
+6. When user mentions @filename, focus ONLY on those files
+7. Don't use investigation tools redundantly - if you just read a file, don't read it again
+8. Break complex prompts into clear, sequential steps
 
-ABSOLUTE RULES:
-1. Response must be PURE JSON only - no markdown, no \`\`\`json\`\`\`, no code fences
-2. Never include markdown headings like ## or #
-3. Never show raw Lua code in the message field
-4. If you need to provide code, put it in the actions array or as chat suggestions
-5. Message field should contain only natural language, not code
+ROBLOX-SPECIFIC KNOWLEDGE:
+- Use proper Roblox services (Workspace, ServerScriptService, ReplicatedStorage, etc.)
+- Scripts: Script (server), LocalScript (client), ModuleScript (shared)
+- UI hierarchy: ScreenGui > Frame > TextLabel/TextButton/etc.
+- Always parent UI to PlayerGui or StarterGui
+- Use proper property types (UDim2 for Size/Position, Color3 for colors)
+- Modern Roblox uses task.wait() not wait()
 
-VALID RESPONSE FORMATS (JSON only):
+UI CREATION RULES:
+- Size must be visible: UDim2.new(0, width, 0, height) where width/height > 0
+- Position: UDim2.new(scaleX, offsetX, scaleY, offsetY)
+- Always set Visible = true
+- Containers (Frame) need BackgroundColor3 or BackgroundTransparency < 1
+- Text elements need Text, TextSize, TextColor3
 
-1. CHAT RESPONSE:
+RESPONSE TYPES:
+
+CHAT:
 {
   "type": "chat",
-  "message": "Natural language response here. Never put Lua code here."
+  "message": "Response"
 }
 
-2. CODE EXECUTION RESPONSE:
+ARCHETYPE:
 {
-  "type": "execution",
-  "message": "I'll create/update the code for you",
-  "actions": [
+  "type": "archetype",
+  "detected": "tycoon",
+  "message": "I'll create a complete tycoon game",
+  "systems": ["Plot System", "Currency System", ...],
+  "structure": {...}
+}
+
+PLAN (for complex prompts):
+{
+  "type": "plan",
+  "message": "I'll break this into steps",
+  "understanding": "Clear breakdown of what you're building",
+  "steps": [
     {
-      "action": "create|modify",
-      "name": "FileName",
-      "classtype": "Script|LocalScript|ModuleScript",
-      "parent": "game.ServerScriptService",
-      "properties": {
-        "Source": "-- Put Lua code here"
-      }
+      "stepId": "step_1",
+      "description": "What this step does",
+      "estimatedComplexity": "simple|medium|complex",
+      "focusFiles": ["@mentioned", "files"]
+    }
+  ],
+  "breakdown": "Why I'm breaking this into steps"
+}
+
+SUGGESTIONS:
+{
+  "type": "suggestions",
+  "predictions": [
+    {
+      "action": "What to do next",
+      "confidence": 0.95,
+      "reasoning": "Why this makes sense"
     }
   ]
 }
 
-3. ARCHETYPE DETECTION:
-{
-  "type": "archetype",
-  "detected": "tycoon",
-  "message": "I detect this is a tycoon game",
-  "systems": ["Plot System", "Currency System"]
-}
-
-4. PLAN BREAKDOWN:
-{
-  "type": "plan",
-  "message": "I'll break this into steps",
-  "steps": [
-    {"stepId": "step_1", "description": "First step"}
-  ]
-}
-
-IMPORTANT: If user asks for code changes, use the "execution" type with actions array. Do NOT put code in the message field.
-
-BAD: "message": "Here's the code: \\n```lua\\nprint('hello')\\n```"
-GOOD: "message": "I'll update that script for you", then put code in actions[0].properties.Source
-
-Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
+Be intelligent and focused. Always produce complete, working code.`
     });
 
     const history = memory.getHistory(userId, 8);
@@ -515,80 +531,10 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
       }
     }
 
-    prompt += `\nIMPORTANT: Your response must be PURE JSON only. No markdown, no code blocks.`;
+    prompt += `\nProvide a focused, complete response. No internal dialogue.`;
 
     const result = await model.generateContent(prompt);
-    
-    // 🔥 FIX: Handle raw code/markdown responses
-    let responseText = result.response?.text() || '';
-    let response = null;
-    
-    console.log('[AI] Raw response:', responseText.substring(0, 200));
-    
-    try {
-      if (!responseText || responseText.trim() === '') {
-        throw new Error('Empty response from AI');
-      }
-      
-      // Clean the response - remove markdown code blocks
-      responseText = responseText
-        .replace(/```json\s*/g, '')  // Remove ```json
-        .replace(/```\s*/g, '')      // Remove ```
-        .replace(/^#+\s.*$/gm, '')   // Remove markdown headers
-        .trim();
-      
-      // Try to extract JSON
-      const jsonMatch = responseText.match(/^\s*\{[\s\S]*\}\s*$/);
-      if (jsonMatch) {
-        response = JSON.parse(jsonMatch[0]);
-      } else {
-        // If it looks like code/markdown, convert to chat response
-        console.warn('[AI] Response is not JSON, converting to chat:', responseText.substring(0, 100));
-        response = {
-          type: 'chat',
-          message: "I need to provide that as code changes. Let me create an execution plan.",
-          needsExecution: true,
-          rawResponse: responseText.substring(0, 500)
-        };
-      }
-      
-      // Ensure response has required type
-      if (!response.type) {
-        response.type = 'chat';
-      }
-      
-    } catch (parseError) {
-      console.error('[AI] JSON Parse Error:', parseError.message);
-      // Convert raw response to chat message
-      response = {
-        type: 'chat',
-        message: "I'll help you with that. Let me create the necessary code changes.",
-        rawError: parseError.message,
-        rawResponse: responseText.substring(0, 300)
-      };
-    }
-
-    // If response has raw code, convert to execution
-    if (response.message && response.message.includes('```lua') || response.message.includes('local ') || response.message.includes('function ')) {
-      console.log('[AI] Detected code in message, converting to execution');
-      const codeMatch = response.message.match(/```lua\s*([\s\S]*?)\s*```/);
-      if (codeMatch) {
-        const code = codeMatch[1];
-        response = {
-          type: 'execution',
-          message: 'I\'ll implement that code for you',
-          actions: [{
-            action: 'modify',
-            name: 'Handler.lua',
-            classtype: 'LocalScript',
-            parent: 'game.StarterPlayer.StarterPlayerScripts',
-            properties: {
-              Source: code
-            }
-          }]
-        };
-      }
-    }
+    const response = JSON.parse(result.response.text());
 
     // Update project context
     if (response.type === 'archetype') {
@@ -602,7 +548,7 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
       memory.save('projects');
     }
 
-    memory.addConversation(userId, userMessage, response.message || 'Processing request', response.type);
+    memory.addConversation(userId, userMessage, response.message, response.type);
 
     return response;
 
@@ -633,37 +579,55 @@ async function executeStep(stepId, userId, context) {
         maxOutputTokens: 6000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks.
+      systemInstruction: `Execute Roblox Studio step with complete, production-ready code.
 
-You are executing a Roblox Studio step. Your response must be PURE JSON.
+CRITICAL RULES:
+1. Generate COMPLETE scripts - no placeholders or partial code
+2. Scripts must include ALL necessary code to work
+3. For UI, ensure visibility: Size > 0, Position valid, Visible=true
+4. Use proper Roblox services and modern APIs (task.wait not wait)
+5. Don't include internal thoughts or comments about what to do
 
-RESPONSE FORMAT (JSON only):
+RESPONSE FORMAT:
 {
   "type": "execution",
-  "stepId": "${stepId}",
-  "message": "Brief natural language update",
+  "stepId": "step_1",
+  "message": "Brief update",
   "actions": [
     {
-      "action": "create|modify",
-      "name": "FileName.lua",
-      "classtype": "Script|LocalScript|ModuleScript|Frame|ScreenGui",
+      "action": "create",
+      "name": "InstanceName",
+      "classtype": "Script|LocalScript|ModuleScript|Part|ScreenGui|Frame|etc",
       "parent": "game.ServerScriptService",
       "properties": {
-        "Size": "UDim2.new(0, 100, 0, 50)",
-        "Source": "-- Put COMPLETE Lua code here"
+        "Size": "UDim2.new(0, 200, 0, 100)",
+        "Position": "UDim2.new(0.5, -100, 0.5, -50)",
+        "BackgroundColor3": [255, 255, 255],
+        "Text": "Button",
+        "Visible": true,
+        "Source": "-- COMPLETE Lua code here (for scripts)"
       }
     }
-  ]
+  ],
+  "diff": {
+    "summary": "What changed",
+    "filesModified": ["filename.lua"],
+    "linesChanged": 45
+  }
 }
 
-ABSOLUTE RULES:
-1. NO markdown in response
-2. NO code blocks (```)
-3. NO explanations outside JSON
-4. Put ALL Lua code in the Source property
-5. Message field should be natural language only
+UI PROPERTIES (must be valid):
+- Size: "UDim2.new(0, 100, 0, 50)" not "0, 0, 0, 0"
+- Position: "UDim2.new(0, 10, 0, 10)" 
+- Color: [255, 0, 0] as RGB array
+- Text: string value
+- Visible: true (boolean)
 
-Your response must start with { and end with }.`
+PARENT PATHS:
+- Scripts: "game.ServerScriptService" or "game.StarterPlayer.StarterPlayerScripts"
+- UI: "game.StarterGui" or parent to existing ScreenGui
+- Models: "game.Workspace"
+- Storage: "game.ServerStorage" or "game.ReplicatedStorage"`
     });
 
     let prompt = `EXECUTE STEP: ${stepId}\n\n`;
@@ -708,45 +672,8 @@ Your response must start with { and end with }.`
       }
     }
 
-    prompt += `\nIMPORTANT: Return PURE JSON only. No markdown.`;
-
     const result = await model.generateContent(prompt);
-    
-    // 🔥 FIX: Handle raw responses in executeStep
-    let responseText = result.response?.text() || '';
-    let execution = null;
-    
-    console.log('[Execute] Raw response:', responseText.substring(0, 200));
-    
-    try {
-      if (!responseText || responseText.trim() === '') {
-        throw new Error('Empty response from AI');
-      }
-      
-      // Clean markdown
-      responseText = responseText
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .replace(/^#+\s.*$/gm, '')
-        .trim();
-      
-      const jsonMatch = responseText.match(/^\s*\{[\s\S]*\}\s*$/);
-      if (jsonMatch) {
-        execution = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No valid JSON found in response');
-      }
-      
-      // Ensure execution has required structure
-      if (!execution.type) execution.type = 'execution';
-      if (!execution.stepId) execution.stepId = stepId;
-      if (!execution.actions) execution.actions = [];
-      if (!execution.message) execution.message = 'Step executed';
-      
-    } catch (parseError) {
-      console.error('[Execute] JSON Parse Error:', parseError.message);
-      throw new Error(`Failed to parse AI response: ${parseError.message}`);
-    }
+    const execution = JSON.parse(result.response.text());
 
     // NEW: Validate UI properties
     if (execution.actions) {
@@ -1125,7 +1052,7 @@ app.get('/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: '3.1.0-fixed',
+    version: '3.1.0',
     model: 'gemini-3-flash-preview'
   });
 });
@@ -1133,14 +1060,30 @@ app.get('/ping', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'operational',
-    service: 'Acidnade AI - Fixed JSON Response',
-    version: '3.1.0-fixed',
+    service: 'Acidnade AI - Lemonade Enhanced',
+    version: '3.1.0',
     model: 'gemini-3-flash-preview',
-    fixes: [
-      '✅ Fixed raw code/markdown responses',
-      '✅ Handles non-JSON responses',
-      '✅ Converts markdown to proper JSON',
-      '✅ No more code in chat messages'
+    features: [
+      '✅ Gemini 3 Flash (faster, cheaper)',
+      '✅ Complex prompt breakdown',
+      '✅ File mention support (@filename)',
+      '✅ UI validation (no invisible UIs)',
+      '✅ Script content preservation',
+      '✅ Anti-loop protection',
+      '✅ Memory bank system',
+      '✅ Diff preview support',
+      '✅ Game archetypes',
+      '✅ Smart search',
+      '✅ Templates',
+      '✅ Checkpoints',
+      '✅ Roblox plugin compatible'
+    ],
+    improvements: [
+      'No script replacement with dialogue',
+      'No redundant file reading',
+      'Focused on user requests only',
+      'Complete code generation',
+      'Valid UI properties enforced'
     ],
     archetypes: Object.keys(ARCHETYPES),
     users: memory.conversations.size
@@ -1152,21 +1095,40 @@ app.get('/health', (req, res) => {
 // ============================================================================
 app.listen(PORT, () => {
   console.log('╔════════════════════════════════════════════╗');
-  console.log('║   ACIDNADE AI - FIXED RAW CODE RESPONSE    ║');
+  console.log('║   ACIDNADE AI - LEMONADE ENHANCED  🍋      ║');
   console.log('╚════════════════════════════════════════════╝');
   console.log(`\n🌐 Port: ${PORT}`);
-  console.log('🤖 Model: gemini-3-flash-preview');
-  console.log('\n✨ Fixes Applied:');
-  console.log('  • ✅ No more raw code in chat');
-  console.log('  • ✅ Handles markdown responses');
-  console.log('  • ✅ Converts code blocks to JSON actions');
-  console.log('  • ✅ Strict JSON-only enforcement');
-  console.log('  • ✅ Automatic code extraction');
+  console.log('🤖 Model: gemini-3-flash-preview (Gemini 3 Flash)');
+  console.log('\n✨ Lemonade-Inspired Features:');
+  console.log('  • 🚀 Faster execution (Gemini 3)');
+  console.log('  • 💰 Reduced costs per prompt');
+  console.log('  • 🎯 Complex prompt breakdown');
+  console.log('  • 📎 File mention support (@filename)');
+  console.log('  • 🎨 UI validation (no invisible UIs)');
+  console.log('  • 🔄 Anti-loop protection');
+  console.log('  • 🧠 Memory bank system');
+  console.log('  • 📊 Diff preview support');
+  console.log('  • ✍️ Complete script generation');
+  console.log('  • 🎮 Enhanced Roblox knowledge');
   console.log('\n📡 Endpoints:');
   console.log('  POST /ai - Plugin compatibility');
-  console.log('  POST /ai/chat - Main chat');
-  console.log('  POST /ai/execute - Execute steps');
+  console.log('  POST /ai/chat - Main interaction');
+  console.log('  POST /ai/execute - Execute step');
+  console.log('  GET/POST /ai/memory/:userId - Memory bank');
+  console.log('  POST /ai/search - Search workspace');
+  console.log('  POST /ai/checkpoint - Save state');
+  console.log('  POST /ai/rollback - Restore state');
   console.log('  GET  /ping - Connection check');
   console.log('  GET  /health - System status');
-  console.log('\n✅ Ready to handle AI responses properly!\n');
+  console.log('\n🎮 Supported Archetypes:');
+  Object.entries(ARCHETYPES).forEach(([key, arch]) => {
+    console.log(`  • ${arch.name} (${key})`);
+  });
+  console.log('\n🛡️ Bug Fixes:');
+  console.log('  ✅ No script dialogue replacement');
+  console.log('  ✅ No redundant file reading');
+  console.log('  ✅ No unrelated actions');
+  console.log('  ✅ Complete code generation');
+  console.log('  ✅ Valid UI enforcement');
+  console.log('\n✅ Ready to build amazing games!\n');
 });
