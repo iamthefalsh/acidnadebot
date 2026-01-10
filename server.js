@@ -5,16 +5,25 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
+import fs from 'fs/promises';
+import path from 'path';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DATA_DIR = path.join(process.cwd(), 'data');
+
+await fs.mkdir(DATA_DIR, { recursive: true }).catch(() => {});
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+console.log('🚀 Starting Acidnade AI - Lemonade Enhanced');
+console.log('🤖 Model: gemini-3-flash-preview');
+console.log('📁 Data directory:', DATA_DIR);
+
 // ============================================================================
-// ENHANCED MEMORY SYSTEM - IN-MEMORY ONLY (FOR VERCEL)
+// ENHANCED MEMORY SYSTEM WITH ALL LEMONADE FEATURES
 // ============================================================================
 class EnhancedMemory {
   constructor() {
@@ -24,15 +33,41 @@ class EnhancedMemory {
     this.checkpoints = new Map();
     this.memoryBank = new Map();
     this.fileAccess = new Map();
-    console.log('[Memory] Using in-memory storage (Vercel compatible)');
+    this.loadAll();
   }
 
-  // No file operations for Vercel - all in memory
+  async loadAll() {
+    const files = ['conversations', 'projects', 'templates', 'checkpoints', 'memorybank'];
+    for (const file of files) {
+      try {
+        const data = await fs.readFile(path.join(DATA_DIR, `${file}.json`), 'utf-8');
+        const parsed = JSON.parse(data);
+        if (file === 'memorybank') {
+          this.memoryBank = new Map(Object.entries(parsed));
+        } else {
+          this[file === 'projects' ? 'projectContext' : file] = new Map(Object.entries(parsed));
+        }
+      } catch (error) {
+        // File doesn't exist yet, will be created on first save
+      }
+    }
+    console.log('[Memory] Loaded from disk');
+  }
+
   async save(type) {
-    // Do nothing - Vercel doesn't support persistent file storage
-    console.log(`[Memory] Would save ${type} (in-memory only)`);
+    try {
+      const map = type === 'projects' ? this.projectContext : 
+                  type === 'memorybank' ? this.memoryBank : this[type];
+      await fs.writeFile(
+        path.join(DATA_DIR, `${type}.json`),
+        JSON.stringify(Object.fromEntries(map), null, 2)
+      );
+    } catch (error) {
+      console.error(`[Memory] Failed to save ${type}:`, error.message);
+    }
   }
 
+  // Memory Bank
   getMemoryBank(userId) {
     if (!this.memoryBank.has(userId)) {
       this.memoryBank.set(userId, {
@@ -48,9 +83,10 @@ class EnhancedMemory {
   updateMemoryBank(userId, updates) {
     const bank = this.getMemoryBank(userId);
     Object.assign(bank, updates, { lastUpdated: Date.now() });
-    return true;
+    this.save('memorybank');
   }
 
+  // File Access Tracking (Anti-Loop)
   trackFileAccess(userId, filename) {
     const key = `${userId}_${filename}`;
     const now = Date.now();
@@ -67,6 +103,7 @@ class EnhancedMemory {
     return lastAccess.count > 3;
   }
 
+  // Project Context
   getProject(userId) {
     if (!this.projectContext.has(userId)) {
       this.projectContext.set(userId, {
@@ -89,7 +126,7 @@ class EnhancedMemory {
       ...info,
       createdAt: Date.now()
     });
-    return true;
+    this.save('projects');
   }
 
   trackEdit(userId, filename, changeType) {
@@ -104,7 +141,7 @@ class EnhancedMemory {
       project.recentEdits = project.recentEdits.slice(-20);
     }
     
-    return true;
+    this.save('projects');
   }
 
   wasRecentlyEdited(userId, filename) {
@@ -141,6 +178,9 @@ class EnhancedMemory {
     });
     
     project.lastCheckpoint = checkpointId;
+    this.save('checkpoints');
+    this.save('projects');
+    
     return checkpointId;
   }
 
@@ -151,6 +191,7 @@ class EnhancedMemory {
     }
     
     this.projectContext.set(userId, checkpoint.snapshot);
+    this.save('projects');
     return checkpoint;
   }
 
@@ -171,6 +212,7 @@ class EnhancedMemory {
     });
 
     this.templates.set(`${userId}_${name}`, template);
+    this.save('templates');
     return template;
   }
 
@@ -190,7 +232,7 @@ class EnhancedMemory {
       this.conversations.set(userId, history.slice(-50));
     }
     
-    return true;
+    this.save('conversations');
   }
 
   getHistory(userId, limit = 8) {
@@ -252,7 +294,7 @@ const ARCHETYPES = {
 };
 
 // ============================================================================
-// PROMPT ANALYZER
+// PROMPT ANALYZER - Complex Prompt Breakdown
 // ============================================================================
 function analyzePromptComplexity(message) {
   let complexity = 0;
@@ -282,16 +324,21 @@ function analyzePromptComplexity(message) {
 }
 
 // ============================================================================
-// UI VALIDATION
+// UI VALIDATION - Prevent Invisible UIs
 // ============================================================================
 function validateUIProperties(action) {
-  if (!action.classtype || !action.classtype.includes('Gui') && !action.classtype.includes('Frame') && !action.classtype.includes('Label') && !action.classtype.includes('Button')) {
+  if (!action.classtype || 
+      (!action.classtype.includes('Gui') && 
+       !action.classtype.includes('Frame') && 
+       !action.classtype.includes('Label') && 
+       !action.classtype.includes('Button'))) {
     return { valid: true };
   }
   
   const issues = [];
   const props = action.properties || {};
   
+  // Check Size
   if (props.Size) {
     const sizeStr = props.Size.toString();
     if (sizeStr.includes('0, 0, 0, 0') || sizeStr === '0') {
@@ -312,7 +359,7 @@ function validateUIProperties(action) {
   }
   
   if (props.BackgroundTransparency === 1 && action.classtype.includes('Frame')) {
-    issues.push('Background is fully transparent - might be hard to see');
+    issues.push('Background is fully transparent');
   }
   
   if ((action.classtype.includes('Label') || action.classtype.includes('Button')) && !props.Text) {
@@ -328,15 +375,17 @@ function validateUIProperties(action) {
 }
 
 // ============================================================================
-// CORE AI SYSTEM - FIXED FOR VERCEL
+// CORE AI SYSTEM WITH ALL LEMONADE IMPROVEMENTS
 // ============================================================================
 
 async function enhancedAI(userMessage, context, userId) {
   try {
     const complexity = analyzePromptComplexity(userMessage);
     const project = memory.getProject(userId);
+    
     if (complexity.mentionedFiles.length > 0) {
       project.mentionedFiles = complexity.mentionedFiles.map(f => f.substring(1));
+      memory.save('projects');
     }
 
     const model = genAI.getGenerativeModel({
@@ -346,68 +395,80 @@ async function enhancedAI(userMessage, context, userId) {
         maxOutputTokens: 8000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanations outside JSON.
+      systemInstruction: `You are Acidnade AI - an advanced Roblox Studio assistant with Lemonade enhancements.
 
-You are Acidnade AI - a Roblox Studio assistant. Your responses must ALWAYS be JSON objects.
+CRITICAL RULES:
+1. NEVER replace script content with internal dialogue or comments about thinking
+2. NEVER reread the same file multiple times in one response
+3. ALWAYS stay focused on the user's request - don't do unrelated things
+4. When editing scripts, provide COMPLETE code, not partial snippets
+5. For UI elements, ALWAYS ensure they are visible (proper Size, Position, Visible=true)
+6. When user mentions @filename, focus ONLY on those files
+7. Don't use investigation tools redundantly - if you just read a file, don't read it again
+8. Break complex prompts into clear, sequential steps
 
-ABSOLUTE RULES:
-1. Response must be PURE JSON only - no markdown, no \`\`\`json\`\`\`, no code fences
-2. Never include markdown headings like ## or #
-3. Never show raw Lua code in the message field
-4. If you need to provide code, put it in the actions array or as chat suggestions
-5. Message field should contain only natural language, not code
+ROBLOX-SPECIFIC KNOWLEDGE:
+- Use proper Roblox services (Workspace, ServerScriptService, ReplicatedStorage, etc.)
+- Scripts: Script (server), LocalScript (client), ModuleScript (shared)
+- UI hierarchy: ScreenGui > Frame > TextLabel/TextButton/etc.
+- Always parent UI to PlayerGui or StarterGui
+- Use proper property types (UDim2 for Size/Position, Color3 for colors)
+- Modern Roblox uses task.wait() not wait()
 
-VALID RESPONSE FORMATS (JSON only):
+UI CREATION RULES:
+- Size must be visible: UDim2.new(0, width, 0, height) where width/height > 0
+- Position: UDim2.new(scaleX, offsetX, scaleY, offsetY)
+- Always set Visible = true
+- Containers (Frame) need BackgroundColor3 or BackgroundTransparency < 1
+- Text elements need Text, TextSize, TextColor3
 
-1. CHAT RESPONSE:
+RESPONSE TYPES:
+
+CHAT:
 {
   "type": "chat",
-  "message": "Natural language response here. Never put Lua code here."
+  "message": "Response",
+  "suggestions": ["Optional next steps"]
 }
 
-2. CODE EXECUTION RESPONSE:
+ARCHETYPE:
 {
-  "type": "execution",
-  "message": "I'll create/update the code for you",
-  "actions": [
+  "type": "archetype",
+  "detected": "tycoon",
+  "message": "I'll create a complete tycoon game",
+  "systems": ["Plot System", "Currency System", ...],
+  "structure": {...}
+}
+
+PLAN (for complex prompts):
+{
+  "type": "plan",
+  "message": "I'll break this into steps",
+  "understanding": "Clear breakdown",
+  "steps": [
     {
-      "action": "create|modify",
-      "name": "FileName",
-      "classtype": "Script|LocalScript|ModuleScript|Part|Model",
-      "parent": "game.ServerScriptService|game.Workspace|etc",
-      "properties": {
-        "Source": "-- Put Lua code here (for scripts)",
-        "Size": "Vector3.new(1, 1, 1)",
-        "Position": "Vector3.new(0, 5, 0)"
-      }
+      "stepId": "step_1",
+      "description": "What this step does",
+      "estimatedComplexity": "simple|medium|complex",
+      "focusFiles": ["@mentioned files"]
+    }
+  ],
+  "breakdown": "Why breaking into steps"
+}
+
+SUGGESTIONS:
+{
+  "type": "suggestions",
+  "predictions": [
+    {
+      "action": "What to do next",
+      "confidence": 0.95,
+      "reasoning": "Why this makes sense"
     }
   ]
 }
 
-3. ARCHETYPE DETECTION:
-{
-  "type": "archetype",
-  "detected": "tycoon",
-  "message": "I detect this is a tycoon game",
-  "systems": ["Plot System", "Currency System"]
-}
-
-4. PLAN BREAKDOWN:
-{
-  "type": "plan",
-  "message": "I'll break this into steps",
-  "steps": [
-    {"stepId": "step_1", "description": "First step"}
-  ]
-}
-
-IMPORTANT FOR BEE SYSTEM:
-- When asked for a bee system, create ACTUAL CODE in the actions array
-- Use proper Lua syntax with complete scripts
-- Include both server-side (GameCore.lua) and client-side (BeeHandler) code
-- Make sure the code is functional and complete
-
-Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
+Be intelligent, focused, and produce complete working code.`
     });
 
     const history = memory.getHistory(userId, 8);
@@ -453,7 +514,7 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
     if (context?.selectedObjects?.length > 0) {
       prompt += `\nSELECTED:\n`;
       context.selectedObjects.forEach(obj => {
-        prompt += `- ${obj.Name} (${obj.ClassName}) [${obj.UniqueId}]\n`;
+        prompt += `- ${obj.Name} (${obj.ClassName}) [${obj.UniqueId || 'no-id'}]\n`;
       });
     }
 
@@ -468,117 +529,34 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
       }
     }
 
-    prompt += `\nIMPORTANT: Your response must be PURE JSON only. No markdown, no code blocks.`;
-    prompt += `\nIf user asks for code changes, use "type": "execution" with actions array containing the code.`;
+    prompt += `\nProvide focused, complete response. No internal dialogue.`;
+
+    console.log(`[AI] Processing for ${userId}:`, userMessage.substring(0, 60) + '...');
 
     const result = await model.generateContent(prompt);
-    
-    let responseText = result.response?.text() || '';
-    let response = null;
-    
-    console.log('[AI] Raw response:', responseText.substring(0, 200));
-    
-    try {
-      if (!responseText || responseText.trim() === '') {
-        throw new Error('Empty response from AI');
-      }
-      
-      responseText = responseText
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .replace(/^#+\s.*$/gm, '')
-        .trim();
-      
-      const jsonMatch = responseText.match(/^\s*\{[\s\S]*\}\s*$/);
-      if (jsonMatch) {
-        response = JSON.parse(jsonMatch[0]);
-      } else {
-        console.warn('[AI] Response is not JSON, converting to chat:', responseText.substring(0, 100));
-        response = {
-          type: 'chat',
-          message: "I need to provide that as code changes. Let me create an execution plan.",
-          needsExecution: true,
-          rawResponse: responseText.substring(0, 500)
-        };
-      }
-      
-      if (!response.type) {
-        response.type = 'chat';
-      }
-      
-      // If message contains code but no actions, convert to execution
-      if ((response.type === 'chat' || !response.type) && 
-          (responseText.includes('local ') || responseText.includes('function ') || responseText.includes('```lua'))) {
-        console.log('[AI] Detected code in chat response, converting to execution');
-        const codeMatch = responseText.match(/```lua\s*([\s\S]*?)\s*```/);
-        if (codeMatch) {
-          const code = codeMatch[1];
-          response = {
-            type: 'execution',
-            message: 'I\'ll implement that code for you',
-            actions: [{
-              action: 'modify',
-              name: 'GameCore.lua',
-              classtype: 'ModuleScript',
-              parent: 'game.ServerScriptService',
-              properties: {
-                Source: code
-              }
-            }]
-          };
-        }
-      }
-      
-    } catch (parseError) {
-      console.error('[AI] JSON Parse Error:', parseError.message);
-      response = {
-        type: 'chat',
-        message: "I'll help you with that. Let me create the necessary code changes.",
-        rawError: parseError.message,
-        rawResponse: responseText.substring(0, 300)
-      };
-    }
-
-    // Convert any code in message to proper execution
-    if (response.message && (response.message.includes('```lua') || response.message.includes('local '))) {
-      console.log('[AI] Converting code in message to execution');
-      const codeMatch = response.message.match(/```lua\s*([\s\S]*?)\s*```/);
-      if (codeMatch) {
-        const code = codeMatch[1];
-        response = {
-          type: 'execution',
-          message: 'I\'ll implement that code for you',
-          actions: [{
-            action: 'modify',
-            name: 'GameCore.lua',
-            classtype: 'ModuleScript',
-            parent: 'game.ServerScriptService',
-            properties: {
-              Source: code
-            }
-          }]
-        };
-      }
-    }
+    const response = JSON.parse(result.response.text());
 
     if (response.type === 'archetype') {
       project.gameType = response.detected;
-      project.systems = response.systems || [];
+      project.systems = response.systems;
+      memory.save('projects');
     }
 
     if (response.type === 'plan' && response.steps) {
       project.currentPlan = response;
+      memory.save('projects');
     }
 
-    memory.addConversation(userId, userMessage, response.message || 'Processing request', response.type);
+    memory.addConversation(userId, userMessage, response.message, response.type);
 
+    console.log(`[AI] Response type: ${response.type}`);
     return response;
 
   } catch (error) {
     console.error('[AI] Error:', error.message);
     return {
       type: 'chat',
-      message: "I encountered an error. Could you try rephrasing?",
+      message: "I encountered an error processing your request. Could you try rephrasing?",
       error: error.message
     };
   }
@@ -589,14 +567,10 @@ async function executeStep(stepId, userId, context) {
     const project = memory.getProject(userId);
     const plan = project.currentPlan;
     
-    if (!plan) {
-      throw new Error('No active plan found');
-    }
+    if (!plan) throw new Error('No active plan');
     
-    const step = plan.steps?.find(s => s.stepId === stepId);
-    if (!step) {
-      throw new Error(`Step ${stepId} not found in plan`);
-    }
+    const step = plan.steps.find(s => s.stepId === stepId);
+    if (!step) throw new Error('Step not found');
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-3-flash-preview',
@@ -605,38 +579,66 @@ async function executeStep(stepId, userId, context) {
         maxOutputTokens: 6000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks.
+      systemInstruction: `Execute Roblox Studio step with complete, production-ready code.
 
-You are executing a Roblox Studio step. Your response must be PURE JSON.
+CRITICAL RULES:
+1. Generate COMPLETE scripts - no placeholders or partial code
+2. Scripts must include ALL necessary code to work
+3. For UI, ensure visibility: Size > 0, Position valid, Visible=true
+4. Use proper Roblox services and modern APIs (task.wait not wait)
+5. Don't include internal thoughts or comments about what to do
 
-RESPONSE FORMAT (JSON only):
+RESPONSE FORMAT:
 {
   "type": "execution",
-  "stepId": "${stepId}",
-  "message": "Brief natural language update",
+  "stepId": "step_1",
+  "message": "Brief update",
   "actions": [
     {
-      "action": "create|modify",
-      "name": "FileName.lua",
-      "classtype": "Script|LocalScript|ModuleScript|Frame|ScreenGui|Part|Model",
-      "parent": "game.ServerScriptService|game.Workspace|game.StarterPlayer",
+      "action": "create",
+      "name": "InstanceName",
+      "classtype": "Script|LocalScript|ModuleScript|Part|ScreenGui|Frame|etc",
+      "parent": "game.ServerScriptService",
       "properties": {
-        "Size": "UDim2.new(0, 100, 0, 50) or Vector3.new(1, 1, 1)",
-        "Source": "-- Put COMPLETE Lua code here for scripts",
-        "Position": "Vector3.new(0, 5, 0)"
+        "Size": "UDim2.new(0, 200, 0, 100)",
+        "Position": "UDim2.new(0.5, -100, 0.5, -50)",
+        "BackgroundColor3": [255, 255, 255],
+        "Text": "Button",
+        "Visible": true,
+        "Source": "-- COMPLETE Lua code here (for scripts)"
+      }
+    },
+    {
+      "action": "modify",
+      "name": "ExistingName",
+      "parent": "game.Workspace",
+      "properties": {"Color": [0, 255, 0]},
+      "sourceModifications": {
+        "action": "replaceAll|append|prepend|insertAfter|insertBefore|replace",
+        "target": "-- code to find",
+        "newCode": "-- New code"
       }
     }
-  ]
+  ],
+  "diff": {
+    "summary": "What changed",
+    "filesModified": ["filename.lua"],
+    "linesChanged": 45
+  }
 }
 
-ABSOLUTE RULES:
-1. NO markdown in response
-2. NO code blocks (\`\`\`)
-3. NO explanations outside JSON
-4. Put ALL Lua code in the Source property
-5. Message field should be natural language only
+UI PROPERTIES (must be valid):
+- Size: "UDim2.new(0, 100, 0, 50)" not "0, 0, 0, 0"
+- Position: "UDim2.new(0, 10, 0, 10)" 
+- Color: [255, 0, 0] as RGB array
+- Text: string value
+- Visible: true (boolean)
 
-Your response must start with { and end with }.`
+PARENT PATHS:
+- Scripts: "game.ServerScriptService" or "game.StarterPlayer.StarterPlayerScripts"
+- UI: "game.StarterGui" or parent to existing ScreenGui
+- Models: "game.Workspace"
+- Storage: "game.ServerStorage" or "game.ReplicatedStorage"`
     });
 
     let prompt = `EXECUTE STEP: ${stepId}\n\n`;
@@ -646,7 +648,7 @@ Your response must start with { and end with }.`
       prompt += `🎯 FOCUS ON: ${step.focusFiles.join(', ')}\n\n`;
     }
     
-    prompt += `PLAN CONTEXT:\n${JSON.stringify(plan, null, 2).substring(0, 1000)}\n\n`;
+    prompt += `PLAN CONTEXT:\n${JSON.stringify(plan, null, 2)}\n\n`;
     
     if (context?.selectedObjects) {
       prompt += `SELECTED:\n`;
@@ -666,57 +668,25 @@ Your response must start with { and end with }.`
     }
 
     if (project.instances.size > 0) {
-      prompt += `AVAILABLE INSTANCES (${project.instances.size} total):\n`;
+      prompt += `AVAILABLE INSTANCES:\n`;
       let count = 0;
       for (const [uid, inst] of project.instances.entries()) {
-        if (count < 5) {
+        if (count < 10) {
           prompt += `- ${inst.name} (${inst.classtype})\n`;
           count++;
         }
       }
-      if (project.instances.size > 5) {
-        prompt += `... and ${project.instances.size - 5} more\n`;
+      if (project.instances.size > 10) {
+        prompt += `... and ${project.instances.size - 10} more\n`;
       }
     }
 
-    prompt += `\nIMPORTANT: Return PURE JSON only. No markdown.`;
+    console.log(`[Execute] Step ${stepId} for ${userId}`);
 
     const result = await model.generateContent(prompt);
-    
-    let responseText = result.response?.text() || '';
-    let execution = null;
-    
-    console.log('[Execute] Raw response:', responseText.substring(0, 200));
-    
-    try {
-      if (!responseText || responseText.trim() === '') {
-        throw new Error('Empty response from AI');
-      }
-      
-      responseText = responseText
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .replace(/^#+\s.*$/gm, '')
-        .trim();
-      
-      const jsonMatch = responseText.match(/^\s*\{[\s\S]*\}\s*$/);
-      if (jsonMatch) {
-        execution = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No valid JSON found in response');
-      }
-      
-      if (!execution.type) execution.type = 'execution';
-      if (!execution.stepId) execution.stepId = stepId;
-      if (!execution.actions) execution.actions = [];
-      if (!execution.message) execution.message = 'Step executed';
-      
-    } catch (parseError) {
-      console.error('[Execute] JSON Parse Error:', parseError.message);
-      throw new Error(`Failed to parse AI response: ${parseError.message}`);
-    }
+    const execution = JSON.parse(result.response.text());
 
-    if (execution.actions && Array.isArray(execution.actions)) {
+    if (execution.actions) {
       execution.actions.forEach(action => {
         const validation = validateUIProperties(action);
         if (!validation.valid) {
@@ -742,6 +712,7 @@ Your response must start with { and end with }.`
       });
     }
 
+    console.log(`[Execute] Completed ${stepId}, actions: ${execution.actions?.length || 0}`);
     return execution;
 
   } catch (error) {
@@ -753,7 +724,10 @@ Your response must start with { and end with }.`
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
 app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
@@ -762,6 +736,7 @@ app.set('trust proxy', 1);
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
+  message: { error: 'Rate limit exceeded. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -779,11 +754,12 @@ const auth = (req, res, next) => {
 // API ENDPOINTS
 // ============================================================================
 
+// Main chat endpoint
 app.post('/ai/chat', auth, async (req, res) => {
   try {
     const { message, context, userId = 'anonymous' } = req.body;
     
-    if (!message || message.trim() === '') {
+    if (!message) {
       return res.status(400).json({ 
         type: 'chat',
         message: "I need a message to respond to."
@@ -793,14 +769,6 @@ app.post('/ai/chat', auth, async (req, res) => {
     console.log(`[${userId}] ${message.substring(0, 80)}${message.length > 80 ? '...' : ''}`);
 
     const response = await enhancedAI(message, context, userId);
-    
-    if (!response || typeof response !== 'object') {
-      return res.json({
-        type: 'chat',
-        message: "I couldn't generate a proper response. Please try again."
-      });
-    }
-    
     res.json(response);
 
   } catch (error) {
@@ -808,11 +776,12 @@ app.post('/ai/chat', auth, async (req, res) => {
     res.status(500).json({
       type: 'chat',
       message: "Something went wrong. Please try again.",
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
+// COMPATIBILITY: Old /ai endpoint for Roblox plugin
 app.post('/ai', auth, async (req, res) => {
   try {
     const { prompt, context, sessionId, userId } = req.body;
@@ -820,7 +789,7 @@ app.post('/ai', auth, async (req, res) => {
     const message = prompt || req.body.message;
     const finalUserId = userId || sessionId || 'anonymous';
     
-    if (!message || message.trim() === '') {
+    if (!message) {
       return res.status(400).json({ 
         type: 'chat',
         message: "I need a message to respond to."
@@ -830,11 +799,6 @@ app.post('/ai', auth, async (req, res) => {
     console.log(`[${finalUserId}] ${message.substring(0, 80)}${message.length > 80 ? '...' : ''}`);
 
     const response = await enhancedAI(message, context, finalUserId);
-    
-    if (!response.type) {
-      response.type = 'chat';
-    }
-    
     res.json(response);
 
   } catch (error) {
@@ -847,46 +811,77 @@ app.post('/ai', auth, async (req, res) => {
   }
 });
 
+// Execute step
 app.post('/ai/execute', auth, async (req, res) => {
   try {
     const { stepId, userId = 'anonymous', context } = req.body;
 
     if (!stepId) {
-      return res.status(400).json({ 
-        type: 'execution',
-        message: "stepId is required",
-        actions: [],
-        error: true
-      });
+      return res.status(400).json({ error: 'stepId required' });
     }
 
     console.log(`[${userId}] Executing: ${stepId}`);
 
     const execution = await executeStep(stepId, userId, context);
-    
-    if (!execution || typeof execution !== 'object') {
-      return res.json({
-        type: 'execution',
-        stepId,
-        message: "Execution failed to generate proper response",
-        actions: [],
-        error: true
-      });
-    }
-    
     res.json(execution);
 
   } catch (error) {
     console.error('[Execute] Error:', error.message);
     res.status(500).json({ 
+      error: error.message,
       type: 'execution',
-      message: `Execution error: ${error.message}`,
-      actions: [],
-      error: true
+      actions: []
     });
   }
 });
 
+// Execute all steps
+app.post('/ai/execute-all', auth, async (req, res) => {
+  try {
+    const { userId = 'anonymous', context } = req.body;
+
+    const project = memory.getProject(userId);
+    const plan = project.currentPlan;
+
+    if (!plan || plan.type !== 'plan') {
+      return res.status(400).json({
+        error: 'No active plan found'
+      });
+    }
+
+    console.log(`[${userId}] Executing all ${plan.steps.length} steps`);
+
+    const executions = [];
+    for (const step of plan.steps) {
+      try {
+        const execution = await executeStep(step.stepId, userId, context);
+        executions.push(execution);
+      } catch (error) {
+        console.error(`[Execute] Failed step ${step.stepId}:`, error.message);
+        executions.push({
+          type: 'execution',
+          stepId: step.stepId,
+          error: error.message,
+          actions: []
+        });
+      }
+    }
+
+    res.json({
+      type: 'batch_execution',
+      message: `Executed ${executions.length} steps`,
+      executions: executions
+    });
+
+  } catch (error) {
+    console.error('[ExecuteAll] Error:', error.message);
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// Memory Bank endpoints
 app.get('/ai/memory/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -921,6 +916,7 @@ app.post('/ai/memory/:userId', auth, async (req, res) => {
   }
 });
 
+// Search workspace
 app.post('/ai/search', auth, async (req, res) => {
   try {
     const { query, userId = 'anonymous' } = req.body;
@@ -937,6 +933,7 @@ app.post('/ai/search', auth, async (req, res) => {
   }
 });
 
+// Checkpoint management
 app.post('/ai/checkpoint', auth, async (req, res) => {
   try {
     const { name, userId = 'anonymous' } = req.body;
@@ -967,6 +964,109 @@ app.post('/ai/rollback', auth, async (req, res) => {
   }
 });
 
+// Template management
+app.post('/ai/template/save', auth, async (req, res) => {
+  try {
+    const { name, sourceUIDs, userId = 'anonymous' } = req.body;
+    const project = memory.getProject(userId);
+    const template = memory.saveTemplate(userId, name, sourceUIDs, project);
+    
+    res.json({
+      success: true,
+      template,
+      message: 'Template saved'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/ai/template/use', auth, async (req, res) => {
+  try {
+    const { name, customization, userId = 'anonymous' } = req.body;
+    const template = memory.getTemplate(userId, name);
+    
+    if (!template) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    const response = await enhancedAI(
+      `Use my template "${name}" with customization: ${customization}`,
+      { template },
+      userId
+    );
+
+    res.json(response);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Predictions
+app.post('/ai/predict', auth, async (req, res) => {
+  try {
+    const { context, userId = 'anonymous' } = req.body;
+    const response = await enhancedAI(
+      'Based on my recent actions, what should I do next?',
+      context,
+      userId
+    );
+    res.json(response);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Project info
+app.get('/ai/plan/:userId', auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const project = memory.getProject(userId);
+    
+    res.json({
+      hasPlan: !!project.currentPlan,
+      plan: project.currentPlan || null
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/ai/plan/:userId', auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const project = memory.getProject(userId);
+    project.currentPlan = null;
+    memory.save('projects');
+    
+    res.json({
+      success: true,
+      message: 'Plan cleared'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/ai/project/:userId', auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const project = memory.getProject(userId);
+    
+    res.json({
+      gameType: project.gameType,
+      systems: project.systems,
+      instanceCount: project.instances.size,
+      lastCheckpoint: project.lastCheckpoint,
+      hasPlan: !!project.currentPlan,
+      recentEdits: project.recentEdits.slice(-5),
+      mentionedFiles: project.mentionedFiles
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/ai/history/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -983,57 +1083,178 @@ app.get('/ai/history/:userId', auth, async (req, res) => {
   }
 });
 
+app.delete('/ai/history/:userId', auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    memory.conversations.delete(userId);
+    const project = memory.getProject(userId);
+    project.currentPlan = null;
+    project.recentEdits = [];
+    project.mentionedFiles = [];
+    await memory.save('conversations');
+    await memory.save('projects');
+    
+    res.json({
+      success: true,
+      message: `Cleared history for ${userId}`
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/ai/archetypes', auth, (req, res) => {
   res.json({ archetypes: ARCHETYPES });
 });
 
+// Status endpoints
 app.get('/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: '3.1.0-vercel',
-    model: 'gemini-3-flash-preview',
-    storage: 'in-memory (Vercel compatible)'
+    version: '3.1.0',
+    model: 'gemini-3-flash-preview'
   });
 });
 
 app.get('/health', (req, res) => {
   res.json({
     status: 'operational',
-    service: 'Acidnade AI - Vercel Edition',
-    version: '3.1.0-vercel',
+    service: 'Acidnade AI - Lemonade Enhanced',
+    version: '3.1.0',
     model: 'gemini-3-flash-preview',
-    fixes: [
-      '✅ Fixed file system errors for Vercel',
-      '✅ Using in-memory storage only',
-      '✅ No more ENOENT errors',
-      '✅ JSON-only responses enforced',
-      '✅ Automatic code conversion'
+    features: [
+      '✅ Gemini 3 Flash (faster, cheaper)',
+      '✅ Complex prompt breakdown',
+      '✅ File mention support (@filename)',
+      '✅ UI validation (no invisible UIs)',
+      '✅ Script content preservation',
+      '✅ Anti-loop protection',
+      '✅ Memory bank system',
+      '✅ Diff preview support',
+      '✅ Game archetypes',
+      '✅ Smart search',
+      '✅ Templates',
+      '✅ Checkpoints',
+      '✅ Roblox plugin compatible'
     ],
-    memory: {
-      conversations: memory.conversations.size,
-      projects: memory.projectContext.size,
-      users: memory.conversations.size
-    }
+    improvements: [
+      'No script replacement with dialogue',
+      'No redundant file reading',
+      'Focused on user requests only',
+      'Complete code generation',
+      'Valid UI properties enforced'
+    ],
+    archetypes: Object.keys(ARCHETYPES),
+    users: memory.conversations.size,
+    uptime: process.uptime()
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Acidnade AI API',
+    version: '3.1.0',
+    model: 'gemini-3-flash-preview',
+    status: 'operational',
+    endpoints: {
+      chat: 'POST /ai/chat',
+      execute: 'POST /ai/execute',
+      health: 'GET /health',
+      ping: 'GET /ping'
+    },
+    documentation: 'https://github.com/acidnade/ai-docs'
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('[Server] Error:', err.message);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Not found',
+    path: req.path
   });
 });
 
 // ============================================================================
 // STARTUP
 // ============================================================================
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log('╔════════════════════════════════════════════╗');
-  console.log('║   ACIDNADE AI - VERCEL EDITION             ║');
+  console.log('║   ACIDNADE AI - LEMONADE ENHANCED  🍋      ║');
   console.log('╚════════════════════════════════════════════╝');
   console.log(`\n🌐 Port: ${PORT}`);
-  console.log('🤖 Model: gemini-3-flash-preview');
-  console.log('💾 Storage: In-memory (Vercel compatible)');
+  console.log('🤖 Model: gemini-3-flash-preview (Gemini 3 Flash)');
+  console.log(`📁 Data Directory: ${DATA_DIR}`);
+  console.log(`🔐 Auth: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : '⚠️  Warning: No API key set!'}`);
+  console.log('\n✨ Lemonade-Inspired Features:');
+  console.log('  • 🚀 Faster execution (Gemini 3)');
+  console.log('  • 💰 Reduced costs per prompt');
+  console.log('  • 🎯 Complex prompt breakdown');
+  console.log('  • 📎 File mention support (@filename)');
+  console.log('  • 🎨 UI validation (no invisible UIs)');
+  console.log('  • 🔄 Anti-loop protection');
+  console.log('  • 🧠 Memory bank system');
+  console.log('  • 📊 Diff preview support');
+  console.log('  • ✍️ Complete script generation');
+  console.log('  • 🎮 Enhanced Roblox knowledge');
   console.log('\n📡 Endpoints:');
-  console.log('  POST /ai - Main chat endpoint');
-  console.log('  POST /ai/chat - Chat with context');
-  console.log('  POST /ai/execute - Execute plan steps');
+  console.log('  POST /ai - Plugin compatibility');
+  console.log('  POST /ai/chat - Main interaction');
+  console.log('  POST /ai/execute - Execute step');
+  console.log('  GET/POST /ai/memory/:userId - Memory bank');
+  console.log('  POST /ai/search - Search workspace');
+  console.log('  POST /ai/checkpoint - Save state');
+  console.log('  POST /ai/rollback - Restore state');
   console.log('  GET  /ping - Connection check');
   console.log('  GET  /health - System status');
-  console.log('\n✅ Ready for Bee System implementation!');
-  console.log('   Ask: "Can u make a bee system for my @GameCore.lua"\n');
+  console.log('\n🎮 Supported Archetypes:');
+  Object.entries(ARCHETYPES).forEach(([key, arch]) => {
+    console.log(`  • ${arch.name} (${key})`);
+  });
+  console.log('\n🛡️ Bug Fixes Applied:');
+  console.log('  ✅ No script dialogue replacement');
+  console.log('  ✅ No redundant file reading');
+  console.log('  ✅ No unrelated actions');
+  console.log('  ✅ Complete code generation');
+  console.log('  ✅ Valid UI enforcement');
+  console.log('\n✅ Server ready! Test with: curl http://localhost:' + PORT + '/health\n');
 });
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('\n[Server] SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('[Server] Closed all connections');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('\n[Server] SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('[Server] Closed all connections');
+    process.exit(0);
+  });
+});
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  console.error('[Server] Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+export default app;
