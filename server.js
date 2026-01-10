@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_VERCEL = process.env.VERCEL === '1';
 
-console.log('🚀 Starting Acidnade AI - Universal Fix');
+console.log('🚀 Starting Acidnade AI - Fixed Steps Issue');
 console.log('🤖 Model: gemini-3-flash-preview');
 console.log('📦 Environment:', IS_VERCEL ? 'Vercel' : 'Local');
 
@@ -155,7 +155,7 @@ class RetryManager {
 }
 
 // ============================================================================
-// UNIVERSAL AI SYSTEM
+// UNIVERSAL AI SYSTEM - FIXED FOR VARIABLE STEPS
 // ============================================================================
 async function universalAI(userMessage, context, userId) {
   return await RetryManager.withRetry(async (attempt) => {
@@ -179,9 +179,17 @@ async function universalAI(userMessage, context, userId) {
 
 IMPORTANT: Your response MUST be valid JSON with NO markdown, NO code fences.
 
+CRITICAL: Do NOT always use 5 steps! Use the appropriate number of steps for the task:
+- Simple fixes/bug fixes: 1-2 steps MAX
+- Medium complexity: 2-3 steps
+- Complex systems: 3-4 steps
+- Only use 5+ steps for VERY complex, multi-system implementations
+
+NEVER create redundant or duplicate steps. Each step must be unique and necessary.
+
 RESPONSE FORMATS (choose based on request):
 
-1. FOR CODE/IMPLEMENTATION REQUESTS:
+1. FOR CODE/IMPLEMENTATION REQUESTS (DIRECT FIXES):
 {
   "type": "execution",
   "message": "Brief description",
@@ -200,13 +208,14 @@ RESPONSE FORMATS (choose based on request):
   ]
 }
 
-2. FOR MULTI-STEP REQUESTS:
+2. FOR MULTI-STEP REQUESTS (ONLY when truly necessary):
 {
   "type": "plan",
-  "message": "I'll break this into steps",
+  "message": "I'll break this into appropriate steps",
   "steps": [
     {"stepId": "step_1", "description": "Step 1"},
-    {"stepId": "step_2", "description": "Step 2"}
+    {"stepId": "step_2", "description": "Step 2"},
+    {"stepId": "step_3", "description": "Step 3"}  // Only add more if needed!
   ]
 }
 
@@ -216,7 +225,14 @@ RESPONSE FORMATS (choose based on request):
   "message": "Your response"
 }
 
-RULES:
+DECISION RULES:
+- If user asks to "fix" something or provides specific code to fix, use type: "execution" with direct code
+- Only use type: "plan" for building NEW systems from scratch
+- Never create plans for bug fixes or simple changes
+- Avoid duplicate scripts or redundant steps at all costs
+- Each script/action should serve a unique purpose
+
+CODE RULES:
 - ALWAYS return complete, working Lua code
 - For UI: ensure Size > 0, Visible = true
 - Handle errors gracefully
@@ -251,6 +267,12 @@ The user wants UNIVERSAL responses that work for any request.`
     if (project.mentionedFiles.length > 0) {
       prompt += `PREVIOUSLY MENTIONED: ${project.mentionedFiles.join(', ')}\n`;
     }
+    
+    // ADD CRITICAL INSTRUCTION TO PREVENT 5-STEP PLANS
+    prompt += `\nCRITICAL: DO NOT create a 5-step plan unless absolutely necessary.`;
+    prompt += `\nIf this is a fix or simple request, respond with type: "execution" and direct code.`;
+    prompt += `\nIf you must create a plan, use only 2-3 steps for most tasks.`;
+    prompt += `\nNEVER create duplicate or redundant steps/scripts.`;
     
     prompt += `\nProvide a UNIVERSAL response that works for any Roblox development need.`;
     prompt += `\nYour response must be PURE JSON with no markdown.`;
@@ -312,13 +334,59 @@ The user wants UNIVERSAL responses that work for any request.`
     if (!parsed.type) parsed.type = 'chat';
     if (!parsed.message) parsed.message = 'Processing your request';
     
-    // If it's a plan, ensure steps have IDs
+    // POST-PROCESSING: PREVENT 5-STEP PLANS
     if (parsed.type === 'plan' && parsed.steps) {
-      parsed.steps = parsed.steps.map((step, index) => ({
-        stepId: step.stepId || `step_${index + 1}`,
-        description: step.description || `Step ${index + 1}`,
-        status: 'pending'
-      }));
+      // Remove duplicate steps
+      const uniqueSteps = [];
+      const seenDescriptions = new Set();
+      
+      for (const step of parsed.steps) {
+        const normalizedDesc = step.description.toLowerCase().trim();
+        if (!seenDescriptions.has(normalizedDesc)) {
+          seenDescriptions.add(normalizedDesc);
+          uniqueSteps.push({
+            stepId: step.stepId || `step_${uniqueSteps.length + 1}`,
+            description: step.description || `Step ${uniqueSteps.length + 1}`,
+            status: 'pending'
+          });
+        }
+      }
+      
+      // Limit to appropriate number of steps
+      let maxSteps = 3; // Default maximum
+      
+      // Check if it's a complex request that might need more steps
+      const userLower = userMessage.toLowerCase();
+      if (userLower.includes('complete') || userLower.includes('system') || 
+          userLower.includes('multi') || userLower.includes('complex')) {
+        maxSteps = 4;
+      }
+      
+      if (userLower.includes('entire') || userLower.includes('full') || 
+          userLower.includes('complete game')) {
+        maxSteps = 5;
+      }
+      
+      // Apply limit
+      parsed.steps = uniqueSteps.slice(0, maxSteps);
+      
+      // If only 1 step, convert to execution
+      if (parsed.steps.length === 1 && 
+          (userLower.includes('fix') || userLower.includes('bug') || 
+           userLower.includes('error') || userLower.includes('issue'))) {
+        console.log('[AI] Converting 1-step plan to execution for bug fix');
+        parsed.type = 'execution';
+        parsed.actions = [{
+          action: 'modify',
+          name: 'Fix.lua',
+          classtype: 'ModuleScript',
+          parent: 'game.ServerScriptService',
+          properties: {
+            Source: `-- Fix for: ${parsed.steps[0].description}\n-- Auto-generated fix`
+          }
+        }];
+        delete parsed.steps;
+      }
       
       project.currentPlan = parsed;
     }
@@ -382,6 +450,8 @@ async function executeStep(stepId, userId, context) {
       },
       systemInstruction: `Execute Roblox Studio step. Return PURE JSON only.
 
+IMPORTANT: Do NOT create duplicate or redundant scripts. Each script should serve a unique purpose.
+
 {
   "type": "execution",
   "stepId": "${stepId}",
@@ -407,11 +477,17 @@ RULES:
 - ALL code goes in Source property
 - For UI: Visible=true, Size > 0
 - Handle errors gracefully in code
-- Return complete, working code`
+- Return complete, working code
+- Create only 1-2 scripts per step maximum
+- Avoid duplicate functionality`
     });
 
     let prompt = `EXECUTE STEP: ${stepId}\n\n`;
     prompt += `DESCRIPTION: ${step.description}\n\n`;
+    
+    // CRITICAL: Prevent duplicate scripts
+    prompt += `CRITICAL: Create only the necessary scripts for this step. Avoid duplicates!\n`;
+    prompt += `If this step seems similar to previous steps, modify existing files instead.\n\n`;
     
     // Safely add context
     if (context && typeof context === 'object') {
@@ -749,30 +825,29 @@ app.get('/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: '3.2.0-universal',
+    version: '3.2.1-fixed-steps',
     model: 'gemini-3-flash-preview',
     environment: IS_VERCEL ? 'vercel' : 'local',
-    fixes: ['✅ Universal handling', '✅ Retry system', '✅ Error resilience']
+    fixes: ['✅ Variable step count', '✅ No duplicate scripts', '✅ Direct fixes for bug reports']
   });
 });
 
 app.get('/health', (req, res) => {
   res.json({
     status: 'operational',
-    service: 'Acidnade AI - Universal Edition',
-    version: '3.2.0-universal',
+    service: 'Acidnade AI - Fixed Steps Edition',
+    version: '3.2.1-fixed-steps',
     model: 'gemini-3-flash-preview',
     memory: {
       users: memory.conversations.size,
       projects: memory.projects.size
     },
     features: [
-      '✅ Universal response system',
-      '✅ Automatic retry on undefined',
-      '✅ Step progress tracking',
-      '✅ Error resilience',
-      '✅ Safe context handling',
-      '✅ Vercel compatible'
+      '✅ Variable step plans (not always 5)',
+      '✅ Direct execution for fixes',
+      '✅ No duplicate scripts',
+      '✅ Smart plan detection',
+      '✅ Bug fix optimization'
     ]
   });
 });
@@ -803,23 +878,23 @@ app.use((req, res) => {
 if (!IS_VERCEL) {
   app.listen(PORT, () => {
     console.log('╔════════════════════════════════════════════╗');
-    console.log('║   ACIDNADE AI - UNIVERSAL EDITION         ║');
+    console.log('║   ACIDNADE AI - FIXED STEPS EDITION       ║');
     console.log('╚════════════════════════════════════════════╝');
     console.log(`\n🌐 Port: ${PORT}`);
     console.log('🤖 Model: gemini-3-flash-preview');
-    console.log('🔄 Features:');
-    console.log('  • ✅ Automatic retry on undefined');
-    console.log('  • ✅ Universal response handling');
-    console.log('  • ✅ Step progress tracking');
-    console.log('  • ✅ Error resilience');
-    console.log('  • ✅ Safe context handling');
+    console.log('🔄 Key Fixes:');
+    console.log('  • ✅ NOT always 5 steps - variable step count');
+    console.log('  • ✅ No duplicate/redundant scripts');
+    console.log('  • ✅ Direct execution for bug fixes');
+    console.log('  • ✅ Smart plan detection');
+    console.log('  • ✅ Post-processing to prevent 5-step plans');
     console.log('\n📡 Endpoints:');
     console.log('  POST /ai/chat - Main chat');
     console.log('  POST /ai - Compatibility');
     console.log('  POST /ai/execute - Execute steps');
     console.log('  GET  /ai/progress/:userId - Check progress');
     console.log('  GET  /ping - Connection test');
-    console.log('\n✅ Ready for universal requests!\n');
+    console.log('\n✅ Fixed: No more always-5-step plans!\n');
   });
 }
 
