@@ -5,21 +5,16 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
-import fs from 'fs/promises';
-import path from 'path';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(process.cwd(), 'data');
-
-await fs.mkdir(DATA_DIR, { recursive: true }).catch(() => {});
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ============================================================================
-// ENHANCED MEMORY SYSTEM WITH MEMORY BANK
+// ENHANCED MEMORY SYSTEM - IN-MEMORY ONLY (FOR VERCEL)
 // ============================================================================
 class EnhancedMemory {
   constructor() {
@@ -29,31 +24,13 @@ class EnhancedMemory {
     this.checkpoints = new Map();
     this.memoryBank = new Map();
     this.fileAccess = new Map();
-    this.loadAll();
+    console.log('[Memory] Using in-memory storage (Vercel compatible)');
   }
 
-  async loadAll() {
-    const files = ['conversations', 'projects', 'templates', 'checkpoints', 'memorybank'];
-    for (const file of files) {
-      try {
-        const data = await fs.readFile(path.join(DATA_DIR, `${file}.json`), 'utf-8');
-        const parsed = JSON.parse(data);
-        if (file === 'memorybank') {
-          this.memoryBank = new Map(Object.entries(parsed));
-        } else {
-          this[file === 'projects' ? 'projectContext' : file] = new Map(Object.entries(parsed));
-        }
-      } catch (error) {}
-    }
-  }
-
+  // No file operations for Vercel - all in memory
   async save(type) {
-    const map = type === 'projects' ? this.projectContext : 
-                type === 'memorybank' ? this.memoryBank : this[type];
-    await fs.writeFile(
-      path.join(DATA_DIR, `${type}.json`),
-      JSON.stringify(Object.fromEntries(map), null, 2)
-    );
+    // Do nothing - Vercel doesn't support persistent file storage
+    console.log(`[Memory] Would save ${type} (in-memory only)`);
   }
 
   getMemoryBank(userId) {
@@ -71,7 +48,7 @@ class EnhancedMemory {
   updateMemoryBank(userId, updates) {
     const bank = this.getMemoryBank(userId);
     Object.assign(bank, updates, { lastUpdated: Date.now() });
-    this.save('memorybank');
+    return true;
   }
 
   trackFileAccess(userId, filename) {
@@ -112,7 +89,7 @@ class EnhancedMemory {
       ...info,
       createdAt: Date.now()
     });
-    this.save('projects');
+    return true;
   }
 
   trackEdit(userId, filename, changeType) {
@@ -127,7 +104,7 @@ class EnhancedMemory {
       project.recentEdits = project.recentEdits.slice(-20);
     }
     
-    this.save('projects');
+    return true;
   }
 
   wasRecentlyEdited(userId, filename) {
@@ -164,9 +141,6 @@ class EnhancedMemory {
     });
     
     project.lastCheckpoint = checkpointId;
-    this.save('checkpoints');
-    this.save('projects');
-    
     return checkpointId;
   }
 
@@ -177,7 +151,6 @@ class EnhancedMemory {
     }
     
     this.projectContext.set(userId, checkpoint.snapshot);
-    this.save('projects');
     return checkpoint;
   }
 
@@ -198,7 +171,6 @@ class EnhancedMemory {
     });
 
     this.templates.set(`${userId}_${name}`, template);
-    this.save('templates');
     return template;
   }
 
@@ -218,7 +190,7 @@ class EnhancedMemory {
       this.conversations.set(userId, history.slice(-50));
     }
     
-    this.save('conversations');
+    return true;
   }
 
   getHistory(userId, limit = 8) {
@@ -356,7 +328,7 @@ function validateUIProperties(action) {
 }
 
 // ============================================================================
-// CORE AI SYSTEM - FIXED VERSION
+// CORE AI SYSTEM - FIXED FOR VERCEL
 // ============================================================================
 
 async function enhancedAI(userMessage, context, userId) {
@@ -365,7 +337,6 @@ async function enhancedAI(userMessage, context, userId) {
     const project = memory.getProject(userId);
     if (complexity.mentionedFiles.length > 0) {
       project.mentionedFiles = complexity.mentionedFiles.map(f => f.substring(1));
-      memory.save('projects');
     }
 
     const model = genAI.getGenerativeModel({
@@ -402,10 +373,12 @@ VALID RESPONSE FORMATS (JSON only):
     {
       "action": "create|modify",
       "name": "FileName",
-      "classtype": "Script|LocalScript|ModuleScript",
-      "parent": "game.ServerScriptService",
+      "classtype": "Script|LocalScript|ModuleScript|Part|Model",
+      "parent": "game.ServerScriptService|game.Workspace|etc",
       "properties": {
-        "Source": "-- Put Lua code here"
+        "Source": "-- Put Lua code here (for scripts)",
+        "Size": "Vector3.new(1, 1, 1)",
+        "Position": "Vector3.new(0, 5, 0)"
       }
     }
   ]
@@ -428,10 +401,11 @@ VALID RESPONSE FORMATS (JSON only):
   ]
 }
 
-IMPORTANT: If user asks for code changes, use the "execution" type with actions array. Do NOT put code in the message field.
-
-BAD: "message": "Here's the code: \\n\\n\\\`\\\`\\\`lua\\nprint('hello')\\n\\\`\\\`\\\`"
-GOOD: "message": "I'll update that script for you", then put code in actions[0].properties.Source
+IMPORTANT FOR BEE SYSTEM:
+- When asked for a bee system, create ACTUAL CODE in the actions array
+- Use proper Lua syntax with complete scripts
+- Include both server-side (GameCore.lua) and client-side (BeeHandler) code
+- Make sure the code is functional and complete
 
 Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
     });
@@ -495,6 +469,7 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
     }
 
     prompt += `\nIMPORTANT: Your response must be PURE JSON only. No markdown, no code blocks.`;
+    prompt += `\nIf user asks for code changes, use "type": "execution" with actions array containing the code.`;
 
     const result = await model.generateContent(prompt);
     
@@ -531,6 +506,29 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
         response.type = 'chat';
       }
       
+      // If message contains code but no actions, convert to execution
+      if ((response.type === 'chat' || !response.type) && 
+          (responseText.includes('local ') || responseText.includes('function ') || responseText.includes('```lua'))) {
+        console.log('[AI] Detected code in chat response, converting to execution');
+        const codeMatch = responseText.match(/```lua\s*([\s\S]*?)\s*```/);
+        if (codeMatch) {
+          const code = codeMatch[1];
+          response = {
+            type: 'execution',
+            message: 'I\'ll implement that code for you',
+            actions: [{
+              action: 'modify',
+              name: 'GameCore.lua',
+              classtype: 'ModuleScript',
+              parent: 'game.ServerScriptService',
+              properties: {
+                Source: code
+              }
+            }]
+          };
+        }
+      }
+      
     } catch (parseError) {
       console.error('[AI] JSON Parse Error:', parseError.message);
       response = {
@@ -541,8 +539,9 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
       };
     }
 
-    if (response.message && (response.message.includes('```lua') || response.message.includes('local ') || response.message.includes('function '))) {
-      console.log('[AI] Detected code in message, converting to execution');
+    // Convert any code in message to proper execution
+    if (response.message && (response.message.includes('```lua') || response.message.includes('local '))) {
+      console.log('[AI] Converting code in message to execution');
       const codeMatch = response.message.match(/```lua\s*([\s\S]*?)\s*```/);
       if (codeMatch) {
         const code = codeMatch[1];
@@ -551,9 +550,9 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
           message: 'I\'ll implement that code for you',
           actions: [{
             action: 'modify',
-            name: 'Handler.lua',
-            classtype: 'LocalScript',
-            parent: 'game.StarterPlayer.StarterPlayerScripts',
+            name: 'GameCore.lua',
+            classtype: 'ModuleScript',
+            parent: 'game.ServerScriptService',
             properties: {
               Source: code
             }
@@ -565,12 +564,10 @@ Your response MUST be parseable by JSON.parse(). Start with { and end with }.`
     if (response.type === 'archetype') {
       project.gameType = response.detected;
       project.systems = response.systems || [];
-      memory.save('projects');
     }
 
     if (response.type === 'plan' && response.steps) {
       project.currentPlan = response;
-      memory.save('projects');
     }
 
     memory.addConversation(userId, userMessage, response.message || 'Processing request', response.type);
@@ -621,11 +618,12 @@ RESPONSE FORMAT (JSON only):
     {
       "action": "create|modify",
       "name": "FileName.lua",
-      "classtype": "Script|LocalScript|ModuleScript|Frame|ScreenGui",
-      "parent": "game.ServerScriptService",
+      "classtype": "Script|LocalScript|ModuleScript|Frame|ScreenGui|Part|Model",
+      "parent": "game.ServerScriptService|game.Workspace|game.StarterPlayer",
       "properties": {
-        "Size": "UDim2.new(0, 100, 0, 50)",
-        "Source": "-- Put COMPLETE Lua code here"
+        "Size": "UDim2.new(0, 100, 0, 50) or Vector3.new(1, 1, 1)",
+        "Source": "-- Put COMPLETE Lua code here for scripts",
+        "Position": "Vector3.new(0, 5, 0)"
       }
     }
   ]
@@ -969,105 +967,6 @@ app.post('/ai/rollback', auth, async (req, res) => {
   }
 });
 
-app.post('/ai/template/save', auth, async (req, res) => {
-  try {
-    const { name, sourceUIDs, userId = 'anonymous' } = req.body;
-    const project = memory.getProject(userId);
-    const template = memory.saveTemplate(userId, name, sourceUIDs, project);
-    
-    res.json({
-      success: true,
-      template,
-      message: 'Template saved'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/ai/template/use', auth, async (req, res) => {
-  try {
-    const { name, customization, userId = 'anonymous' } = req.body;
-    const template = memory.getTemplate(userId, name);
-    
-    if (!template) {
-      return res.status(404).json({ error: 'Template not found' });
-    }
-
-    const response = await enhancedAI(
-      `Use my template "${name}" with customization: ${customization}`,
-      { template },
-      userId
-    );
-
-    res.json(response);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/ai/predict', auth, async (req, res) => {
-  try {
-    const { context, userId = 'anonymous' } = req.body;
-    const response = await enhancedAI(
-      'Based on my recent actions, what should I do next?',
-      context,
-      userId
-    );
-    res.json(response);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/ai/plan/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const project = memory.getProject(userId);
-    
-    res.json({
-      hasPlan: !!project.currentPlan,
-      plan: project.currentPlan || null
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.delete('/ai/plan/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const project = memory.getProject(userId);
-    project.currentPlan = null;
-    memory.save('projects');
-    
-    res.json({
-      success: true,
-      message: 'Plan cleared'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/ai/project/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const project = memory.getProject(userId);
-    
-    res.json({
-      gameType: project.gameType,
-      systems: project.systems,
-      instanceCount: project.instances.size,
-      lastCheckpoint: project.lastCheckpoint,
-      hasPlan: !!project.currentPlan,
-      recentEdits: project.recentEdits.slice(-5)
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.get('/ai/history/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -1084,26 +983,6 @@ app.get('/ai/history/:userId', auth, async (req, res) => {
   }
 });
 
-app.delete('/ai/history/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    memory.conversations.delete(userId);
-    const project = memory.getProject(userId);
-    project.currentPlan = null;
-    project.recentEdits = [];
-    project.mentionedFiles = [];
-    await memory.save('conversations');
-    await memory.save('projects');
-    
-    res.json({
-      success: true,
-      message: `Cleared history for ${userId}`
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.get('/ai/archetypes', auth, (req, res) => {
   res.json({ archetypes: ARCHETYPES });
 });
@@ -1112,25 +991,30 @@ app.get('/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: '3.1.0-fixed',
-    model: 'gemini-3-flash-preview'
+    version: '3.1.0-vercel',
+    model: 'gemini-3-flash-preview',
+    storage: 'in-memory (Vercel compatible)'
   });
 });
 
 app.get('/health', (req, res) => {
   res.json({
     status: 'operational',
-    service: 'Acidnade AI - Fixed JSON Response',
-    version: '3.1.0-fixed',
+    service: 'Acidnade AI - Vercel Edition',
+    version: '3.1.0-vercel',
     model: 'gemini-3-flash-preview',
     fixes: [
-      '✅ Fixed raw code/markdown responses',
-      '✅ Handles non-JSON responses',
-      '✅ Converts markdown to proper JSON',
-      '✅ No more code in chat messages'
+      '✅ Fixed file system errors for Vercel',
+      '✅ Using in-memory storage only',
+      '✅ No more ENOENT errors',
+      '✅ JSON-only responses enforced',
+      '✅ Automatic code conversion'
     ],
-    archetypes: Object.keys(ARCHETYPES),
-    users: memory.conversations.size
+    memory: {
+      conversations: memory.conversations.size,
+      projects: memory.projectContext.size,
+      users: memory.conversations.size
+    }
   });
 });
 
@@ -1139,21 +1023,17 @@ app.get('/health', (req, res) => {
 // ============================================================================
 app.listen(PORT, () => {
   console.log('╔════════════════════════════════════════════╗');
-  console.log('║   ACIDNADE AI - FIXED RAW CODE RESPONSE    ║');
+  console.log('║   ACIDNADE AI - VERCEL EDITION             ║');
   console.log('╚════════════════════════════════════════════╝');
   console.log(`\n🌐 Port: ${PORT}`);
   console.log('🤖 Model: gemini-3-flash-preview');
-  console.log('\n✨ Fixes Applied:');
-  console.log('  • ✅ No more raw code in chat');
-  console.log('  • ✅ Handles markdown responses');
-  console.log('  • ✅ Converts code blocks to JSON actions');
-  console.log('  • ✅ Strict JSON-only enforcement');
-  console.log('  • ✅ Automatic code extraction');
+  console.log('💾 Storage: In-memory (Vercel compatible)');
   console.log('\n📡 Endpoints:');
-  console.log('  POST /ai - Plugin compatibility');
-  console.log('  POST /ai/chat - Main chat');
-  console.log('  POST /ai/execute - Execute steps');
+  console.log('  POST /ai - Main chat endpoint');
+  console.log('  POST /ai/chat - Chat with context');
+  console.log('  POST /ai/execute - Execute plan steps');
   console.log('  GET  /ping - Connection check');
   console.log('  GET  /health - System status');
-  console.log('\n✅ Ready to handle AI responses properly!\n');
+  console.log('\n✅ Ready for Bee System implementation!');
+  console.log('   Ask: "Can u make a bee system for my @GameCore.lua"\n');
 });
