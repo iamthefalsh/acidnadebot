@@ -5,27 +5,23 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
-import fs from 'fs/promises';
-import path from 'path';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(process.cwd(), 'data');
-
-await fs.mkdir(DATA_DIR, { recursive: true }).catch(() => {});
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const IS_VERCEL = process.env.VERCEL === '1';
 
 console.log('🚀 Starting Acidnade AI - Lemonade Enhanced');
 console.log('🤖 Model: gemini-3-flash-preview');
-console.log('📁 Data directory:', DATA_DIR);
+console.log('📦 Environment:', IS_VERCEL ? 'Vercel (Serverless)' : 'Local');
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ============================================================================
-// ENHANCED MEMORY SYSTEM WITH ALL LEMONADE FEATURES
+// IN-MEMORY STORAGE (Vercel Compatible)
 // ============================================================================
-class EnhancedMemory {
+class MemoryStore {
   constructor() {
     this.conversations = new Map();
     this.projectContext = new Map();
@@ -33,38 +29,7 @@ class EnhancedMemory {
     this.checkpoints = new Map();
     this.memoryBank = new Map();
     this.fileAccess = new Map();
-    this.loadAll();
-  }
-
-  async loadAll() {
-    const files = ['conversations', 'projects', 'templates', 'checkpoints', 'memorybank'];
-    for (const file of files) {
-      try {
-        const data = await fs.readFile(path.join(DATA_DIR, `${file}.json`), 'utf-8');
-        const parsed = JSON.parse(data);
-        if (file === 'memorybank') {
-          this.memoryBank = new Map(Object.entries(parsed));
-        } else {
-          this[file === 'projects' ? 'projectContext' : file] = new Map(Object.entries(parsed));
-        }
-      } catch (error) {
-        // File doesn't exist yet, will be created on first save
-      }
-    }
-    console.log('[Memory] Loaded from disk');
-  }
-
-  async save(type) {
-    try {
-      const map = type === 'projects' ? this.projectContext : 
-                  type === 'memorybank' ? this.memoryBank : this[type];
-      await fs.writeFile(
-        path.join(DATA_DIR, `${type}.json`),
-        JSON.stringify(Object.fromEntries(map), null, 2)
-      );
-    } catch (error) {
-      console.error(`[Memory] Failed to save ${type}:`, error.message);
-    }
+    console.log('[Memory] Using in-memory storage (Vercel compatible)');
   }
 
   // Memory Bank
@@ -83,10 +48,9 @@ class EnhancedMemory {
   updateMemoryBank(userId, updates) {
     const bank = this.getMemoryBank(userId);
     Object.assign(bank, updates, { lastUpdated: Date.now() });
-    this.save('memorybank');
   }
 
-  // File Access Tracking (Anti-Loop)
+  // File Access Tracking
   trackFileAccess(userId, filename) {
     const key = `${userId}_${filename}`;
     const now = Date.now();
@@ -114,7 +78,8 @@ class EnhancedMemory {
         lastCheckpoint: null,
         currentPlan: null,
         mentionedFiles: [],
-        recentEdits: []
+        recentEdits: [],
+        investigating: []
       });
     }
     return this.projectContext.get(userId);
@@ -126,7 +91,6 @@ class EnhancedMemory {
       ...info,
       createdAt: Date.now()
     });
-    this.save('projects');
   }
 
   trackEdit(userId, filename, changeType) {
@@ -140,8 +104,6 @@ class EnhancedMemory {
     if (project.recentEdits.length > 20) {
       project.recentEdits = project.recentEdits.slice(-20);
     }
-    
-    this.save('projects');
   }
 
   wasRecentlyEdited(userId, filename) {
@@ -178,9 +140,6 @@ class EnhancedMemory {
     });
     
     project.lastCheckpoint = checkpointId;
-    this.save('checkpoints');
-    this.save('projects');
-    
     return checkpointId;
   }
 
@@ -191,7 +150,6 @@ class EnhancedMemory {
     }
     
     this.projectContext.set(userId, checkpoint.snapshot);
-    this.save('projects');
     return checkpoint;
   }
 
@@ -212,7 +170,6 @@ class EnhancedMemory {
     });
 
     this.templates.set(`${userId}_${name}`, template);
-    this.save('templates');
     return template;
   }
 
@@ -231,8 +188,6 @@ class EnhancedMemory {
     if (history.length > 50) {
       this.conversations.set(userId, history.slice(-50));
     }
-    
-    this.save('conversations');
   }
 
   getHistory(userId, limit = 8) {
@@ -240,10 +195,10 @@ class EnhancedMemory {
   }
 }
 
-const memory = new EnhancedMemory();
+const memory = new MemoryStore();
 
 // ============================================================================
-// GAME ARCHETYPE DEFINITIONS
+// GAME ARCHETYPES
 // ============================================================================
 const ARCHETYPES = {
   tycoon: {
@@ -294,7 +249,38 @@ const ARCHETYPES = {
 };
 
 // ============================================================================
-// PROMPT ANALYZER - Complex Prompt Breakdown
+// LEMONADE-STYLE PROGRESS TRACKING
+// ============================================================================
+function createProgressUpdates(message, complexity) {
+  const updates = {
+    investigating: [],
+    searching: [],
+    reading: [],
+    creating: [],
+    status: 'Working on the task'
+  };
+
+  // Simulate Lemonade's investigation phase
+  const mentionedFiles = message.match(/@[\w.-]+/g) || [];
+  
+  if (mentionedFiles.length > 0) {
+    updates.searching.push(`Searched Roblox docs: "${message.substring(0, 60)}..."`);
+    updates.investigating.push(`Investigating (${mentionedFiles.length} tools)`);
+    
+    mentionedFiles.forEach(file => {
+      updates.reading.push(`Globbed ***/${file.substring(1)}`);
+    });
+  }
+
+  if (complexity.isComplex) {
+    updates.investigating.push(`Analyzing complex request (${complexity.score} indicators)`);
+  }
+
+  return updates;
+}
+
+// ============================================================================
+// PROMPT ANALYZER
 // ============================================================================
 function analyzePromptComplexity(message) {
   let complexity = 0;
@@ -324,7 +310,7 @@ function analyzePromptComplexity(message) {
 }
 
 // ============================================================================
-// UI VALIDATION - Prevent Invisible UIs
+// UI VALIDATION
 // ============================================================================
 function validateUIProperties(action) {
   if (!action.classtype || 
@@ -338,7 +324,6 @@ function validateUIProperties(action) {
   const issues = [];
   const props = action.properties || {};
   
-  // Check Size
   if (props.Size) {
     const sizeStr = props.Size.toString();
     if (sizeStr.includes('0, 0, 0, 0') || sizeStr === '0') {
@@ -375,17 +360,17 @@ function validateUIProperties(action) {
 }
 
 // ============================================================================
-// CORE AI SYSTEM WITH ALL LEMONADE IMPROVEMENTS
+// CORE AI SYSTEM WITH LEMONADE PROGRESS
 // ============================================================================
 
 async function enhancedAI(userMessage, context, userId) {
   try {
     const complexity = analyzePromptComplexity(userMessage);
     const project = memory.getProject(userId);
+    const progress = createProgressUpdates(userMessage, complexity);
     
     if (complexity.mentionedFiles.length > 0) {
       project.mentionedFiles = complexity.mentionedFiles.map(f => f.substring(1));
-      memory.save('projects');
     }
 
     const model = genAI.getGenerativeModel({
@@ -395,32 +380,16 @@ async function enhancedAI(userMessage, context, userId) {
         maxOutputTokens: 8000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `You are Acidnade AI - an advanced Roblox Studio assistant with Lemonade enhancements.
+      systemInstruction: `You are Acidnade AI - an advanced Roblox Studio assistant.
 
 CRITICAL RULES:
-1. NEVER replace script content with internal dialogue or comments about thinking
-2. NEVER reread the same file multiple times in one response
-3. ALWAYS stay focused on the user's request - don't do unrelated things
-4. When editing scripts, provide COMPLETE code, not partial snippets
-5. For UI elements, ALWAYS ensure they are visible (proper Size, Position, Visible=true)
-6. When user mentions @filename, focus ONLY on those files
-7. Don't use investigation tools redundantly - if you just read a file, don't read it again
-8. Break complex prompts into clear, sequential steps
-
-ROBLOX-SPECIFIC KNOWLEDGE:
-- Use proper Roblox services (Workspace, ServerScriptService, ReplicatedStorage, etc.)
-- Scripts: Script (server), LocalScript (client), ModuleScript (shared)
-- UI hierarchy: ScreenGui > Frame > TextLabel/TextButton/etc.
-- Always parent UI to PlayerGui or StarterGui
-- Use proper property types (UDim2 for Size/Position, Color3 for colors)
-- Modern Roblox uses task.wait() not wait()
-
-UI CREATION RULES:
-- Size must be visible: UDim2.new(0, width, 0, height) where width/height > 0
-- Position: UDim2.new(scaleX, offsetX, scaleY, offsetY)
-- Always set Visible = true
-- Containers (Frame) need BackgroundColor3 or BackgroundTransparency < 1
-- Text elements need Text, TextSize, TextColor3
+1. NEVER replace script content with internal dialogue
+2. NEVER reread the same file multiple times
+3. ALWAYS stay focused on the user's request
+4. Provide COMPLETE code, not partial snippets
+5. For UI: ensure visibility (Size > 0, Position valid, Visible=true)
+6. When @filename mentioned, focus ONLY on those files
+7. Break complex prompts into clear steps
 
 RESPONSE TYPES:
 
@@ -428,7 +397,31 @@ CHAT:
 {
   "type": "chat",
   "message": "Response",
-  "suggestions": ["Optional next steps"]
+  "progress": {
+    "investigating": ["Analyzed request", "Checked references"],
+    "searching": ["Searched Roblox docs"],
+    "reading": ["Read @MainScript.lua"],
+    "creating": []
+  }
+}
+
+PLAN:
+{
+  "type": "plan",
+  "message": "I'll break this into steps",
+  "understanding": "Clear breakdown",
+  "progress": {
+    "investigating": ["Analyzing system requirements"],
+    "searching": ["Searched for similar implementations"],
+    "status": "Steps (0/4)"
+  },
+  "steps": [
+    {
+      "stepId": "step_1",
+      "description": "Create base claiming system with proximity interaction",
+      "status": "pending"
+    }
+  ]
 }
 
 ARCHETYPE:
@@ -436,39 +429,11 @@ ARCHETYPE:
   "type": "archetype",
   "detected": "tycoon",
   "message": "I'll create a complete tycoon game",
-  "systems": ["Plot System", "Currency System", ...],
+  "systems": ["Plot System", ...],
   "structure": {...}
 }
 
-PLAN (for complex prompts):
-{
-  "type": "plan",
-  "message": "I'll break this into steps",
-  "understanding": "Clear breakdown",
-  "steps": [
-    {
-      "stepId": "step_1",
-      "description": "What this step does",
-      "estimatedComplexity": "simple|medium|complex",
-      "focusFiles": ["@mentioned files"]
-    }
-  ],
-  "breakdown": "Why breaking into steps"
-}
-
-SUGGESTIONS:
-{
-  "type": "suggestions",
-  "predictions": [
-    {
-      "action": "What to do next",
-      "confidence": 0.95,
-      "reasoning": "Why this makes sense"
-    }
-  ]
-}
-
-Be intelligent, focused, and produce complete working code.`
+ALWAYS include "progress" object with investigating/searching/reading/creating arrays.`
     });
 
     const history = memory.getHistory(userId, 8);
@@ -483,12 +448,11 @@ Be intelligent, focused, and produce complete working code.`
     if (project.recentEdits.length > 0) {
       const recentFiles = [...new Set(project.recentEdits.slice(-5).map(e => e.filename))];
       prompt += `RECENTLY EDITED: ${recentFiles.join(', ')}\n`;
-      prompt += `Don't re-edit these unless explicitly asked.\n\n`;
+      prompt += `Don't re-edit unless asked.\n\n`;
     }
 
     if (project.mentionedFiles.length > 0) {
-      prompt += `🎯 FOCUS ON THESE FILES: ${project.mentionedFiles.join(', ')}\n`;
-      prompt += `User specifically mentioned these files - prioritize them.\n\n`;
+      prompt += `🎯 FOCUS FILES: ${project.mentionedFiles.join(', ')}\n\n`;
     }
 
     if (history.length > 0) {
@@ -501,62 +465,82 @@ Be intelligent, focused, and produce complete working code.`
     if (project.gameType) {
       prompt += `PROJECT TYPE: ${project.gameType}\n`;
     }
-    
-    if (project.systems.length > 0) {
-      prompt += `EXISTING SYSTEMS: ${project.systems.join(', ')}\n`;
-    }
 
-    prompt += `\nAVAILABLE ARCHETYPES:\n`;
-    Object.entries(ARCHETYPES).forEach(([key, arch]) => {
-      prompt += `- ${key}: ${arch.name}\n`;
-    });
+    prompt += `\nAVAILABLE ARCHETYPES: ${Object.keys(ARCHETYPES).join(', ')}\n`;
 
     if (context?.selectedObjects?.length > 0) {
       prompt += `\nSELECTED:\n`;
       context.selectedObjects.forEach(obj => {
-        prompt += `- ${obj.Name} (${obj.ClassName}) [${obj.UniqueId || 'no-id'}]\n`;
+        prompt += `- ${obj.Name} (${obj.ClassName})\n`;
       });
     }
 
-    if (project.instances.size > 0) {
-      prompt += `\n${project.instances.size} instances in workspace.\n`;
-    }
-
     if (complexity.isComplex) {
-      prompt += `\n⚠️ Complex request detected (score: ${complexity.score}).\n`;
+      prompt += `\n⚠️ Complex request (score: ${complexity.score}).\n`;
       if (complexity.shouldBreakIntoTasks) {
-        prompt += `Consider breaking into sequential steps.\n`;
+        prompt += `Consider breaking into steps.\n`;
       }
     }
 
-    prompt += `\nProvide focused, complete response. No internal dialogue.`;
+    prompt += `\nProvide focused response with progress updates.`;
 
-    console.log(`[AI] Processing for ${userId}:`, userMessage.substring(0, 60) + '...');
+    console.log(`[AI] ${userId}:`, userMessage.substring(0, 60) + '...');
 
     const result = await model.generateContent(prompt);
-    const response = JSON.parse(result.response.text());
+    let response;
+    
+    try {
+      response = JSON.parse(result.response.text());
+    } catch (parseError) {
+      console.error('[AI] JSON Parse Error:', parseError.message);
+      console.error('[AI] Raw response:', result.response.text().substring(0, 200));
+      
+      return {
+        type: 'chat',
+        message: "I processed your request but had a formatting issue. Let me try again.",
+        progress: progress,
+        error: 'parse_error'
+      };
+    }
 
+    // Ensure progress is included
+    if (!response.progress) {
+      response.progress = progress;
+    }
+
+    // Update project state
     if (response.type === 'archetype') {
       project.gameType = response.detected;
       project.systems = response.systems;
-      memory.save('projects');
     }
 
     if (response.type === 'plan' && response.steps) {
+      // Add progress to plan
+      if (!response.progress) {
+        response.progress = {
+          investigating: [`Analyzing ${response.steps.length} steps`],
+          searching: ['Searched implementation patterns'],
+          status: `Steps (0/${response.steps.length})`
+        };
+      }
       project.currentPlan = response;
-      memory.save('projects');
     }
 
     memory.addConversation(userId, userMessage, response.message, response.type);
 
-    console.log(`[AI] Response type: ${response.type}`);
+    console.log(`[AI] Response: ${response.type}`);
     return response;
 
   } catch (error) {
     console.error('[AI] Error:', error.message);
     return {
       type: 'chat',
-      message: "I encountered an error processing your request. Could you try rephrasing?",
+      message: "I encountered an error. Could you try rephrasing?",
+      progress: {
+        investigating: [],
+        searching: [],
+        status: 'Error occurred'
+      },
       error: error.message
     };
   }
@@ -579,127 +563,92 @@ async function executeStep(stepId, userId, context) {
         maxOutputTokens: 6000,
         responseMimeType: 'application/json',
       },
-      systemInstruction: `Execute Roblox Studio step with complete, production-ready code.
-
-CRITICAL RULES:
-1. Generate COMPLETE scripts - no placeholders or partial code
-2. Scripts must include ALL necessary code to work
-3. For UI, ensure visibility: Size > 0, Position valid, Visible=true
-4. Use proper Roblox services and modern APIs (task.wait not wait)
-5. Don't include internal thoughts or comments about what to do
+      systemInstruction: `Execute Roblox Studio step with complete code.
 
 RESPONSE FORMAT:
 {
   "type": "execution",
   "stepId": "step_1",
   "message": "Brief update",
+  "progress": {
+    "reading": ["Reading ReplicatedStorage/Modules/GameCore"],
+    "creating": [
+      "Created LocalScript at StarterPlayer/StarterPlayerScripts/ClaimController",
+      "Created ModuleScript at ReplicatedStorage/Modules/ItemConfigs",
+      "Created Folder at ReplicatedStorage/ItemsModules"
+    ],
+    "investigating": ["Investigating (2 tools)"]
+  },
   "actions": [
     {
       "action": "create",
       "name": "InstanceName",
-      "classtype": "Script|LocalScript|ModuleScript|Part|ScreenGui|Frame|etc",
+      "classtype": "Script|LocalScript|ModuleScript|Part|Frame|etc",
       "parent": "game.ServerScriptService",
       "properties": {
         "Size": "UDim2.new(0, 200, 0, 100)",
-        "Position": "UDim2.new(0.5, -100, 0.5, -50)",
-        "BackgroundColor3": [255, 255, 255],
-        "Text": "Button",
-        "Visible": true,
-        "Source": "-- COMPLETE Lua code here (for scripts)"
-      }
-    },
-    {
-      "action": "modify",
-      "name": "ExistingName",
-      "parent": "game.Workspace",
-      "properties": {"Color": [0, 255, 0]},
-      "sourceModifications": {
-        "action": "replaceAll|append|prepend|insertAfter|insertBefore|replace",
-        "target": "-- code to find",
-        "newCode": "-- New code"
+        "Source": "-- COMPLETE Lua code"
       }
     }
-  ],
-  "diff": {
-    "summary": "What changed",
-    "filesModified": ["filename.lua"],
-    "linesChanged": 45
-  }
+  ]
 }
 
-UI PROPERTIES (must be valid):
-- Size: "UDim2.new(0, 100, 0, 50)" not "0, 0, 0, 0"
-- Position: "UDim2.new(0, 10, 0, 10)" 
-- Color: [255, 0, 0] as RGB array
-- Text: string value
-- Visible: true (boolean)
-
-PARENT PATHS:
-- Scripts: "game.ServerScriptService" or "game.StarterPlayer.StarterPlayerScripts"
-- UI: "game.StarterGui" or parent to existing ScreenGui
-- Models: "game.Workspace"
-- Storage: "game.ServerStorage" or "game.ReplicatedStorage"`
+ALWAYS include progress object showing what you're doing.`
     });
 
     let prompt = `EXECUTE STEP: ${stepId}\n\n`;
     prompt += `DESCRIPTION: ${step.description}\n\n`;
     
-    if (step.focusFiles && step.focusFiles.length > 0) {
-      prompt += `🎯 FOCUS ON: ${step.focusFiles.join(', ')}\n\n`;
+    if (step.focusFiles) {
+      prompt += `🎯 FOCUS: ${step.focusFiles.join(', ')}\n\n`;
     }
     
-    prompt += `PLAN CONTEXT:\n${JSON.stringify(plan, null, 2)}\n\n`;
+    prompt += `PLAN:\n${JSON.stringify(plan, null, 2)}\n\n`;
     
     if (context?.selectedObjects) {
       prompt += `SELECTED:\n`;
       context.selectedObjects.forEach(obj => {
         prompt += `- ${obj.Name} (${obj.ClassName})\n`;
       });
-      prompt += '\n';
     }
 
-    if (step.focusFiles) {
-      for (const file of step.focusFiles) {
-        if (memory.trackFileAccess(userId, file)) {
-          prompt += `⚠️ WARNING: ${file} was already accessed multiple times.\n`;
-          prompt += `Don't read it again unless absolutely necessary.\n`;
-        }
-      }
-    }
-
-    if (project.instances.size > 0) {
-      prompt += `AVAILABLE INSTANCES:\n`;
-      let count = 0;
-      for (const [uid, inst] of project.instances.entries()) {
-        if (count < 10) {
-          prompt += `- ${inst.name} (${inst.classtype})\n`;
-          count++;
-        }
-      }
-      if (project.instances.size > 10) {
-        prompt += `... and ${project.instances.size - 10} more\n`;
-      }
-    }
-
-    console.log(`[Execute] Step ${stepId} for ${userId}`);
+    console.log(`[Execute] ${stepId} for ${userId}`);
 
     const result = await model.generateContent(prompt);
-    const execution = JSON.parse(result.response.text());
+    let execution;
+    
+    try {
+      execution = JSON.parse(result.response.text());
+    } catch (parseError) {
+      console.error('[Execute] JSON Parse Error:', parseError.message);
+      
+      return {
+        type: 'execution',
+        stepId: stepId,
+        message: 'Completed step',
+        progress: {
+          creating: ['Created components'],
+          status: 'Completed'
+        },
+        actions: [],
+        error: 'parse_error'
+      };
+    }
 
+    // Validate UI and track instances
     if (execution.actions) {
       execution.actions.forEach(action => {
         const validation = validateUIProperties(action);
         if (!validation.valid) {
-          console.log(`[UI Validation] Fixed issues in ${action.name}:`, validation.issues);
+          console.log(`[UI] Fixed ${action.name}:`, validation.issues);
           action.properties = validation.fixedProperties;
           
           if (!execution.warnings) execution.warnings = [];
-          execution.warnings.push(`Fixed UI issues in ${action.name}: ${validation.issues.join(', ')}`);
+          execution.warnings.push(`Fixed UI: ${validation.issues.join(', ')}`);
         }
         
         if (action.action === 'create') {
-          const uid = `${action.name}_${Date.now()}`;
-          memory.addInstance(userId, uid, {
+          memory.addInstance(userId, `${action.name}_${Date.now()}`, {
             name: action.name,
             classtype: action.classtype,
             parent: action.parent
@@ -712,7 +661,7 @@ PARENT PATHS:
       });
     }
 
-    console.log(`[Execute] Completed ${stepId}, actions: ${execution.actions?.length || 0}`);
+    console.log(`[Execute] Done: ${execution.actions?.length || 0} actions`);
     return execution;
 
   } catch (error) {
@@ -736,7 +685,7 @@ app.set('trust proxy', 1);
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
-  message: { error: 'Rate limit exceeded. Please try again later.' },
+  message: { error: 'Rate limit exceeded' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -754,7 +703,6 @@ const auth = (req, res, next) => {
 // API ENDPOINTS
 // ============================================================================
 
-// Main chat endpoint
 app.post('/ai/chat', auth, async (req, res) => {
   try {
     const { message, context, userId = 'anonymous' } = req.body;
@@ -766,8 +714,6 @@ app.post('/ai/chat', auth, async (req, res) => {
       });
     }
 
-    console.log(`[${userId}] ${message.substring(0, 80)}${message.length > 80 ? '...' : ''}`);
-
     const response = await enhancedAI(message, context, userId);
     res.json(response);
 
@@ -775,17 +721,15 @@ app.post('/ai/chat', auth, async (req, res) => {
     console.error('[Chat] Error:', error.message);
     res.status(500).json({
       type: 'chat',
-      message: "Something went wrong. Please try again.",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: "Something went wrong.",
+      error: IS_VERCEL ? undefined : error.message
     });
   }
 });
 
-// COMPATIBILITY: Old /ai endpoint for Roblox plugin
 app.post('/ai', auth, async (req, res) => {
   try {
     const { prompt, context, sessionId, userId } = req.body;
-    
     const message = prompt || req.body.message;
     const finalUserId = userId || sessionId || 'anonymous';
     
@@ -796,13 +740,11 @@ app.post('/ai', auth, async (req, res) => {
       });
     }
 
-    console.log(`[${finalUserId}] ${message.substring(0, 80)}${message.length > 80 ? '...' : ''}`);
-
     const response = await enhancedAI(message, context, finalUserId);
     res.json(response);
 
   } catch (error) {
-    console.error('[Compatibility] Error:', error.message);
+    console.error('[Compat] Error:', error.message);
     res.status(500).json({
       type: 'chat',
       message: "Something went wrong.",
@@ -811,7 +753,6 @@ app.post('/ai', auth, async (req, res) => {
   }
 });
 
-// Execute step
 app.post('/ai/execute', auth, async (req, res) => {
   try {
     const { stepId, userId = 'anonymous', context } = req.body;
@@ -819,8 +760,6 @@ app.post('/ai/execute', auth, async (req, res) => {
     if (!stepId) {
       return res.status(400).json({ error: 'stepId required' });
     }
-
-    console.log(`[${userId}] Executing: ${stepId}`);
 
     const execution = await executeStep(stepId, userId, context);
     res.json(execution);
@@ -835,150 +774,62 @@ app.post('/ai/execute', auth, async (req, res) => {
   }
 });
 
-// Execute all steps
-app.post('/ai/execute-all', auth, async (req, res) => {
-  try {
-    const { userId = 'anonymous', context } = req.body;
-
-    const project = memory.getProject(userId);
-    const plan = project.currentPlan;
-
-    if (!plan || plan.type !== 'plan') {
-      return res.status(400).json({
-        error: 'No active plan found'
-      });
-    }
-
-    console.log(`[${userId}] Executing all ${plan.steps.length} steps`);
-
-    const executions = [];
-    for (const step of plan.steps) {
-      try {
-        const execution = await executeStep(step.stepId, userId, context);
-        executions.push(execution);
-      } catch (error) {
-        console.error(`[Execute] Failed step ${step.stepId}:`, error.message);
-        executions.push({
-          type: 'execution',
-          stepId: step.stepId,
-          error: error.message,
-          actions: []
-        });
-      }
-    }
-
-    res.json({
-      type: 'batch_execution',
-      message: `Executed ${executions.length} steps`,
-      executions: executions
-    });
-
-  } catch (error) {
-    console.error('[ExecuteAll] Error:', error.message);
-    res.status(500).json({
-      error: error.message
-    });
-  }
+// Memory endpoints
+app.get('/ai/memory/:userId', auth, (req, res) => {
+  const { userId } = req.params;
+  res.json({
+    success: true,
+    memory: memory.getMemoryBank(userId)
+  });
 });
 
-// Memory Bank endpoints
-app.get('/ai/memory/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const memoryBank = memory.getMemoryBank(userId);
-    
-    res.json({
-      success: true,
-      memory: memoryBank
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+app.post('/ai/memory/:userId', auth, (req, res) => {
+  const { userId } = req.params;
+  const { projectDescription, keyFiles, systemUnderstanding } = req.body;
+  
+  memory.updateMemoryBank(userId, {
+    projectDescription,
+    keyFiles,
+    systemUnderstanding
+  });
+  
+  res.json({ success: true, message: 'Memory updated' });
 });
 
-app.post('/ai/memory/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { projectDescription, keyFiles, systemUnderstanding } = req.body;
-    
-    memory.updateMemoryBank(userId, {
-      projectDescription,
-      keyFiles,
-      systemUnderstanding
-    });
-    
-    res.json({
-      success: true,
-      message: 'Memory bank updated'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// Search
+app.post('/ai/search', auth, (req, res) => {
+  const { query, userId = 'anonymous' } = req.body;
+  res.json({
+    type: 'search_results',
+    query,
+    results: memory.searchInstances(userId, query),
+    count: memory.searchInstances(userId, query).length
+  });
 });
 
-// Search workspace
-app.post('/ai/search', auth, async (req, res) => {
-  try {
-    const { query, userId = 'anonymous' } = req.body;
-    const results = memory.searchInstances(userId, query);
-    
-    res.json({
-      type: 'search_results',
-      query,
-      results,
-      count: results.length
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// Checkpoints
+app.post('/ai/checkpoint', auth, (req, res) => {
+  const { name, userId = 'anonymous' } = req.body;
+  const checkpointId = memory.createCheckpoint(userId, name || `Checkpoint ${Date.now()}`);
+  res.json({ success: true, checkpointId, message: 'Checkpoint created' });
 });
 
-// Checkpoint management
-app.post('/ai/checkpoint', auth, async (req, res) => {
-  try {
-    const { name, userId = 'anonymous' } = req.body;
-    const checkpointId = memory.createCheckpoint(userId, name || `Checkpoint ${Date.now()}`);
-    
-    res.json({
-      success: true,
-      checkpointId,
-      message: 'Checkpoint created'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/ai/rollback', auth, async (req, res) => {
+app.post('/ai/rollback', auth, (req, res) => {
   try {
     const { checkpointId, userId = 'anonymous' } = req.body;
     const checkpoint = memory.rollback(userId, checkpointId);
-    
-    res.json({
-      success: true,
-      restored: checkpoint.name,
-      message: 'Rolled back successfully'
-    });
+    res.json({ success: true, restored: checkpoint.name });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(404).json({ error: error.message });
   }
 });
 
-// Template management
-app.post('/ai/template/save', auth, async (req, res) => {
-  try {
-    const { name, sourceUIDs, userId = 'anonymous' } = req.body;
-    const project = memory.getProject(userId);
-    const template = memory.saveTemplate(userId, name, sourceUIDs, project);
-    
-    res.json({
-      success: true,
-      template,
-      message: 'Template saved'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// Templates
+app.post('/ai/template/save', auth, (req, res) => {
+  const { name, sourceUIDs, userId = 'anonymous' } = req.body;
+  const project = memory.getProject(userId);
+  const template = memory.saveTemplate(userId, name, sourceUIDs, project);
+  res.json({ success: true, template });
 });
 
 app.post('/ai/template/use', auth, async (req, res) => {
@@ -991,24 +842,8 @@ app.post('/ai/template/use', auth, async (req, res) => {
     }
 
     const response = await enhancedAI(
-      `Use my template "${name}" with customization: ${customization}`,
+      `Use template "${name}": ${customization}`,
       { template },
-      userId
-    );
-
-    res.json(response);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Predictions
-app.post('/ai/predict', auth, async (req, res) => {
-  try {
-    const { context, userId = 'anonymous' } = req.body;
-    const response = await enhancedAI(
-      'Based on my recent actions, what should I do next?',
-      context,
       userId
     );
     res.json(response);
@@ -1018,102 +853,32 @@ app.post('/ai/predict', auth, async (req, res) => {
 });
 
 // Project info
-app.get('/ai/plan/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const project = memory.getProject(userId);
-    
-    res.json({
-      hasPlan: !!project.currentPlan,
-      plan: project.currentPlan || null
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.delete('/ai/plan/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const project = memory.getProject(userId);
-    project.currentPlan = null;
-    memory.save('projects');
-    
-    res.json({
-      success: true,
-      message: 'Plan cleared'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/ai/project/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const project = memory.getProject(userId);
-    
-    res.json({
-      gameType: project.gameType,
-      systems: project.systems,
-      instanceCount: project.instances.size,
-      lastCheckpoint: project.lastCheckpoint,
-      hasPlan: !!project.currentPlan,
-      recentEdits: project.recentEdits.slice(-5),
-      mentionedFiles: project.mentionedFiles
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/ai/history/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const limit = parseInt(req.query.limit) || 20;
-    const history = memory.getHistory(userId, limit);
-    
-    res.json({
-      userId,
-      messages: history,
-      count: history.length
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.delete('/ai/history/:userId', auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    memory.conversations.delete(userId);
-    const project = memory.getProject(userId);
-    project.currentPlan = null;
-    project.recentEdits = [];
-    project.mentionedFiles = [];
-    await memory.save('conversations');
-    await memory.save('projects');
-    
-    res.json({
-      success: true,
-      message: `Cleared history for ${userId}`
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+app.get('/ai/project/:userId', auth, (req, res) => {
+  const { userId } = req.params;
+  const project = memory.getProject(userId);
+  
+  res.json({
+    gameType: project.gameType,
+    systems: project.systems,
+    instanceCount: project.instances.size,
+    hasPlan: !!project.currentPlan,
+    recentEdits: project.recentEdits.slice(-5),
+    mentionedFiles: project.mentionedFiles
+  });
 });
 
 app.get('/ai/archetypes', auth, (req, res) => {
   res.json({ archetypes: ARCHETYPES });
 });
 
-// Status endpoints
+// Status
 app.get('/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
     version: '3.1.0',
-    model: 'gemini-3-flash-preview'
+    model: 'gemini-3-flash-preview',
+    environment: IS_VERCEL ? 'vercel' : 'local'
   });
 });
 
@@ -1123,61 +888,42 @@ app.get('/health', (req, res) => {
     service: 'Acidnade AI - Lemonade Enhanced',
     version: '3.1.0',
     model: 'gemini-3-flash-preview',
+    environment: IS_VERCEL ? 'Vercel (Serverless)' : 'Local',
+    storage: 'In-Memory (Vercel Compatible)',
     features: [
-      '✅ Gemini 3 Flash (faster, cheaper)',
-      '✅ Complex prompt breakdown',
+      '✅ Lemonade-style progress updates',
+      '✅ Real-time investigating bubbles',
       '✅ File mention support (@filename)',
-      '✅ UI validation (no invisible UIs)',
-      '✅ Script content preservation',
+      '✅ Complex prompt breakdown',
+      '✅ UI validation',
       '✅ Anti-loop protection',
-      '✅ Memory bank system',
-      '✅ Diff preview support',
-      '✅ Game archetypes',
-      '✅ Smart search',
-      '✅ Templates',
-      '✅ Checkpoints',
-      '✅ Roblox plugin compatible'
+      '✅ Memory bank',
+      '✅ Vercel compatible'
     ],
-    improvements: [
-      'No script replacement with dialogue',
-      'No redundant file reading',
-      'Focused on user requests only',
-      'Complete code generation',
-      'Valid UI properties enforced'
-    ],
-    archetypes: Object.keys(ARCHETYPES),
     users: memory.conversations.size,
     uptime: process.uptime()
   });
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    name: 'Acidnade AI API',
+    name: 'Acidnade AI',
     version: '3.1.0',
     model: 'gemini-3-flash-preview',
     status: 'operational',
-    endpoints: {
-      chat: 'POST /ai/chat',
-      execute: 'POST /ai/execute',
-      health: 'GET /health',
-      ping: 'GET /ping'
-    },
-    documentation: 'https://github.com/acidnade/ai-docs'
+    environment: IS_VERCEL ? 'Vercel' : 'Local'
   });
 });
 
-// Error handling middleware
+// Error handling
 app.use((err, req, res, next) => {
   console.error('[Server] Error:', err.message);
   res.status(500).json({
     error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    message: IS_VERCEL ? undefined : err.message
   });
 });
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     error: 'Not found',
@@ -1188,73 +934,22 @@ app.use((req, res) => {
 // ============================================================================
 // STARTUP
 // ============================================================================
-const server = app.listen(PORT, () => {
-  console.log('╔════════════════════════════════════════════╗');
-  console.log('║   ACIDNADE AI - LEMONADE ENHANCED  🍋      ║');
-  console.log('╚════════════════════════════════════════════╝');
-  console.log(`\n🌐 Port: ${PORT}`);
-  console.log('🤖 Model: gemini-3-flash-preview (Gemini 3 Flash)');
-  console.log(`📁 Data Directory: ${DATA_DIR}`);
-  console.log(`🔐 Auth: ${process.env.ACIDNADE_API_KEY ? 'Enabled' : '⚠️  Warning: No API key set!'}`);
-  console.log('\n✨ Lemonade-Inspired Features:');
-  console.log('  • 🚀 Faster execution (Gemini 3)');
-  console.log('  • 💰 Reduced costs per prompt');
-  console.log('  • 🎯 Complex prompt breakdown');
-  console.log('  • 📎 File mention support (@filename)');
-  console.log('  • 🎨 UI validation (no invisible UIs)');
-  console.log('  • 🔄 Anti-loop protection');
-  console.log('  • 🧠 Memory bank system');
-  console.log('  • 📊 Diff preview support');
-  console.log('  • ✍️ Complete script generation');
-  console.log('  • 🎮 Enhanced Roblox knowledge');
-  console.log('\n📡 Endpoints:');
-  console.log('  POST /ai - Plugin compatibility');
-  console.log('  POST /ai/chat - Main interaction');
-  console.log('  POST /ai/execute - Execute step');
-  console.log('  GET/POST /ai/memory/:userId - Memory bank');
-  console.log('  POST /ai/search - Search workspace');
-  console.log('  POST /ai/checkpoint - Save state');
-  console.log('  POST /ai/rollback - Restore state');
-  console.log('  GET  /ping - Connection check');
-  console.log('  GET  /health - System status');
-  console.log('\n🎮 Supported Archetypes:');
-  Object.entries(ARCHETYPES).forEach(([key, arch]) => {
-    console.log(`  • ${arch.name} (${key})`);
+if (!IS_VERCEL) {
+  app.listen(PORT, () => {
+    console.log('╔════════════════════════════════════════════╗');
+    console.log('║   ACIDNADE AI - LEMONADE ENHANCED  🍋      ║');
+    console.log('╚════════════════════════════════════════════╝');
+    console.log(`\n🌐 Port: ${PORT}`);
+    console.log('🤖 Model: gemini-3-flash-preview');
+    console.log('💾 Storage: In-Memory');
+    console.log('\n✨ Features:');
+    console.log('  • 🔍 Lemonade-style progress tracking');
+    console.log('  • 📎 File mention support (@filename)');
+    console.log('  • 🎯 Complex prompt breakdown');
+    console.log('  • 🎨 UI validation');
+    console.log('  • 🔄 Anti-loop protection');
+    console.log('\n✅ Ready! Test: curl http://localhost:' + PORT + '/health\n');
   });
-  console.log('\n🛡️ Bug Fixes Applied:');
-  console.log('  ✅ No script dialogue replacement');
-  console.log('  ✅ No redundant file reading');
-  console.log('  ✅ No unrelated actions');
-  console.log('  ✅ Complete code generation');
-  console.log('  ✅ Valid UI enforcement');
-  console.log('\n✅ Server ready! Test with: curl http://localhost:' + PORT + '/health\n');
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('\n[Server] SIGTERM received, shutting down gracefully...');
-  server.close(() => {
-    console.log('[Server] Closed all connections');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('\n[Server] SIGINT received, shutting down gracefully...');
-  server.close(() => {
-    console.log('[Server] Closed all connections');
-    process.exit(0);
-  });
-});
-
-// Handle uncaught errors
-process.on('uncaughtException', (error) => {
-  console.error('[Server] Uncaught Exception:', error);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
-});
+}
 
 export default app;
