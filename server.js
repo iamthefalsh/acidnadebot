@@ -279,14 +279,42 @@ Keep responses concise. Return ONLY JSON with no extra formatting.`
 
     let prompt = `USER REQUEST: ${userMessage}\n\n`;
     
-    if (context?.selectedObjects && Array.isArray(context.selectedObjects)) {
-      prompt += `SELECTED OBJECTS IN ROBLOX STUDIO:\n`;
+    if (context?.selectedObjects) {
+      prompt += `SELECTED OBJECTS:\n`;
       context.selectedObjects.forEach(obj => {
         if (obj?.Name && obj?.ClassName) {
           prompt += `- ${obj.Name} (${obj.ClassName})${obj.Parent ? ` in ${obj.Parent}` : ''}\n`;
         }
       });
       prompt += '\n';
+    }
+    
+    // Add mentioned instances with full details
+    if (hasMentions && mentionedInstances.length > 0) {
+      prompt += `⚠️ USER MENTIONED THESE INSTANCES (FOCUS ON THESE):\n`;
+      mentionedInstances.forEach(mention => {
+        if (mention.found && mention.instance) {
+          const inst = mention.instance;
+          prompt += `\n${mention.mention}:\n`;
+          prompt += `  - Class: ${inst.ClassName}\n`;
+          prompt += `  - Full Path: ${inst.FullName}\n`;
+          prompt += `  - Parent: ${inst.Parent}\n`;
+          
+          // Add relevant properties
+          if (inst.Source) {
+            prompt += `  - Source Code Length: ${inst.SourceLength} characters\n`;
+            prompt += `  - Script Type: ${inst.ClassName}\n`;
+            if (inst.Disabled !== undefined) prompt += `  - Disabled: ${inst.Disabled}\n`;
+          }
+          if (inst.Size) prompt += `  - Size: ${inst.Size}\n`;
+          if (inst.Position) prompt += `  - Position: ${inst.Position}\n`;
+          if (inst.Transparency !== undefined) prompt += `  - Transparency: ${inst.Transparency}\n`;
+          if (inst.Text) prompt += `  - Text: "${inst.Text}"\n`;
+        } else {
+          prompt += `\n${mention.mention}: NOT FOUND (${mention.error || 'Unknown error'})\n`;
+        }
+      });
+      prompt += `\n⚠️ IMPORTANT: The user specifically mentioned these instances. Focus your response on them.\n\n`;
     }
     
     if (mentionedFiles.length > 0) {
