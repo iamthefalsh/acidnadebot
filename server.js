@@ -293,23 +293,42 @@ Keep responses concise. Return ONLY JSON with no extra formatting.`
     if (hasMentions && mentionedInstances.length > 0) {
       prompt += `⚠️ USER MENTIONED THESE INSTANCES (FOCUS ON THESE):\n`;
       mentionedInstances.forEach(mention => {
-        if (mention.found && mention.instance) {
-          const inst = mention.instance;
-          prompt += `\n${mention.mention}:\n`;
-          prompt += `  - Class: ${inst.ClassName}\n`;
-          prompt += `  - Full Path: ${inst.FullName}\n`;
-          prompt += `  - Parent: ${inst.Parent}\n`;
-          
-          // Add relevant properties
-          if (inst.Source) {
-            prompt += `  - Source Code Length: ${inst.SourceLength} characters\n`;
-            prompt += `  - Script Type: ${inst.ClassName}\n`;
-            if (inst.Disabled !== undefined) prompt += `  - Disabled: ${inst.Disabled}\n`;
+        if (mention.found) {
+          if (mention.multipleMatches && mention.instances) {
+            // Multiple matches found
+            prompt += `\n${mention.mention} - ${mention.matchCount} MATCHES FOUND:\n`;
+            mention.instances.forEach((inst, idx) => {
+              prompt += `\n  Match ${idx + 1}: ${inst.Path}\n`;
+              prompt += `    - Class: ${inst.ClassName}\n`;
+              prompt += `    - Service: ${inst.Service}\n`;
+              
+              if (inst.Source) {
+                prompt += `    - Source Length: ${inst.SourceLength} characters\n`;
+                if (inst.Disabled !== undefined) prompt += `    - Disabled: ${inst.Disabled}\n`;
+              }
+              if (inst.Size) prompt += `    - Size: ${inst.Size}\n`;
+              if (inst.Position) prompt += `    - Position: ${inst.Position}\n`;
+              if (inst.Text) prompt += `    - Text: "${inst.Text}"\n`;
+            });
+            prompt += `\n⚠️ Multiple instances found. You should ask user which one they meant, or work with all of them.\n`;
+          } else if (mention.instances && mention.instances[0]) {
+            // Single match
+            const inst = mention.instances[0];
+            prompt += `\n${mention.mention}:\n`;
+            prompt += `  - Class: ${inst.ClassName}\n`;
+            prompt += `  - Full Path: ${inst.Path}\n`;
+            prompt += `  - Parent: ${inst.Parent}\n`;
+            
+            if (inst.Source) {
+              prompt += `  - Source Code Length: ${inst.SourceLength} characters\n`;
+              prompt += `  - Script Type: ${inst.ClassName}\n`;
+              if (inst.Disabled !== undefined) prompt += `  - Disabled: ${inst.Disabled}\n`;
+            }
+            if (inst.Size) prompt += `  - Size: ${inst.Size}\n`;
+            if (inst.Position) prompt += `  - Position: ${inst.Position}\n`;
+            if (inst.Transparency !== undefined) prompt += `  - Transparency: ${inst.Transparency}\n`;
+            if (inst.Text) prompt += `  - Text: "${inst.Text}"\n`;
           }
-          if (inst.Size) prompt += `  - Size: ${inst.Size}\n`;
-          if (inst.Position) prompt += `  - Position: ${inst.Position}\n`;
-          if (inst.Transparency !== undefined) prompt += `  - Transparency: ${inst.Transparency}\n`;
-          if (inst.Text) prompt += `  - Text: "${inst.Text}"\n`;
         } else {
           prompt += `\n${mention.mention}: NOT FOUND (${mention.error || 'Unknown error'})\n`;
         }
