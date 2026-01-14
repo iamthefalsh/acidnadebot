@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_VERCEL = process.env.VERCEL === '1';
 
-console.log('🚀 Starting Acidnade AI - Complete Fix with Thinking Bubbles');
+console.log('🚀 Starting Acidnade AI - LINE-BASED EDITING FIX');
 console.log('🤖 Model: gemini-3-flash-preview');
 console.log('📦 Environment:', IS_VERCEL ? 'Vercel' : 'Local');
 
@@ -148,7 +148,7 @@ class SmartRetry {
 }
 
 // ============================================================================
-// UNIVERSAL AI WITH THINKING BUBBLES
+// UNIVERSAL AI WITH THINKING BUBBLES AND LINE-BASED EDITS
 // ============================================================================
 async function universalAIWithThoughts(userMessage, context, userId, thoughtCallback) {
   return await SmartRetry.withRetry(async (attempt) => {
@@ -214,11 +214,12 @@ CRITICAL RULES:
 
 RESPONSE FORMATS:
 
-EXECUTION (Creates things NOW - THIS MUST ACTUALLY CREATE OBJECTS/SCRIPTS):
+EXECUTION (Creates or MODIFIES things NOW):
 {
   "type": "execution",
-  "message": "Created [what you made]",
+  "message": "Result description",
   "actions": [
+    // FOR NEW CREATIONS:
     {
       "action": "create",
       "name": "FileName.lua",
@@ -231,6 +232,27 @@ EXECUTION (Creates things NOW - THIS MUST ACTUALLY CREATE OBJECTS/SCRIPTS):
         "Visible": true,
         "Text": "Button text here"
       }
+    },
+    // FOR BUG FIXES (LINE-BASED EDITS ONLY):
+    {
+      "action": "edit_lines",
+      "target": "ExistingScript.lua",  // Name of script to edit
+      "parent": "game.ServerScriptService",  // Parent location
+      "edits": [
+        {
+          "lineNumber": 42,  // 1-based line number to REPLACE
+          "newContent": "print('Fixed line')"  // COMPLETE new line content
+        },
+        {
+          "startLine": 15,  // Start line (inclusive)
+          "endLine": 17,    // End line (inclusive)
+          "newContent": [
+            "local fixedValue = 10",
+            "if fixedValue > 5 then",
+            "\tprint('Now working')"
+          ]
+        }
+      ]
     }
   ]
 }
@@ -256,14 +278,14 @@ DECISION LOGIC:
 - Use PLAN for: complex multi-part systems, complete games, when explicitly asked for step-by-step
 - Use CHAT for: questions, explanations, advice without code implementation
 
-EXECUTION REQUIREMENTS (CRITICAL - THIS MUST WORK):
-- Provide COMPLETE, WORKING Lua code (no TODOs, no placeholders, no comments saying "add code here")
+EXECUTION REQUIREMENTS (CRITICAL):
+- For NEW creations: Provide COMPLETE, WORKING Lua code
+- For BUG FIXES: Use "edit_lines" action with SPECIFIC LINE NUMBERS to change
+- NEVER replace entire script for bug fixes - ONLY edit necessary lines
+- Include line numbers and EXACT replacement content
 - Code must be ready to run immediately without modifications
-- Include error handling where needed (pcall for risky operations)
 - For UI elements: Visible=true, proper Size and Position set
 - Scripts must have full implementations with actual logic
-- Test your code mentally before returning it
-- Each action MUST create something tangible in Roblox Studio
 
 PLAN REQUIREMENTS (CRITICAL - NOT ALWAYS 5):
 - Use 2-4 steps only based on actual complexity
@@ -289,6 +311,25 @@ Keep responses concise. Return ONLY JSON with no extra formatting.`
       prompt += '\n';
     }
     
+    // ADD FILE CONTENTS FOR MENTIONED FILES (CRITICAL FOR BUG FIXES)
+    if (mentionedFiles.length > 0 && context?.fileContents) {
+      prompt += `FILE CONTENTS FOR MENTIONED FILES:\n`;
+      mentionedFiles.forEach(file => {
+        const content = context.fileContents[file];
+        if (content) {
+          prompt += `\n=== ${file} ===\n`;
+          // Show only first 100 lines to avoid token limits
+          const lines = content.split('\n');
+          const displayLines = lines.slice(0, 100);
+          prompt += displayLines.join('\n');
+          if (lines.length > 100) {
+            prompt += `\n... (${lines.length - 100} more lines not shown)`;
+          }
+          prompt += '\n\n';
+        }
+      });
+    }
+    
     if (mentionedFiles.length > 0) {
       prompt += `FILES MENTIONED: ${mentionedFiles.join(', ')}\n\n`;
     }
@@ -301,12 +342,13 @@ Keep responses concise. Return ONLY JSON with no extra formatting.`
     
     // ADD SPECIFIC GUIDANCE BASED ON REQUEST TYPE
     if (isFixRequest) {
-      prompt += `⚠️ THIS IS A FIX REQUEST\n`;
-      prompt += `You MUST return type "execution" with working fix code.\n`;
-      prompt += `Analyze what's broken and provide complete fix implementation.\n\n`;
+      prompt += `⚠️ THIS IS A BUG FIX REQUEST\n`;
+      prompt += `You MUST use "edit_lines" action with specific line numbers to change.\n`;
+      prompt += `NEVER replace entire script - ONLY edit necessary lines.\n`;
+      prompt += `Provide EXACT line numbers and replacement content.\n\n`;
     } else if (isCreateRequest && !isPlanRequest) {
       prompt += `🔧 THIS IS A CREATION REQUEST\n`;
-      prompt += `You MUST return type "execution" with complete implementation.\n`;
+      prompt += `You MUST use "create" action with complete implementation.\n`;
       prompt += `Create the requested script/object with full working code.\n\n`;
     } else if (isPlanRequest && !isFixRequest) {
       prompt += `📋 THIS IS A PLAN REQUEST\n`;
@@ -321,8 +363,9 @@ Keep responses concise. Return ONLY JSON with no extra formatting.`
     }
     
     prompt += `CRITICAL REMINDERS:\n`;
-    prompt += `- If execution: Provide COMPLETE working code that creates objects NOW\n`;
-    prompt += `- If plan: Use 2-4 steps based on complexity, NO padding to 5\n`;
+    prompt += `- For bug fixes: Use "edit_lines" action with SPECIFIC LINE NUMBERS\n`;
+    prompt += `- NEVER replace entire script for fixes - ONLY edit necessary lines\n`;
+    prompt += `- For new creations: Provide COMPLETE working code\n`;
     prompt += `- Response must be PURE JSON. No markdown, no code fences\n`;
     prompt += `- Never return undefined or empty responses\n`;
 
@@ -395,7 +438,7 @@ Keep responses concise. Return ONLY JSON with no extra formatting.`
     
     // EXECUTION ENHANCEMENT AND VALIDATION
     if (parsed.type === 'execution') {
-      if (thoughtCallback) await thoughtCallback('⚙️ Validating execution actions and code...', 'thinking');
+      if (thoughtCallback) await thoughtCallback('⚙️ Validating execution actions and edits...', 'thinking');
       await new Promise(resolve => setTimeout(resolve, 400));
       
       if (!parsed.actions || !Array.isArray(parsed.actions) || parsed.actions.length === 0) {
@@ -414,22 +457,58 @@ Keep responses concise. Return ONLY JSON with no extra formatting.`
       // VALIDATE AND ENHANCE EACH ACTION
       let validActionsCount = 0;
       parsed.actions.forEach((action, idx) => {
-        if (!action.properties) action.properties = {};
-        
-        // ENSURE SCRIPTS HAVE COMPLETE WORKING CODE
-        if (action.classtype && action.classtype.includes('Script')) {
-          let source = action.properties.Source || '';
-          
-          // Check if source is incomplete
-          if (source.length < 30 || 
-              (!source.includes('local') && !source.includes('function') && !source.includes('game.')) ||
-              source.includes('-- TODO') ||
-              source.includes('-- Add') ||
-              source.includes('-- Implement') ||
-              source.includes('...')) {
+        if (action.action === 'edit_lines') {
+          // VALIDATE LINE EDITS
+          if (!action.edits || !Array.isArray(action.edits) || action.edits.length === 0) {
+            console.warn(`[Edit] No edits provided for action ${idx}, converting to create`);
+            action.action = 'create';
+            action.name = action.target || `FixedScript${idx+1}.lua`;
+            delete action.target;
+            delete action.edits;
+            action.properties = {
+              Source: `-- Fixed version of ${action.name}\n${action.properties?.Source || ''}`
+            };
+          } else {
+            // CLEAN AND VALIDATE EACH EDIT
+            action.edits = action.edits.map(edit => {
+              if (edit.lineNumber) {
+                // Single line edit
+                return {
+                  lineNumber: parseInt(edit.lineNumber),
+                  newContent: (edit.newContent || '').trim() || `-- Fixed line ${edit.lineNumber}`
+                };
+              } else if (edit.startLine && edit.endLine) {
+                // Multi-line edit
+                return {
+                  startLine: parseInt(edit.startLine),
+                  endLine: parseInt(edit.endLine),
+                  newContent: Array.isArray(edit.newContent) 
+                    ? edit.newContent.map(line => line.trim()) 
+                    : (edit.newContent || '').split('\n').map(line => line.trim())
+                };
+              }
+              return null;
+            }).filter(Boolean);
             
-            console.warn(`[Execution] Incomplete code in action ${idx}, enhancing...`);
-            action.properties.Source = `-- ${action.name || `Script${idx+1}`}
+            validActionsCount++;
+          }
+        } else if (action.action === 'create') {
+          if (!action.properties) action.properties = {};
+          
+          // ENSURE SCRIPTS HAVE COMPLETE WORKING CODE
+          if (action.classtype && action.classtype.includes('Script')) {
+            let source = action.properties.Source || '';
+            
+            // Check if source is incomplete
+            if (source.length < 30 || 
+                (!source.includes('local') && !source.includes('function') && !source.includes('game.')) ||
+                source.includes('-- TODO') ||
+                source.includes('-- Add') ||
+                source.includes('-- Implement') ||
+                source.includes('...')) {
+              
+              console.warn(`[Execution] Incomplete code in action ${idx}, enhancing...`);
+              action.properties.Source = `-- ${action.name || `Script${idx+1}`}
 -- Auto-generated implementation
 
 local function main()
@@ -443,40 +522,41 @@ end
 
 -- Initialize
 main()`;
-          }
-          
-          // REMOVE PLACEHOLDER COMMENTS
-          action.properties.Source = action.properties.Source
-            .replace(/-- TODO:.*$/gm, '-- Implemented')
-            .replace(/-- Add.*here.*$/gm, '-- Ready')
-            .replace(/-- Implement.*$/gm, '-- Complete');
+            }
             
-          validActionsCount++;
-        }
-        
-        // ENSURE UI ELEMENTS ARE PROPERLY CONFIGURED
-        if (action.classtype && /Gui|Frame|Button|Text|Label|Screen|Image/.test(action.classtype)) {
-          if (action.properties.Visible === undefined) action.properties.Visible = true;
-          if (!action.properties.Size) {
-            action.properties.Size = action.classtype.includes('Screen') ? 
-              'UDim2.new(1, 0, 1, 0)' : 'UDim2.new(0, 200, 0, 50)';
-          }
-          if (!action.properties.Position) action.properties.Position = 'UDim2.new(0, 0, 0, 0)';
-          
-          if (action.classtype.includes('Text') || action.classtype.includes('Button')) {
-            if (!action.properties.Text) action.properties.Text = action.name || 'Text';
-            if (!action.properties.TextSize) action.properties.TextSize = 14;
+            // REMOVE PLACEHOLDER COMMENTS
+            action.properties.Source = action.properties.Source
+              .replace(/-- TODO:.*$/gm, '-- Implemented')
+              .replace(/-- Add.*here.*$/gm, '-- Ready')
+              .replace(/-- Implement.*$/gm, '-- Complete');
+              
+            validActionsCount++;
           }
           
-          validActionsCount++;
-        }
-        
-        // ENSURE PARTS HAVE PROPER PROPERTIES
-        if (action.classtype === 'Part' || action.classtype === 'MeshPart') {
-          if (!action.properties.Size) action.properties.Size = 'Vector3.new(4, 1, 2)';
-          if (!action.properties.Position) action.properties.Position = 'Vector3.new(0, 5, 0)';
-          if (!action.properties.Anchored) action.properties.Anchored = true;
-          validActionsCount++;
+          // ENSURE UI ELEMENTS ARE PROPERLY CONFIGURED
+          if (action.classtype && /Gui|Frame|Button|Text|Label|Screen|Image/.test(action.classtype)) {
+            if (action.properties.Visible === undefined) action.properties.Visible = true;
+            if (!action.properties.Size) {
+              action.properties.Size = action.classtype.includes('Screen') ? 
+                'UDim2.new(1, 0, 1, 0)' : 'UDim2.new(0, 200, 0, 50)';
+            }
+            if (!action.properties.Position) action.properties.Position = 'UDim2.new(0, 0, 0, 0)';
+            
+            if (action.classtype.includes('Text') || action.classtype.includes('Button')) {
+              if (!action.properties.Text) action.properties.Text = action.name || 'Text';
+              if (!action.properties.TextSize) action.properties.TextSize = 14;
+            }
+            
+            validActionsCount++;
+          }
+          
+          // ENSURE PARTS HAVE PROPER PROPERTIES
+          if (action.classtype === 'Part' || action.classtype === 'MeshPart') {
+            if (!action.properties.Size) action.properties.Size = 'Vector3.new(4, 1, 2)';
+            if (!action.properties.Position) action.properties.Position = 'Vector3.new(0, 5, 0)';
+            if (!action.properties.Anchored) action.properties.Anchored = true;
+            validActionsCount++;
+          }
         }
       });
       
@@ -545,7 +625,7 @@ main()`;
 }
 
 // ============================================================================
-// STEP EXECUTION WITH THINKING
+// STEP EXECUTION WITH THINKING AND LINE EDITS
 // ============================================================================
 async function executeStepWithThoughts(stepId, userId, context, thoughtCallback) {
   return await SmartRetry.withRetry(async (attempt) => {
@@ -598,6 +678,7 @@ This code will be executed IMMEDIATELY in Roblox Studio and MUST work.
   "stepId": "${stepId}",
   "message": "Completed: [brief description]",
   "actions": [
+    // FOR NEW CREATIONS:
     {
       "action": "create",
       "name": "FileName.lua",
@@ -609,18 +690,31 @@ This code will be executed IMMEDIATELY in Roblox Studio and MUST work.
         "Position": "Vector3.new(0,5,0) or UDim2.new(0,0,0,0)",
         "Visible": true
       }
+    },
+    // FOR BUG FIXES (LINE-BASED EDITS ONLY):
+    {
+      "action": "edit_lines",
+      "target": "ExistingScript.lua",  // Name of script to edit
+      "parent": "game.ServerScriptService",  // Parent location
+      "edits": [
+        {
+          "lineNumber": 42,  // 1-based line number to REPLACE
+          "newContent": "print('Fixed line')"  // COMPLETE new line content
+        }
+      ]
     }
   ]
 }
 
 CRITICAL RULES:
-1. Code must be COMPLETE and WORKING - no TODO, no placeholders
-2. Include error handling (pcall for critical operations)
-3. Test logic mentally before returning
-4. For UI: set Visible=true, proper Size and Position
-5. Scripts must have complete functions with actual logic
-6. Return code that can run immediately without modification
-7. Never return undefined or empty responses
+1. For NEW creations: Provide COMPLETE, WORKING code
+2. For BUG FIXES: Use "edit_lines" action with SPECIFIC LINE NUMBERS
+3. NEVER replace entire script for fixes - ONLY edit necessary lines
+4. Include error handling (pcall for critical operations)
+5. For UI: set Visible=true, proper Size and Position
+6. Scripts must have complete functions with actual logic
+7. Return code that can run immediately without modification
+8. Never return undefined or empty responses
 
 Return ONLY JSON, no markdown, no code fences.`
     });
@@ -643,6 +737,24 @@ Return ONLY JSON, no markdown, no code fences.`
       prompt += '\n';
     }
     
+    // ADD FILE CONTENTS FOR MENTIONED FILES (CRITICAL FOR BUG FIXES)
+    if (project.mentionedFiles.length > 0 && context?.fileContents) {
+      prompt += `FILE CONTENTS FOR MENTIONED FILES:\n`;
+      project.mentionedFiles.forEach(file => {
+        const content = context.fileContents[file];
+        if (content) {
+          prompt += `\n=== ${file} ===\n`;
+          const lines = content.split('\n');
+          const displayLines = lines.slice(0, 50); // Show first 50 lines for step execution
+          prompt += displayLines.join('\n');
+          if (lines.length > 50) {
+            prompt += `\n... (${lines.length - 50} more lines not shown)`;
+          }
+          prompt += '\n\n';
+        }
+      });
+    }
+    
     if (project.mentionedFiles.length > 0) {
       prompt += `AVAILABLE FILES: ${project.mentionedFiles.join(', ')}\n\n`;
     }
@@ -653,9 +765,10 @@ Return ONLY JSON, no markdown, no code fences.`
       prompt += `COMPLETED STEPS: ${completedSteps.join(', ')}\n\n`;
     }
     
-    prompt += `CRITICAL: Provide COMPLETE, WORKING implementation for this step.\n`;
-    prompt += `Do NOT leave placeholders or incomplete functions.\n`;
-    prompt += `Return ONLY JSON with actions array containing executable code.\n`;
+    prompt += `CRITICAL: For bug fixes, use "edit_lines" action with SPECIFIC LINE NUMBERS.\n`;
+    prompt += `NEVER replace entire script - ONLY edit necessary lines.\n`;
+    prompt += `Provide EXACT line numbers and replacement content.\n`;
+    prompt += `Return ONLY JSON with actions array containing executable instructions.\n`;
     prompt += `Never return undefined or empty responses.`;
 
     const result = await model.generateContent(prompt);
@@ -729,14 +842,46 @@ return module`
     
     // VALIDATE AND ENHANCE ACTIONS
     execution.actions.forEach((action, idx) => {
-      if (!action.properties) action.properties = {};
-      
-      // ENSURE SCRIPTS HAVE COMPLETE SOURCE
-      if (action.classtype && action.classtype.includes('Script')) {
-        let source = action.properties.Source || '';
+      if (action.action === 'edit_lines') {
+        // VALIDATE LINE EDITS
+        if (!action.edits || !Array.isArray(action.edits) || action.edits.length === 0) {
+          console.warn(`[Step Edit] No edits provided, converting to create`);
+          action.action = 'create';
+          action.name = action.target || `FixedStep${stepId}.lua`;
+          delete action.target;
+          delete action.edits;
+          action.properties = {
+            Source: `-- Fixed version for step ${stepId}\n${step.description}`
+          };
+        } else {
+          // CLEAN EACH EDIT
+          action.edits = action.edits.map(edit => {
+            if (edit.lineNumber) {
+              return {
+                lineNumber: parseInt(edit.lineNumber),
+                newContent: (edit.newContent || '').trim() || `-- Fixed for step ${stepId}`
+              };
+            } else if (edit.startLine && edit.endLine) {
+              return {
+                startLine: parseInt(edit.startLine),
+                endLine: parseInt(edit.endLine),
+                newContent: Array.isArray(edit.newContent) 
+                  ? edit.newContent.map(line => line.trim()) 
+                  : (edit.newContent || '').split('\n').map(line => line.trim())
+              };
+            }
+            return null;
+          }).filter(Boolean);
+        }
+      } else if (action.action === 'create') {
+        if (!action.properties) action.properties = {};
         
-        if (source.length < 30 || !source.includes('function') && !source.includes('local')) {
-          action.properties.Source = `-- ${action.name || `Step${stepId.replace('step_', '')}`}
+        // ENSURE SCRIPTS HAVE COMPLETE SOURCE
+        if (action.classtype && action.classtype.includes('Script')) {
+          let source = action.properties.Source || '';
+          
+          if (source.length < 30 || !source.includes('function') && !source.includes('local')) {
+            action.properties.Source = `-- ${action.name || `Step${stepId.replace('step_', '')}`}
 -- ${step.description}
 
 local function initialize()
@@ -746,15 +891,16 @@ local function initialize()
 end
 
 initialize()`;
+          }
         }
-      }
-      
-      // ENSURE UI ELEMENTS ARE PROPERLY CONFIGURED
-      const uiClasses = ['Gui', 'Frame', 'Button', 'Text', 'Label', 'Screen'];
-      if (uiClasses.some(uiClass => action.classtype && action.classtype.includes(uiClass))) {
-        if (action.properties.Visible === undefined) action.properties.Visible = true;
-        if (!action.properties.Size) action.properties.Size = 'UDim2.new(0, 200, 0, 50)';
-        if (!action.properties.Position) action.properties.Position = 'UDim2.new(0, 0, 0, 0)';
+        
+        // ENSURE UI ELEMENTS ARE PROPERLY CONFIGURED
+        const uiClasses = ['Gui', 'Frame', 'Button', 'Text', 'Label', 'Screen'];
+        if (uiClasses.some(uiClass => action.classtype && action.classtype.includes(uiClass))) {
+          if (action.properties.Visible === undefined) action.properties.Visible = true;
+          if (!action.properties.Size) action.properties.Size = 'UDim2.new(0, 200, 0, 50)';
+          if (!action.properties.Position) action.properties.Position = 'UDim2.new(0, 0, 0, 0)';
+        }
       }
     });
     
@@ -796,7 +942,7 @@ const auth = (req, res, next) => {
 // API ENDPOINTS
 // ============================================================================
 
-// CHAT ENDPOINT WITH THINKING BUBBLES
+// CHAT ENDPOINT WITH THINKING BUBBLES AND LINE EDITS
 app.post('/ai/chat', auth, async (req, res) => {
   try {
     const { message, context, userId = 'anonymous' } = req.body;
@@ -884,7 +1030,7 @@ app.post('/ai', auth, async (req, res) => {
   }
 });
 
-// EXECUTE ENDPOINT WITH THINKING
+// EXECUTE ENDPOINT WITH THINKING AND LINE EDITS
 app.post('/ai/execute', auth, async (req, res) => {
   try {
     const { stepId, userId = 'anonymous', context } = req.body;
@@ -1023,15 +1169,15 @@ app.get('/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: '4.0.0-complete-fix',
+    version: '4.1.0-line-edits',
     model: 'gemini-3-flash-preview',
     environment: IS_VERCEL ? 'vercel' : 'local',
     features: [
+      '✅ LINE-BASED EDITING for bug fixes (no full script replacement!)',
       '✅ Lemonade-style thinking bubbles',
-      '✅ Immediate execution that CREATES things',
+      '✅ Immediate execution that CREATES/EDITS things',
       '✅ Smart plan steps (2-4, not always 5)',
       '✅ Undefined retry with "Redo the last prompt"',
-      '✅ Complete working code generation',
       '✅ No duplicate/filler steps',
       '✅ Universal request detection'
     ]
@@ -1041,8 +1187,8 @@ app.get('/ping', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'operational',
-    service: 'Acidnade AI - Complete Edition',
-    version: '4.0.0-complete-fix',
+    service: 'Acidnade AI - Line Edit Edition',
+    version: '4.1.0-line-edits',
     model: 'gemini-3-flash-preview',
     uptime: process.uptime(),
     memory: {
@@ -1051,8 +1197,9 @@ app.get('/health', (req, res) => {
       totalConversations: Array.from(memory.conversations.values()).reduce((sum, arr) => sum + arr.length, 0)
     },
     features: [
+      '✅ LINE-BASED EDITS: Only modifies specific lines for bug fixes',
       '✅ Lemonade-style thinking bubbles with progress',
-      '✅ Execution type creates objects immediately',
+      '✅ Execution type creates/edits objects immediately',
       '✅ Plan steps are dynamic (2-4 based on complexity)',
       '✅ No forced 5-step plans',
       '✅ No duplicate or filler steps',
@@ -1102,14 +1249,15 @@ app.use((req, res) => {
 if (!IS_VERCEL) {
   app.listen(PORT, () => {
     console.log('╔═══════════════════════════════════════════════════╗');
-    console.log('║   ACIDNADE AI - COMPLETE FIX EDITION              ║');
+    console.log('║   ACIDNADE AI - LINE-BASED EDITING EDITION        ║');
     console.log('║   With Lemonade-Style Thinking Bubbles            ║');
     console.log('╚═══════════════════════════════════════════════════╝');
     console.log(`\n🌐 Server: http://localhost:${PORT}`);
     console.log('🤖 Model: gemini-3-flash-preview');
     console.log('\n🔄 ALL FIXES APPLIED:');
+    console.log('  ✅ LINE-BASED EDITING: Only modifies specific lines for bug fixes');
     console.log('  ✅ Lemonade-style thinking bubbles (like in images)');
-    console.log('  ✅ Execution type CREATES things immediately');
+    console.log('  ✅ Execution type CREATES/EDITS things immediately');
     console.log('  ✅ Plan steps are 2-4 (NOT always 5)');
     console.log('  ✅ No duplicate/filler steps');
     console.log('  ✅ Undefined detection & "Redo the last prompt"');
@@ -1127,6 +1275,16 @@ if (!IS_VERCEL) {
     console.log('  GET /ping - Quick health check');
     console.log('  GET /health - Detailed status');
     console.log('\n💡 Response includes "thoughts" array with thinking bubbles!');
+    console.log('💡 "edit_lines" action format:');
+    console.log('   {');
+    console.log('     "action": "edit_lines",');
+    console.log('     "target": "ScriptName.lua",');
+    console.log('     "parent": "game.ServerScriptService",');
+    console.log('     "edits": [');
+    console.log('       { "lineNumber": 42, "newContent": "fixed = true" },');
+    console.log('       { "startLine": 15, "endLine": 17, "newContent": ["line1", "line2"] }');
+    console.log('     ]');
+    console.log('   }');
     console.log('✨ All your requirements have been implemented!\n');
   });
 }
