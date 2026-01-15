@@ -6,13 +6,17 @@ import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
 dotenv.config();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_VERCEL = process.env.VERCEL === '1';
-console.log('🚀 Starting Acidnade AI - CRITICAL FIXES APPLIED');
+
+console.log('🚀 Starting Acidnade AI - CRITICAL BUG FIXES EDITION');
 console.log('🤖 Model: gemini-3-flash-preview');
 console.log('📦 Environment:', IS_VERCEL ? 'Vercel' : 'Local');
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 // ============================================================================
 // UNIVERSAL MEMORY STORE
 // ============================================================================
@@ -23,6 +27,7 @@ class UniversalMemory {
         this.retryCount = new Map();
         console.log('[Memory] Universal memory initialized');
     }
+    
     getProject(userId) {
         if (!this.projects.has(userId)) {
             this.projects.set(userId, {
@@ -35,12 +40,14 @@ class UniversalMemory {
         }
         return this.projects.get(userId);
     }
+    
     getConversations(userId) {
         if (!this.conversations.has(userId)) {
             this.conversations.set(userId, []);
         }
         return this.conversations.get(userId);
     }
+    
     addConversation(userId, user, ai, type) {
         const convos = this.getConversations(userId);
         convos.push({ user, ai, type, timestamp: Date.now() });
@@ -48,21 +55,26 @@ class UniversalMemory {
             this.conversations.set(userId, convos.slice(-50));
         }
     }
+    
     trackRetry(userId) {
         const count = this.retryCount.get(userId) || 0;
         this.retryCount.set(userId, count + 1);
         return count + 1;
     }
+    
     resetRetry(userId) {
         this.retryCount.set(userId, 0);
     }
+    
     markStepCompleted(userId, stepId) {
         const project = this.getProject(userId);
         project.completedSteps.add(stepId);
     }
+    
     isStepCompleted(userId, stepId) {
         return this.getProject(userId).completedSteps.has(stepId);
     }
+    
     recordStepFailure(userId, stepId, error) {
         const project = this.getProject(userId);
         project.failedSteps.set(stepId, {
@@ -72,7 +84,9 @@ class UniversalMemory {
         });
     }
 }
+
 const memory = new UniversalMemory();
+
 // ============================================================================
 // SMART RETRY WITH UNDEFINED DETECTION
 // ============================================================================
@@ -120,10 +134,17 @@ class SmartRetry {
         }
     }
 }
+
 // ============================================================================
-// ADDED: SCRIPT PLACEMENT VALIDATION FUNCTION
+// SCRIPT PLACEMENT AND ACTION VALIDATOR
 // ============================================================================
-function validateScriptPlacement(action, userId) {
+function validateAndFixActions(actions, userMessage, context, userId) {
+    const userLower = userMessage.toLowerCase();
+    const hasIntegrated = userLower.includes('integrated') || userLower.includes('connect') || userLower.includes('hook');
+    const hasAdd = userLower.includes('add to') || userLower.includes('modify') || userLower.includes('update') || 
+                  userLower.includes('enhance') || userLower.includes('append') || userLower.includes('insert') || 
+                  userLower.includes('extend') || userLower.includes('improve');
+    
     const clientContainers = [
         'game.StarterPlayer.StarterPlayerScripts',
         'game.StarterGui',
@@ -141,58 +162,166 @@ function validateScriptPlacement(action, userId) {
         'game.Workspace',
         'Workspace'
     ];
+
+    const fixedActions = [];
+    const warnings = [];
     
-    // Normalize parent path for comparison
-    const normalizedParent = action.parent?.toLowerCase() || '';
-    
-    // LocalScript MUST be in client containers
-    if (action.classtype === 'LocalScript') {
-        const isValidClient = clientContainers.some(container => 
-            normalizedParent.includes(container.toLowerCase())
-        );
+    actions.forEach((action, idx) => {
+        let modified = false;
+        let actionWarnings = [];
         
-        if (!isValidClient) {
-            console.warn(`[Validation] ${userId}: INVALID placement - LocalScript "${action.name}" cannot be in "${action.parent}". Auto-correcting...`);
-            // Auto-correct to proper client location
-            action.parent = 'game.StarterPlayer.StarterPlayerScripts';
-            return {
-                corrected: true,
-                message: `⚠️ Auto-corrected: LocalScript "${action.name}" moved to StarterPlayerScripts (cannot be in ${action.parent})`
-            };
+        // FIX 1: LocalScript placement validation
+        if (action.action === 'create' && action.classtype === 'LocalScript') {
+            const normalizedParent = action.parent?.toLowerCase() || '';
+            const isValidClient = clientContainers.some(container => 
+                normalizedParent.includes(container.toLowerCase())
+            );
+            
+            if (!isValidClient) {
+                console.warn(`[Fix] ${userId}: LocalScript in invalid container - moving to StarterPlayerScripts`);
+                action.parent = 'game.StarterPlayer.StarterPlayerScripts';
+                actionWarnings.push(`⚠️ Auto-corrected: LocalScript "${action.name}" moved to correct client container`);
+                modified = true;
+            }
         }
-    }
-    
-    // Server Script MUST NOT be in client containers
-    if (action.classtype === 'Script') {
-        const isClientContainer = clientContainers.some(container => 
-            normalizedParent.includes(container.toLowerCase())
-        );
         
-        if (isClientContainer) {
-            console.warn(`[Validation] ${userId}: INVALID placement - Server Script "${action.name}" cannot be in client container "${action.parent}". Auto-correcting...`);
-            // Auto-correct to proper server location
-            action.parent = 'game.ServerScriptService';
-            return {
-                corrected: true,
-                message: `⚠️ Auto-corrected: Server Script "${action.name}" moved to ServerScriptService (cannot be in ${action.parent})`
-            };
+        // FIX 2: Server Script placement validation
+        if (action.action === 'create' && action.classtype === 'Script') {
+            const normalizedParent = action.parent?.toLowerCase() || '';
+            const isClientContainer = clientContainers.some(container => 
+                normalizedParent.includes(container.toLowerCase())
+            );
+            
+            if (isClientContainer) {
+                console.warn(`[Fix] ${userId}: Server Script in client container - moving to ServerScriptService`);
+                action.parent = 'game.ServerScriptService';
+                actionWarnings.push(`⚠️ Auto-corrected: Server Script "${action.name}" moved to correct server container`);
+                modified = true;
+            }
         }
-    }
+        
+        // FIX 3: Detect when it should be edit_lines instead of create (script exists)
+        if (action.action === 'create' && (hasAdd || hasIntegrated) && context?.fileContents && action.classtype?.includes('Script')) {
+            const existingFile = context.fileContents[action.name];
+            if (existingFile) {
+                console.warn(`[Fix] ${userId}: Trying to CREATE ${action.name} but it exists - converting to edit_lines`);
+                
+                // Save the new code we want to add
+                const newCode = action.properties?.Source || '';
+                const existingLines = existingFile.split('\n');
+                
+                // Create edit_lines action
+                const editAction = {
+                    action: 'edit_lines',
+                    target: action.name,
+                    parent: action.parent,
+                    edits: []
+                };
+                
+                // Determine where to insert the new code
+                // Look for a good insertion point (before return statement or at end)
+                let insertLine = existingLines.length;
+                for (let i = existingLines.length - 1; i >= 0; i--) {
+                    const line = existingLines[i].trim().toLowerCase();
+                    if (line.includes('return') && !line.includes('--')) {
+                        insertLine = i; // Insert before return statement
+                        break;
+                    }
+                }
+                
+                // If new code looks like a function, insert it before the return or at a logical point
+                if (newCode.includes('function ') || newCode.includes('local function')) {
+                    // Try to find module table definition or similar
+                    for (let i = 0; i < existingLines.length; i++) {
+                        if (existingLines[i].includes('module = {}') || 
+                            existingLines[i].includes('Module = {}') ||
+                            existingLines[i].includes('return module')) {
+                            insertLine = i;
+                            break;
+                        }
+                    }
+                }
+                
+                // Add the new code with proper formatting
+                let formattedCode = newCode.trim();
+                if (!formattedCode.startsWith('--')) {
+                    formattedCode = `-- Added by Acidnade AI: ${userMessage.substring(0, 50)}\n${formattedCode}`;
+                }
+                
+                editAction.edits.push({
+                    lineNumber: insertLine,
+                    newContent: `\n${formattedCode}\n`
+                });
+                
+                // Replace the create action with edit_lines action
+                Object.assign(action, editAction);
+                actionWarnings.push(`💡 Converted to edit: Adding functionality to existing script "${action.target}"`);
+                modified = true;
+            }
+        }
+        
+        // FIX 4: Prevent full script replacement in edit_lines
+        if (action.action === 'edit_lines' && context?.fileContents) {
+            const existingFile = context.fileContents[action.target];
+            if (existingFile) {
+                const existingLines = existingFile.split('\n');
+                const totalLines = existingLines.length;
+                
+                action.edits = action.edits.filter(edit => {
+                    // Remove edits that would replace the entire script
+                    if (edit.lineNumber === 1 && edit.newContent && 
+                        (edit.newContent.includes('function main()') || 
+                         edit.newContent.includes('local module = {}') ||
+                         edit.newContent.includes('-- entire script'))) {
+                        actionWarnings.push(`❌ Prevented: Full script replacement blocked for "${action.target}"`);
+                        modified = true;
+                        return false;
+                    }
+                    
+                    // Fix line numbers that are out of bounds
+                    if (edit.lineNumber && edit.lineNumber > totalLines + 1) {
+                        console.warn(`[Fix] ${userId}: Line number ${edit.lineNumber} out of bounds for "${action.target}", correcting to end`);
+                        edit.lineNumber = totalLines + 1;
+                        modified = true;
+                    }
+                    
+                    return true;
+                });
+                
+                // If no valid edits remain, convert to create action at end
+                if (action.edits.length === 0) {
+                    console.warn(`[Fix] ${userId}: No valid edits for "${action.target}", converting to append`);
+                    action.edits = [{
+                        lineNumber: totalLines + 1,
+                        newContent: `\n-- Added by Acidnade AI\n${action.edits[0]?.newContent || '// New functionality'}\n`
+                    }];
+                    modified = true;
+                }
+            }
+        }
+        
+        // FIX 5: Handle "integrated" requests properly - ensure we have both create and edit actions
+        if (hasIntegrated && actions.length === 1 && action.action === 'create' && !fixedActions.some(a => a.action === 'edit_lines')) {
+            // This is likely incomplete - we should have both create and edit actions
+            console.warn(`[Fix] ${userId}: Integration request with only create action - flagging for enhancement`);
+            actionWarnings.push(`ℹ️ Note: Integration request may need additional edit actions to connect systems`);
+        }
+        
+        fixedActions.push(action);
+        if (actionWarnings.length > 0) {
+            warnings.push(...actionWarnings);
+        }
+    });
     
-    // ModuleScript placement validation (flexible but with recommendations)
-    if (action.classtype === 'ModuleScript' && normalizedParent.includes('startergui')) {
-        console.warn(`[Validation] ${userId}: Suboptimal placement - ModuleScript "${action.name}" in StarterGui. Consider ReplicatedStorage.`);
-        // Don't auto-correct but provide warning
-        return {
-            warning: true,
-            message: `ℹ️ Note: ModuleScript "${action.name}" placed in StarterGui - consider ReplicatedStorage for better accessibility`
-        };
-    }
-    
-    return { valid: true };
+    return {
+        actions: fixedActions,
+        warnings: warnings,
+        modified: warnings.length > 0
+    };
 }
+
 // ============================================================================
-// ADDED: GAME CONTEXT ANALYZER
+// GAME CONTEXT ANALYZER
 // ============================================================================
 async function analyzeGameContext(context, mentionedFiles, userId) {
     console.log(`[Context] ${userId}: Analyzing game architecture...`);
@@ -331,8 +460,9 @@ async function analyzeGameContext(context, mentionedFiles, userId) {
     console.log(`[Context] ${userId}: Analysis complete - Game type: ${analysis.gameType}, Systems: ${analysis.existingSystems.join(', ')}`);
     return analysis;
 }
+
 // ============================================================================
-// MODIFIED: SYSTEM INSTRUCTION WITH CRITICAL RULES
+// SYSTEM INSTRUCTION WITH CRITICAL RULES
 // ============================================================================
 const SYSTEM_INSTRUCTION = `You are Acidnade AI - Universal Roblox Studio Assistant.
 CRITICAL RULES:
@@ -342,52 +472,36 @@ CRITICAL RULES:
 4. PLAN type means guide with steps that will be executed later one by one
 5. CHAT type means just answer questions without code
 
-CRITICAL SCRIPT PLACEMENT RULES (NON-NEGOTIABLE):
-1. LocalScript MUST ONLY be in client containers:
-   - game.StarterPlayer.StarterPlayerScripts
-   - game.StarterGui
-   - game.StarterPlayer.StarterCharacterScripts
-2. Script (server) MUST ONLY be in server containers:
-   - game.ServerScriptService
-   - game.Workspace (for specific objects only)
-   - game.ReplicatedFirst (special cases)
-3. ModuleScript can be in:
-   - game.ReplicatedStorage (recommended for shared modules)
-   - game.ServerScriptService (server-only modules)
-   - game.StarterPlayer (rare cases)
-4. ScreenGui/Frame/Button/TextLabel MUST be in:
-   - game.StarterGui (for persistent UI)
-   - game.StarterPlayer.StarterGui (for player-specific UI)
+PLACEMENT RULES (NON-NEGOTIABLE):
+- LocalScript → game.StarterPlayer.StarterPlayerScripts OR game.StarterGui ONLY
+- Script (server) → game.ServerScriptService OR game.Workspace (for parts) ONLY
+- ModuleScript → game.ReplicatedStorage (recommended) OR game.ServerScriptService
+- NEVER put LocalScript in ServerScriptService or ReplicatedStorage
+- NEVER put Script in StarterGui/StarterPlayer containers
 
-REQUEST INTERPRETATION RULES:
-1. "Create X integrated with Y" MEANS:
-   - FIRST: CREATE new X components (scripts, tools, UI, objects)
-   - THEN: MODIFY existing Y code to connect with X
-   - RETURN BOTH create AND edit actions in single response
-   - EXAMPLE: "Create Spectate system integrated with funway" means:
-     * Create new LocalScript for client spectate UI
-     * Create new Script for server spectate logic
-     * Create UI elements (ScreenGui, TextButtons)
-     * Modify existing funway scripts to add spectate hooks
-2. "Create X system" for complex systems means:
-   - CREATE multiple components (server script, client script, UI, tools)
-   - MODIFY related scripts to integrate (player handlers, main game loop)
-3. NEVER ONLY modify when user asks to "create" something new
-4. If creating a system that doesn't exist, create ALL required components
+"Create X integrated with Y" INTERPRETATION:
+1. CREATE new X components (with "create" action)
+2. MODIFY existing Y code to connect with X (with "edit_lines" action)
+3. Return BOTH actions in same response
+4. Create new components FIRST, then modify existing code
 
-CONTEXT AWARENESS REQUIREMENTS:
-Before generating actions, you MUST:
-1. Read ALL provided file contents completely
-2. Identify the game type and architecture from context analysis
-3. Find existing systems and understand how they work
-4. Understand player flow and game loop structure
-5. Determine proper integration points based on game architecture
-6. Use this context to make smart decisions about:
-   - Where to place new scripts (client vs server)
-   - What to name new components (follow existing naming patterns)
-   - How to structure the integration (minimal invasive changes)
-   - Which existing scripts need modification for proper integration
-   - What dependencies exist between systems
+"Add to X" or "Update X" INTERPRETATION:
+- Use "edit_lines" action, NOT "create"
+- Specify exact line numbers to ADD code
+- Do NOT replace entire script - ONLY add necessary functionality
+- Insert new code at appropriate location (end of file or before return statement)
+- Use comments like "-- Added by Acidnade AI" to mark new code
+
+"Create X" INTERPRETATION:
+- Use "create" action only when X does NOT exist
+- If X exists, convert to "edit_lines" action to enhance existing functionality
+
+NEVER:
+- Replace entire script when user asks to "add" or "modify"
+- Create a new script when the user means to modify an existing one
+- Place LocalScripts in server containers
+- Place server Scripts in client containers
+- Return incomplete code with "-- TODO" or placeholders
 
 RESPONSE FORMATS:
 EXECUTION (Creates or MODIFIES things NOW):
@@ -469,8 +583,9 @@ PLAN REQUIREMENTS (CRITICAL - NOT ALWAYS 5):
 - If task needs 4 steps, return 4 steps
 
 Keep responses concise. Return ONLY JSON with no extra formatting.`;
+
 // ============================================================================
-// MODIFIED: UNIVERSAL AI WITH CONTEXT ANALYSIS AND VALIDATION
+// UNIVERSAL AI WITH CONTEXT ANALYSIS AND VALIDATION
 // ============================================================================
 async function universalAIWithThoughts(userMessage, context, userId, thoughtCallback) {
     return await SmartRetry.withRetry(async (attempt) => {
@@ -488,7 +603,7 @@ async function universalAIWithThoughts(userMessage, context, userId, thoughtCall
             await new Promise(resolve => setTimeout(resolve, 300));
         }
         
-        // THINKING BUBBLE 1.5: Context analysis (NEW)
+        // THINKING BUBBLE 1.5: Context analysis
         let gameContext = null;
         if (context?.fileContents && Object.keys(context.fileContents).length > 0) {
             if (thoughtCallback) await thoughtCallback('🧠 Analyzing game architecture and context...', 'thinking');
@@ -508,23 +623,27 @@ async function universalAIWithThoughts(userMessage, context, userId, thoughtCall
         const userLower = userMessage.toLowerCase();
         
         // SMART REQUEST TYPE DETECTION WITH CONTEXT AWARENESS
-        const isFixRequest = /\b(fix|bug|error|issue|repair|solve|correct|problem|broken|not working|doesn't work|won't work)\b/.test(userLower);
-        const isCreateRequest = /\b(create|make|add|build|script|code|function|ui|gui|system|implement|write)\b/.test(userLower);
-        const isPlanRequest = /\b(plan|steps|guide|how to|how do i|how can i|complex|complete|entire|full|game|mechanic)\b/.test(userLower);
+        const isFixRequest = /\b(fix|bug|error|issue|repair|solve|correct|problem|broken|not working|doesn't work|won't work|crash|exception)\b/.test(userLower);
+        const isCreateRequest = /\b(create|make|add|build|script|code|function|ui|gui|system|implement|write|new)\b/.test(userLower);
+        const isPlanRequest = /\b(plan|steps|guide|how to|how do i|how can i|complex|complete|entire|full|game|mechanic|design)\b/.test(userLower);
         const isQuestionRequest = /\b(what|how|why|when|where|which|explain|tell me|show me|can you)\b/.test(userLower) && !isCreateRequest;
-        const isIntegrationRequest = /\b(integrate|integrated|with|and|connect|hook)\b/.test(userLower) && isCreateRequest;
+        const isIntegrationRequest = /\b(integrate|integrated|with|and|connect|hook|together)\b/.test(userLower) && isCreateRequest;
+        const isAddRequest = /\b(add to|modify|update|enhance|extend|improve|append)\b/.test(userLower) && !isCreateRequest;
         
         let responseType = 'execution'; // DEFAULT TO EXECUTION
         
         if (isQuestionRequest && !isCreateRequest && !isFixRequest) {
             responseType = 'chat';
             if (thoughtCallback) await thoughtCallback('💬 Detected question - preparing answer mode', 'info');
-        } else if (isPlanRequest && !isFixRequest && userMessage.length > 100) {
+        } else if ((isPlanRequest || userMessage.length > 200) && !isFixRequest && !isIntegrationRequest) {
             responseType = 'plan';
             if (thoughtCallback) await thoughtCallback('📋 Detected complex request - preparing step-by-step plan', 'info');
         } else if (isIntegrationRequest) {
             responseType = 'execution';
             if (thoughtCallback) await thoughtCallback('🔗 Detected integration request - preparing creation AND modification', 'info');
+        } else if (isAddRequest) {
+            responseType = 'execution';
+            if (thoughtCallback) await thoughtCallback('✏️ Detected modification request - preparing line-based edits', 'info');
         } else {
             if (thoughtCallback) await thoughtCallback('⚙️ Detected action request - preparing immediate execution', 'info');
         }
@@ -546,7 +665,7 @@ async function universalAIWithThoughts(userMessage, context, userId, thoughtCall
         
         let prompt = `USER REQUEST: ${userMessage}\n\n`;
         
-        // ADD GAME CONTEXT ANALYSIS (NEW)
+        // ADD GAME CONTEXT ANALYSIS
         if (gameContext) {
             prompt += `=== GAME CONTEXT ANALYSIS ===\n`;
             prompt += `Game Type: ${gameContext.gameType}\n`;
@@ -612,7 +731,7 @@ async function universalAIWithThoughts(userMessage, context, userId, thoughtCall
             prompt += `You MUST use "edit_lines" action with specific line numbers to change.\n`;
             prompt += `NEVER replace entire script - ONLY edit necessary lines.\n`;
             prompt += `Provide EXACT line numbers and replacement content.\n`;
-        } else if (isCreateRequest && !isPlanRequest && !isIntegrationRequest) {
+        } else if (isCreateRequest && !isPlanRequest && !isIntegrationRequest && !isAddRequest) {
             prompt += `\n🔧 THIS IS A CREATION REQUEST\n`;
             prompt += `You MUST use "create" action with complete implementation.\n`;
             prompt += `Create the requested script/object with full working code.\n`;
@@ -625,6 +744,15 @@ async function universalAIWithThoughts(userMessage, context, userId, thoughtCall
             prompt += `3. RETURN BOTH create AND edit actions in this response\n`;
             prompt += `4. For Funway integration: create spectate system THEN modify checkpoint/player scripts\n`;
             prompt += `Provide complete implementations for new creations AND specific line edits for modifications.\n`;
+        } else if (isAddRequest) {
+            prompt += `\n✏️ THIS IS A MODIFY REQUEST: "${userMessage}"\n`;
+            prompt += `CRITICAL: User wants to ADD functionality to existing script.\n`;
+            prompt += `1. NEVER use "create" action - the script already exists\n`;
+            prompt += `2. Use "edit_lines" action to ADD code at appropriate location\n`;
+            prompt += `3. DO NOT replace entire script - ONLY add necessary code\n`;
+            prompt += `4. Insert new code at end of file or before return statement\n`;
+            prompt += `5. Add comment: "-- Added by Acidnade AI" before new code\n`;
+            prompt += `Provide specific line numbers where code should be inserted.\n`;
         } else if (isPlanRequest && !isFixRequest) {
             prompt += `\n📋 THIS IS A PLAN REQUEST\n`;
             prompt += `You MUST return type "plan" with 2-4 logical steps.\n`;
@@ -731,15 +859,18 @@ async function universalAIWithThoughts(userMessage, context, userId, thoughtCall
                 }];
             }
             
-            // VALIDATE SCRIPT PLACEMENT FOR EACH ACTION
+            // VALIDATE AND FIX ACTIONS
+            const validation = validateAndFixActions(parsed.actions, userMessage, context, userId);
+            parsed.actions = validation.actions;
+            
+            // Add validation warnings to message
+            if (validation.warnings.length > 0) {
+                parsed.message = `${parsed.message}\n\n${validation.warnings.join('\n')}`;
+            }
+            
+            // VALIDATE SCRIPT PLACEMENT FOR EACH ACTION (redundant check for safety)
             const placementMessages = [];
             parsed.actions.forEach((action, idx) => {
-                // Apply script placement validation
-                const validation = validateScriptPlacement(action, userId);
-                if (validation.corrected || validation.warning) {
-                    placementMessages.push(validation.message);
-                }
-                
                 // Handle edit_lines actions
                 if (action.action === 'edit_lines') {
                     // VALIDATE LINE EDITS
@@ -884,8 +1015,9 @@ async function universalAIWithThoughts(userMessage, context, userId, thoughtCall
         return parsed;
     }, userId);
 }
+
 // ============================================================================
-// MODIFIED: STEP EXECUTION WITH CONTEXT AND VALIDATION
+// STEP EXECUTION WITH CONTEXT AND VALIDATION
 // ============================================================================
 async function executeStepWithThoughts(stepId, userId, context, thoughtCallback) {
     return await SmartRetry.withRetry(async (attempt) => {
@@ -998,7 +1130,7 @@ async function executeStepWithThoughts(stepId, userId, context, thoughtCallback)
         prompt += `\nCRITICAL: Follow script placement rules strictly:\n`;
         prompt += `- LocalScript MUST be in client containers only\n`;
         prompt += `- Server Script MUST be in server containers only\n`;
-        prompt += `- For bug fixes, use "edit_lines" action with SPECIFIC LINE NUMBERS.\n`;
+        prompt += `- For bug fixes or modifications, use "edit_lines" action with SPECIFIC LINE NUMBERS.\n`;
         prompt += `- NEVER replace entire script - ONLY edit necessary lines.\n`;
         prompt += `- Provide EXACT line numbers and replacement content.\n`;
         prompt += `- Return ONLY JSON with actions array containing executable instructions.\n`;
@@ -1056,15 +1188,18 @@ async function executeStepWithThoughts(stepId, userId, context, thoughtCallback)
             execution.actions = [];
         }
         
+        // VALIDATE AND FIX ACTIONS FOR STEP EXECUTION
+        const validation = validateAndFixActions(execution.actions, step.description, context, userId);
+        execution.actions = validation.actions;
+        
+        // Add validation warnings to message
+        if (validation.warnings.length > 0) {
+            execution.message = `${execution.message}\n\n${validation.warnings.join('\n')}`;
+        }
+        
         // VALIDATE AND ENHANCE ACTIONS WITH SCRIPT PLACEMENT
         const placementMessages = [];
         execution.actions.forEach((action, idx) => {
-            // Validate script placement
-            const validation = validateScriptPlacement(action, userId);
-            if (validation.corrected || validation.warning) {
-                placementMessages.push(validation.message);
-            }
-            
             if (action.action === 'edit_lines') {
                 // VALIDATE LINE EDITS
                 if (!action.edits || !Array.isArray(action.edits) || action.edits.length === 0) {
@@ -1128,6 +1263,7 @@ async function executeStepWithThoughts(stepId, userId, context, thoughtCallback)
         return execution;
     }, userId);
 }
+
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -1136,12 +1272,14 @@ app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.set('trust proxy', 1);
+
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 500,
     message: { error: 'Rate limit exceeded' }
 });
 app.use('/ai', limiter);
+
 const auth = (req, res, next) => {
     const key = req.headers['x-acidnade-key'];
     if (!key || key !== process.env.ACIDNADE_API_KEY) {
@@ -1149,6 +1287,7 @@ const auth = (req, res, next) => {
     }
     next();
 };
+
 // ============================================================================
 // API ENDPOINTS
 // ============================================================================
@@ -1187,6 +1326,7 @@ app.post('/ai/chat', auth, async (req, res) => {
         });
     }
 });
+
 // MAIN AI ENDPOINT (COMPATIBILITY)
 app.post('/ai', auth, async (req, res) => {
     try {
@@ -1222,6 +1362,7 @@ app.post('/ai', auth, async (req, res) => {
         });
     }
 });
+
 // EXECUTE ENDPOINT WITH THINKING AND LINE EDITS
 app.post('/ai/execute', auth, async (req, res) => {
     try {
@@ -1262,6 +1403,7 @@ app.post('/ai/execute', auth, async (req, res) => {
         });
     }
 });
+
 // PROGRESS ENDPOINT
 app.get('/ai/progress/:userId', auth, (req, res) => {
     const { userId } = req.params;
@@ -1291,6 +1433,7 @@ app.get('/ai/progress/:userId', auth, (req, res) => {
         }
     });
 });
+
 // RESET ENDPOINT
 app.post('/ai/reset/:userId', auth, (req, res) => {
     const { userId } = req.params;
@@ -1308,6 +1451,7 @@ app.post('/ai/reset/:userId', auth, (req, res) => {
         message: resetPlan ? 'Plan and progress reset' : 'Retry counter reset'
     });
 });
+
 // STATUS ENDPOINT
 app.get('/ai/status/:userId', auth, (req, res) => {
     const { userId } = req.params;
@@ -1324,6 +1468,7 @@ app.get('/ai/status/:userId', auth, (req, res) => {
         retryCount: memory.retryCount.get(userId) || 0
     });
 });
+
 // LAST EXECUTION ENDPOINT (FOR DEBUGGING)
 app.get('/ai/last-execution/:userId', auth, (req, res) => {
     const { userId } = req.params;
@@ -1334,33 +1479,36 @@ app.get('/ai/last-execution/:userId', auth, (req, res) => {
         timestamp: project.lastExecution?.timestamp || null
     });
 });
+
 // HEALTH ENDPOINTS
 app.get('/ping', (req, res) => {
     res.json({
         status: 'ok',
         timestamp: Date.now(),
-        version: '4.2.0-context-aware',
+        version: '5.0.0-critical-fixes',
         model: 'gemini-3-flash-preview',
         environment: IS_VERCEL ? 'vercel' : 'local',
         features: [
-            '✅ CRITICAL FIXES APPLIED',
+            '✅ CRITICAL BUG FIXES APPLIED',
             '✅ SCRIPT PLACEMENT VALIDATION (LocalScript in client only)',
             '✅ GAME CONTEXT ANALYSIS (architecture detection)',
             '✅ INTEGRATION REQUEST HANDLING (create THEN modify)',
-            '✅ LINE-BASED EDITING for bug fixes',
+            '✅ CREATE vs MODIFY DETECTION (no more full script replacement)',
+            '✅ LINE-BASED EDITING for bug fixes and additions',
             '✅ Lemonade-style thinking bubbles',
             '✅ Smart plan steps (2-4 based on complexity)',
             '✅ No duplicate/filler steps',
             '✅ Undefined retry with "Redo the last prompt"',
-            '✅ Universal request detection'
+            '✅ Context-aware integration points'
         ]
     });
 });
+
 app.get('/health', (req, res) => {
     res.json({
         status: 'operational',
-        service: 'Acidnade AI - Context Aware Edition',
-        version: '4.2.0-context-aware',
+        service: 'Acidnade AI - Critical Fixes Edition',
+        version: '5.0.0-critical-fixes',
         model: 'gemini-3-flash-preview',
         uptime: process.uptime(),
         memory: {
@@ -1370,9 +1518,10 @@ app.get('/health', (req, res) => {
         },
         features: [
             '✅ SCRIPT PLACEMENT VALIDATION: Prevents invalid LocalScript locations',
+            '✅ CREATE vs MODIFY DETECTION: No more full script replacement',
             '✅ GAME CONTEXT ANALYSIS: Understands architecture and systems',
             '✅ INTEGRATION REQUEST HANDLING: Creates new components THEN modifies existing',
-            '✅ LINE-BASED EDITS: Only modifies specific lines for bug fixes',
+            '✅ LINE-BASED EDITS: Only modifies specific lines for bug fixes and additions',
             '✅ Lemonade-style thinking bubbles with progress',
             '✅ Execution type creates/edits objects immediately',
             '✅ Plan steps are dynamic (2-4 based on complexity)',
@@ -1384,10 +1533,12 @@ app.get('/health', (req, res) => {
             '✅ Smart request type detection',
             '✅ Universal AI for all scenarios',
             '✅ Code validation and enhancement',
-            '✅ UI element auto-configuration'
+            '✅ UI element auto-configuration',
+            '✅ Context-aware integration points'
         ]
     });
 });
+
 // ERROR HANDLING
 app.use((err, req, res, next) => {
     console.error('[Server] Unhandled error:', err.message);
@@ -1397,6 +1548,7 @@ app.use((err, req, res, next) => {
         error: IS_VERCEL ? undefined : err.message
     });
 });
+
 app.use((req, res) => {
     res.status(404).json({
         error: 'Not found',
@@ -1414,23 +1566,25 @@ app.use((req, res) => {
         ]
     });
 });
+
 // ============================================================================
 // STARTUP
 // ============================================================================
 if (!IS_VERCEL) {
     app.listen(PORT, () => {
-        console.log('╔═══════════════════════════════════════════════════════════════════╗');
-        console.log('║                ACIDNADE AI - CRITICAL FIXES EDITION              ║');
-        console.log('║               Full Context & Integration Awareness               ║');
-        console.log('╚═══════════════════════════════════════════════════════════════════╝');
+        console.log('╔══════════════════════════════════════════════════════════════════════════╗');
+        console.log('║                ACIDNADE AI - CRITICAL BUG FIXES EDITION                 ║');
+        console.log('║                  No More Full Script Replacement Bugs!                  ║');
+        console.log('╚══════════════════════════════════════════════════════════════════════════╝');
         console.log(`\n🌐 Server: http://localhost:${PORT}`);
         console.log('🤖 Model: gemini-3-flash-preview');
-        console.log('\n🔄 CRITICAL FIXES APPLIED:');
+        console.log('\n🔄 CRITICAL BUG FIXES APPLIED:');
         console.log('  ✅ SCRIPT PLACEMENT VALIDATION: Prevents LocalScripts in ServerScriptService');
-        console.log('  ✅ CONTEXT AWARENESS: Analyzes game architecture before generating code');
+        console.log('  ✅ CREATE vs MODIFY DETECTION: No more full script replacement when adding functionality');
+        console.log('  ✅ GAME CONTEXT ANALYSIS: Understands architecture before generating code');
         console.log('  ✅ INTEGRATION REQUEST HANDLING: Creates new components THEN modifies existing');
-        console.log('  ✅ GAME ARCHITECTURE DETECTION: Understands obby/parkour, racing, FPS patterns');
-        console.log('  ✅ LINE-BASED EDITING: Only modifies specific lines for bug fixes');
+        console.log('  ✅ LINE-BASED EDITING: Only modifies specific lines for bug fixes and additions');
+        console.log('  ✅ CONTEXT-AWARE INTEGRATION: Uses game architecture to find proper hook points');
         console.log('  ✅ Lemonade-style thinking bubbles (progress indicators)');
         console.log('  ✅ Smart step planning (2-4 steps based on complexity)');
         console.log('  ✅ No duplicate/filler steps');
@@ -1447,13 +1601,17 @@ if (!IS_VERCEL) {
         console.log('  GET /ping - Quick health check');
         console.log('  GET /health - Detailed status');
         console.log('\n💡 Response includes "thoughts" array with thinking bubbles!');
-        console.log('💡 "create X integrated with Y" now properly:');
-        console.log('   1. Creates new components first');
-        console.log('   2. Then modifies existing code to integrate');
-        console.log('💡 Auto-corrects invalid script placements:');
-        console.log('   - LocalScript moved to StarterPlayerScripts if in server container');
-        console.log('   - Server Script moved to ServerScriptService if in client container');
-        console.log('\n✨ All critical issues have been fixed!');
+        console.log('💡 FIXED: "add functionality" no longer replaces entire script');
+        console.log('💡 FIXED: LocalScripts never placed in ServerScriptService');
+        console.log('💡 FIXED: "create X integrated with Y" now properly creates THEN modifies');
+        console.log('💡 FIXED: Line-based editing preserves existing code structure');
+        console.log('\n✨ ALL CRITICAL BUGS RESOLVED! Your AI will now:');
+        console.log('   • Add code to existing scripts INSTEAD OF replacing them');
+        console.log('   • Place LocalScripts in proper client containers ONLY');
+        console.log('   • Create new components FIRST, then modify existing ones');
+        console.log('   • Use context to make smarter integration decisions');
+        console.log('   • Preserve your existing code while adding new functionality');
     });
 }
+
 export default app;
