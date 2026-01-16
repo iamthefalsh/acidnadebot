@@ -336,569 +336,583 @@ console.log(`[Context] ${userId}: Analysis complete - Game type: ${analysis.game
 return analysis;
 }
 // ============================================================================
-// SYSTEM INSTRUCTION
+// IMPROVED SYSTEM INSTRUCTION
 // ============================================================================
 const SYSTEM_INSTRUCTION = `You are Acidnade AI - Universal Roblox Studio Assistant.
-CRITICAL RULES:
-1. Return ONLY valid JSON, NO markdown, NO code fences, NO extra text
-2. NEVER return raw Lua code - ALWAYS wrap in proper JSON structure
-3. Your response will be parsed directly with JSON.parse()
-4. If user mentions a file with @filename, that file EXISTS - use "edit_lines" NOT "create"
-5. EXECUTION type means CREATE/MODIFY things IMMEDIATELY in Roblox Studio
-6. PLAN type means guide with steps that will be executed later one by one
-7. CHAT type means just answer questions without code
-PLACEMENT RULES (NON-NEGOTIABLE):
-- LocalScript → game.StarterPlayer.StarterPlayerScripts OR game.StarterGui ONLY
-- Script (server) → game.ServerScriptService OR game.Workspace (for parts) ONLY
-- ModuleScript → game.ReplicatedStorage (recommended) OR game.ServerScriptService
-- NEVER put LocalScript in ServerScriptService or ReplicatedStorage
-- NEVER put Script in StarterGui/StarterPlayer containers
-REQUEST INTERPRETATION:
-"Create X integrated with Y" means:
-1. CREATE new X components (with "create" action)
-2. MODIFY existing Y code to connect with X (with "edit_lines" action)
-3. Return BOTH actions in same response
-4. Create new components FIRST, then modify existing code
-"Add to X" or "Update X" or "Modify X" means:
-- Use "edit_lines" action, NOT "create"
-- Specify exact line numbers to ADD code
-- Do NOT replace entire script - ONLY add necessary functionality
-- Insert new code at appropriate location (end of file or before return statement)
-"Fix bug in @file" means:
-- Use "edit_lines" action with SPECIFIC LINE NUMBERS
-- ONLY change the buggy lines, don't replace entire script
-NEVER:
-- Return raw Lua code without JSON wrapper
-- Replace entire script when user asks to "add" or "modify"
-- Create a new script when the user means to modify an existing one
-- Place LocalScripts in server containers
-- Place server Scripts in client containers
-- Return incomplete code with "-- TODO" or placeholders
-RESPONSE FORMATS:
-EXECUTION (Creates or MODIFIES things NOW):
+
+🚨 ABSOLUTELY CRITICAL RULES (NON-NEGOTIABLE):
+1. Return ONLY valid, COMPLETE JSON - NO markdown, NO code fences, NO extra text
+2. Your entire response must be parseable with JSON.parse()
+3. Never cut JSON mid-structure - always close all braces and brackets
+4. Example of complete JSON:
 {
-"type": "execution",
-"message": "Result description",
-"actions": [
-{
-"action": "create",
-"name": "FileName.lua",
-"classtype": "Script|LocalScript|ModuleScript",
-"parent": "CORRECT_CONTAINER_PATH",
-"properties": {
-"Source": "-- COMPLETE working Lua code here"
-}
-},
-{
-"action": "edit_lines",
-"target": "ExistingScript.lua",
-"parent": "game.ServerScriptService",
-"edits": [
-{
-"lineNumber": 42,
-"newContent": "print('Fixed line')"
-}
-]
-}
-]
-}
-PLAN:
-{
-"type": "plan",
-"message": "I'll help you build this system in [2-4] steps",
-"steps": [
-{"stepId": "step_1", "description": "Specific action 1"},
-{"stepId": "step_2", "description": "Specific action 2"}
-]
-}
-CHAT:
-{
-"type": "chat",
-"message": "Your answer here"
-}
-CRITICAL: Always return PURE JSON. Never return raw code.`;
-// ============================================================================
-// UNIVERSAL AI WITH CONTEXT ANALYSIS
-// ============================================================================
-async function universalAIWithThoughts(userMessage, context, userId, thoughtCallback) {
-return await SmartRetry.withRetry(async (attempt) => {
-if (thoughtCallback) await thoughtCallback('🔍 Analyzing your request...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 400));
-const project = memory.getProject(userId);
-const mentionedFiles = (userMessage.match(/@([\w.]+)/g) || []).map(f => f.substring(1));
-if (mentionedFiles.length > 0) {
-project.mentionedFiles = mentionedFiles;
-if (thoughtCallback) await thoughtCallback(`📄 Found ${mentionedFiles.length} mentioned file(s): ${mentionedFiles.join(', ')}`, 'info');
-await new Promise(resolve => setTimeout(resolve, 300));
-}
-let gameContext = null;
-if (context?.fileContents && Object.keys(context.fileContents).length > 0) {
-if (thoughtCallback) await thoughtCallback('🧠 Analyzing game architecture and context...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 500));
-gameContext = await analyzeGameContext(context, mentionedFiles, userId);
-if (thoughtCallback) await thoughtCallback(`🏗️ Game architecture: ${gameContext.gameType} (${gameContext.architecture})`, 'info');
-await new Promise(resolve => setTimeout(resolve, 300));
-}
-if (thoughtCallback) await thoughtCallback('🧠 Determining best approach for your request...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 400));
-const userLower = userMessage.toLowerCase();
-const isFixRequest = /\b(fix|bug|error|issue|repair|solve|correct|problem|broken|not working|crash)\b/.test(userLower);
-const isCreateRequest = /\b(create|make|add|build|script|code|function|ui|gui|system|implement|write|new)\b/.test(userLower);
-const isPlanRequest = /\b(plan|steps|guide|how to|how do i|complex|complete|entire|full|game)\b/.test(userLower);
-const isQuestionRequest = /\b(what|how|why|when|where|which|explain|tell me|show me|can you)\b/.test(userLower) && !isCreateRequest;
-const isIntegrationRequest = /\b(integrate|integrated|with|and|connect|hook|together)\b/.test(userLower) && isCreateRequest;
-const isAddRequest = /\b(add to|modify|update|enhance|extend|improve|append)\b/.test(userLower);
-let responseType = 'execution';
-if (isQuestionRequest && !isCreateRequest && !isFixRequest) {
-responseType = 'chat';
-if (thoughtCallback) await thoughtCallback('💬 Detected question - preparing answer mode', 'info');
-} else if ((isPlanRequest || userMessage.length > 200) && !isFixRequest && !isIntegrationRequest) {
-responseType = 'plan';
-if (thoughtCallback) await thoughtCallback('📋 Detected complex request - preparing step-by-step plan', 'info');
-} else if (isIntegrationRequest) {
-responseType = 'execution';
-if (thoughtCallback) await thoughtCallback('🔗 Detected integration request - preparing creation AND modification', 'info');
-} else if (isAddRequest || (mentionedFiles.length > 0 && !isCreateRequest)) {
-responseType = 'execution';
-if (thoughtCallback) await thoughtCallback('✏️ Detected modification request - preparing line-based edits', 'info');
-} else {
-if (thoughtCallback) await thoughtCallback('⚙️ Detected action request - preparing immediate execution', 'info');
-}
-await new Promise(resolve => setTimeout(resolve, 300));
-if (thoughtCallback) await thoughtCallback('📝 Preparing AI instructions with game context...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 400));
-const model = genAI.getGenerativeModel({
-model: 'gemini-3-flash-preview',
-generationConfig: {
-temperature: 0.3,
-maxOutputTokens: 4000,
-responseMimeType: 'application/json',
-},
-systemInstruction: SYSTEM_INSTRUCTION
-});
-let prompt = `USER REQUEST: ${userMessage}
-`;
-// CRITICAL: Detect existing files and force edit_lines
-let existingFilesDetected = [];
-if (mentionedFiles.length > 0 && context?.fileContents) {
-for (const fileName of mentionedFiles) {
-if (context.fileContents[fileName]) {
-existingFilesDetected.push(fileName);
-}
-}
-}
-// FORCE EDIT_LINES FOR EXISTING FILES
-if (existingFilesDetected.length > 0 && (isAddRequest || isIntegrationRequest || isFixRequest || mentionedFiles.length > 0)) {
-prompt += `
-🚨 CRITICAL OVERRIDE INSTRUCTION 🚨
-`;
-prompt += `The following files ALREADY EXIST and are loaded in context:
-`;
-existingFilesDetected.forEach(file => {
-const lineCount = context.fileContents[file].split('\n').length;
-prompt += `  - ${file} (${lineCount} lines - FILE EXISTS IN WORKSPACE)
-`;
-});
-prompt += `
-⚠️ YOU MUST USE "edit_lines" ACTION FOR THESE FILES.
-`;
-prompt += `⚠️ DO NOT use "create" action for files that already exist.
-`;
-prompt += `⚠️ These files are in the workspace and must be MODIFIED, not replaced.
-`;
-prompt += `⚠️ Specify exact line numbers where code should be added or changed.
-`;
-prompt += `⚠️ NEVER return raw Lua code - always wrap in "edit_lines" JSON action.
-`;
-}
-if (gameContext) {
-prompt += `=== GAME CONTEXT ANALYSIS ===
-`;
-prompt += `Game Type: ${gameContext.gameType}
-`;
-prompt += `Architecture: ${gameContext.architecture}
-`;
-prompt += `Existing Systems: ${gameContext.existingSystems.length > 0 ? gameContext.existingSystems.join(', ') : 'None detected'}
-`;
-prompt += `Player Handler: ${gameContext.playerHandling || 'Not found'}
-`;
-prompt += `Integration Points: ${gameContext.integrationPoints.length > 0 ? gameContext.integrationPoints.map(p => `${p.type} (${p.file})`).join(', ') : 'None'}
-`;
-}
-if (context?.selectedObjects && Array.isArray(context.selectedObjects)) {
-prompt += `SELECTED OBJECTS IN ROBLOX STUDIO:
-`;
-context.selectedObjects.forEach(obj => {
-if (obj?.Name && obj?.ClassName) {
-prompt += `- ${obj.Name} (${obj.ClassName})`;
-if (obj.FullPath) {
-prompt += ` at ${obj.FullPath}`;
-}
-prompt += '\n';
-}
-});
-prompt += '\n';
-}
-if (mentionedFiles.length > 0 && context?.fileContents) {
-prompt += `FILE CONTENTS FOR MENTIONED FILES:
-`;
-mentionedFiles.forEach(file => {
-const content = context.fileContents[file];
-if (content) {
-prompt += `
-=== ${file} (EXISTS IN WORKSPACE) ===
-`;
-const lines = content.split('\n');
-const displayLines = lines.slice(0, 150);
-prompt += displayLines.join('\n');
-if (lines.length > 150) {
-prompt += `
-... (${lines.length - 150} more lines not shown)`;
-}
-prompt += '\n';
-}
-});
-}
-const lastConvo = memory.getConversations(userId).slice(-1)[0];
-if (lastConvo) {
-prompt += `
-PREVIOUS REQUEST: ${lastConvo.user.substring(0, 100)}
-`;
-prompt += `PREVIOUS RESPONSE TYPE: ${lastConvo.type}
-`;
-}
-if (isFixRequest) {
-prompt += `
-⚠️ THIS IS A BUG FIX REQUEST
-`;
-prompt += `You MUST use "edit_lines" action with specific line numbers.
-`;
-prompt += `NEVER replace entire script - ONLY edit necessary lines.
-`;
-prompt += `NEVER return raw code - wrap in "edit_lines" JSON action.
-`;
-} else if (isIntegrationRequest) {
-prompt += `
-🔗 THIS IS AN INTEGRATION REQUEST
-`;
-prompt += `You MUST return BOTH:
-`;
-prompt += `1. "create" actions for NEW components
-`;
-prompt += `2. "edit_lines" actions to MODIFY existing code
-`;
-prompt += `Return complete JSON with both action types.
-`;
-} else if (isAddRequest || (mentionedFiles.length > 0 && existingFilesDetected.length > 0)) {
-prompt += `
-✏️ THIS IS A MODIFY REQUEST FOR EXISTING FILE(S)
-`;
-prompt += `You MUST use "edit_lines" action to ADD code.
-`;
-prompt += `DO NOT use "create" - the script already exists.
-`;
-prompt += `DO NOT return raw code - wrap in "edit_lines" JSON action.
-`;
-prompt += `Provide specific line numbers where code should be inserted.
-`;
-} else if (isPlanRequest) {
-prompt += `
-📋 THIS IS A PLAN REQUEST
-`;
-prompt += `Return type "plan" with 2-4 logical steps.
-`;
-prompt += `Each step MUST be unique. NO duplicate steps.
-`;
-}
-prompt += `
-CRITICAL REMINDERS:
-`;
-prompt += `- NEVER return raw Lua code without JSON wrapper
-`;
-prompt += `- For existing files: use "edit_lines" action
-`;
-prompt += `- For new files: use "create" action
-`;
-prompt += `- Response must be PURE JSON, no markdown, no code fences
-`;
-prompt += `- LocalScript ONLY in client containers
-`;
-prompt += `- Server Script ONLY in server containers
-`;
-if (thoughtCallback) await thoughtCallback('🤖 Generating response from AI...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 500));
-const result = await model.generateContent(prompt);
-const responseText = result.response?.text();
-if (!responseText || responseText === 'undefined' || responseText.trim() === '') {
-console.error('[AI] Got undefined/empty response');
-throw new Error('AI returned undefined');
-}
-if (thoughtCallback) await thoughtCallback('✅ Response received from AI', 'success');
-await new Promise(resolve => setTimeout(resolve, 300));
-if (thoughtCallback) await thoughtCallback('🔧 Processing and validating AI response...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 400));
-let parsed;
-try {
-  let cleanText = responseText
-    .replace(/```json\s*/g, '')
-    .replace(/```\s*/g, '')
-    .replace(/^#+\s.*$/gm, '')
-    .trim();
-  
-  // Try to find the longest valid JSON substring
-  let jsonStart = cleanText.indexOf('{');
-  let jsonEnd = cleanText.lastIndexOf('}');
-  
-  if (jsonStart !== -1 && jsonEnd > jsonStart) {
-    cleanText = cleanText.substring(jsonStart, jsonEnd + 1);
-  } else {
-    // If no complete JSON found, check if it starts with { but doesn't end with }
-    if (cleanText.startsWith('{') && !cleanText.endsWith('}')) {
-      // Try to find the last valid position to close the JSON
-      let lastValidPos = cleanText.lastIndexOf('}');
-      if (lastValidPos > 0) {
-        cleanText = cleanText.substring(0, lastValidPos + 1);
-      } else {
-        // If no } found, try to add one at the end
-        cleanText = cleanText + '}';
+  "type": "execution",
+  "message": "Description here",
+  "actions": [
+    {
+      "action": "create",
+      "name": "FileName.lua",
+      "classtype": "Script",
+      "parent": "game.ServerScriptService",
+      "properties": {
+        "Source": "local x = 1"
       }
     }
-  }
-  
-  // Try to parse the cleaned text
-  parsed = JSON.parse(cleanText);
-} catch (parseError) {
-  console.error('[Parse] Failed:', parseError.message);
-  console.error('[Parse] Response was:', responseText.substring(0, 200));
-  // FALLBACK: Check if AI returned raw code for existing file
-  if ((responseText.includes('local ') || responseText.includes('function ')) && existingFilesDetected.length > 0) {
-    console.warn('[Parse] AI returned raw code for existing file - converting to edit_lines');
-    if (thoughtCallback) await thoughtCallback('⚠️ Parsing failed, converting raw code to edit action...', 'warning');
-    const targetFile = existingFilesDetected[0];
-    const existingContent = context.fileContents[targetFile];
-    const existingLines = existingContent.split('\n');
-    parsed = {
-      type: 'execution',
-      message: `Adding functionality to ${targetFile}`,
-      actions: [{
-        action: 'edit_lines',
-        target: targetFile,
-        parent: 'game.ServerScriptService',
-        edits: [{
-          lineNumber: existingLines.length,
-          newContent: `
--- Added by Acidnade AI
-${responseText.substring(0, 1000)}
-`
-        }]
-      }]
-    };
-  } else if (responseText.includes('local ') || responseText.includes('function ') || responseText.includes('game.')) {
-    if (thoughtCallback) await thoughtCallback('⚠️ Parsing failed, extracting code manually...', 'warning');
-    parsed = {
-      type: 'execution',
-      message: 'Created implementation from detected code',
-      actions: [{
-        action: 'create',
-        name: 'Implementation.lua',
-        classtype: 'ModuleScript',
-        parent: 'game.ServerScriptService',
-        properties: {
-          Source: responseText.substring(0, 2000)
+  ]
+}
+
+📌 REQUEST INTERPRETATION GUIDE:
+
+"Create/Implement X":
+- Return "execution" type
+- Use "create" actions for NEW files
+- Scripts go in CORRECT containers:
+  • LocalScript → game.StarterPlayer.StarterPlayerScripts
+  • Script → game.ServerScriptService
+  • ModuleScript → game.ReplicatedStorage
+
+"Add/Modify/Update @ExistingFile":
+- Return "execution" type
+- Use "edit_lines" action ONLY
+- Specify exact line numbers
+- Add code at appropriate position (end or before return)
+- NEVER replace entire file
+
+"Fix bug in @file":
+- Return "execution" type
+- Use "edit_lines" with specific line fixes
+- Only modify buggy lines
+
+"How to build X" or multi-step requests:
+- Return "plan" type
+- 2-4 clear, unique steps
+- Each step should be executable independently
+
+Questions without code changes:
+- Return "chat" type
+- Provide helpful explanations
+
+🎯 RESPONSE FORMATS:
+
+EXECUTION (immediate code changes):
+{
+  "type": "execution",
+  "message": "Brief description of what you're doing",
+  "actions": [
+    {
+      "action": "create",
+      "name": "ScriptName.lua",
+      "classtype": "Script|LocalScript|ModuleScript",
+      "parent": "CONTAINER_PATH",
+      "properties": {
+        "Source": "-- COMPLETE, WORKING Lua code here"
+      }
+    },
+    {
+      "action": "edit_lines",
+      "target": "ExistingScript.lua",
+      "parent": "game.ServerScriptService",
+      "edits": [
+        {
+          "lineNumber": 42,
+          "newContent": "print('Fixed line')"
         }
-      }]
-    };
-  } else {
-    parsed = {
-      type: 'chat',
-      message: responseText.substring(0, 500) || 'Processing complete'
-    };
-  }
+      ]
+    }
+  ]
 }
-if (!parsed.type) parsed.type = 'chat';
-if (!parsed.message) parsed.message = 'Processing complete';
-// POST-PARSE VALIDATION: Convert create to edit_lines if file exists
-if (parsed.type === 'execution') {
-if (thoughtCallback) await thoughtCallback('⚙️ Validating execution actions and script placement...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 400));
-if (!parsed.actions || !Array.isArray(parsed.actions) || parsed.actions.length === 0) {
-console.warn('[Execution] No actions provided, creating default');
-parsed.actions = [{
-action: 'create',
-name: 'Implementation.lua',
-classtype: 'ModuleScript',
-parent: 'game.ServerScriptService',
-properties: {
-Source: `-- Implementation for: ${userMessage.substring(0, 50)}
-local module = {}
-function module.init()
-\tprint("Implementation created successfully")
-end
-return module`
+
+PLAN (step-by-step guide):
+{
+  "type": "plan",
+  "message": "I'll help you build this system in [number] steps",
+  "steps": [
+    {"stepId": "step_1", "description": "First action: Create X"},
+    {"stepId": "step_2", "description": "Second action: Modify Y"}
+  ]
 }
-}];
+
+CHAT (questions/answers):
+{
+  "type": "chat",
+  "message": "Your explanation here"
 }
-// CRITICAL FIX: Check if create action should be edit_lines
-parsed.actions.forEach((action, idx) => {
-if (action.action === 'create' && action.properties?.Source &&
-existingFilesDetected.includes(action.name)) {
-console.warn(`[PostParse Fix] Converting create to edit_lines for existing file: ${action.name}`);
-const existingContent = context.fileContents[action.name];
-if (existingContent) {
-const existingLines = existingContent.split('\n');
-const newCode = action.properties.Source;
-// Find insertion point
-let insertLine = existingLines.length;
-for (let i = existingLines.length - 1; i >= 0; i--) {
-if (existingLines[i].trim().toLowerCase().includes('return') &&
-!existingLines[i].trim().startsWith('--')) {
-insertLine = i;
-break;
+
+⚠️ CRITICAL VALIDATION:
+- If file is mentioned with @, it EXISTS - use edit_lines
+- LocalScripts NEVER go in server containers
+- Server Scripts NEVER go in client containers
+- Always return COMPLETE JSON
+- No raw Lua code outside JSON structure`;
+
+// ============================================================================
+// JSON COMPLETION HELPER
+// ============================================================================
+function fixIncompleteJSON(jsonString) {
+    if (!jsonString || typeof jsonString !== 'string') {
+        return '{"type":"chat","message":"Empty response received"}';
+    }
+    
+    let fixed = jsonString.trim();
+    
+    // Remove markdown code fences if present
+    fixed = fixed.replace(/```json\s*/g, '')
+                .replace(/```\s*/g, '')
+                .replace(/^#+\s.*$/gm, '')
+                .trim();
+    
+    // Common incomplete patterns and fixes
+    const fixes = [
+        // Pattern: ends with "action (missing quote and closing structure)
+        { 
+            regex: /"action"?\s*$/,
+            fix: () => {
+                console.log('[JSON Fix] Completing "action" property');
+                const lastQuote = fixed.lastIndexOf('"');
+                if (lastQuote === -1) return '"}]}';
+                return fixed.endsWith('"action') ? '"}]}' : '}]}';
+            }
+        },
+        // Pattern: ends with "actions": [ (array not closed)
+        {
+            regex: /"actions"\s*:\s*\[\s*$/,
+            fix: () => {
+                console.log('[JSON Fix] Closing actions array');
+                return '[]}]}';
+            }
+        },
+        // Pattern: ends with "properties": { (object not closed)
+        {
+            regex: /"properties"\s*:\s*\{\s*$/,
+            fix: () => {
+                console.log('[JSON Fix] Closing properties object');
+                return '{}}}]}';
+            }
+        }
+    ];
+    
+    // Apply pattern fixes
+    for (const { regex, fix } of fixes) {
+        if (regex.test(fixed)) {
+            fixed += fix();
+            break;
+        }
+    }
+    
+    // Count and balance braces/brackets
+    const countBraces = (str) => (str.match(/\{/g) || []).length - (str.match(/\}/g) || []).length;
+    const countBrackets = (str) => (str.match(/\[/g) || []).length - (str.match(/\]/g) || []).length;
+    
+    const missingBraces = countBraces(fixed);
+    const missingBrackets = countBrackets(fixed);
+    
+    if (missingBraces > 0) {
+        console.log(`[JSON Fix] Adding ${missingBraces} closing braces`);
+        fixed += '}'.repeat(missingBraces);
+    }
+    
+    if (missingBrackets > 0) {
+        console.log(`[JSON Fix] Adding ${missingBrackets} closing brackets`);
+        fixed += ']'.repeat(missingBrackets);
+    }
+    
+    // Ensure proper closing of quotes
+    const quotePairs = (fixed.match(/"/g) || []).length;
+    if (quotePairs % 2 !== 0) {
+        console.log('[JSON Fix] Unclosed quotes detected');
+        fixed += '"';
+    }
+    
+    // Final validation
+    try {
+        JSON.parse(fixed);
+        console.log('[JSON Fix] Successfully fixed JSON');
+        return fixed;
+    } catch (error) {
+        console.error('[JSON Fix] Still invalid after fixes:', error.message);
+        
+        // Try to extract valid JSON from response
+        const jsonStart = fixed.indexOf('{');
+        const jsonEnd = fixed.lastIndexOf('}');
+        
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+            try {
+                const extracted = fixed.substring(jsonStart, jsonEnd + 1);
+                JSON.parse(extracted);
+                console.log('[JSON Fix] Successfully extracted JSON');
+                return extracted;
+            } catch (e) {
+                // If extraction fails, create a safe fallback
+                return '{"type":"chat","message":"Unable to parse response. Please try rephrasing your request."}';
+            }
+        }
+        
+        // Ultimate fallback
+        return '{"type":"chat","message":"Response formatting error. Please try again."}';
+    }
 }
-}
-// Convert to edit_lines
-action.action = 'edit_lines';
-action.target = action.name;
-delete action.name;
-delete action.classtype;
-action.edits = [{
-lineNumber: insertLine,
-newContent: `
--- Added by Acidnade AI: ${userMessage.substring(0, 40)}
-${newCode}
-`
-}];
-delete action.properties;
-console.log(`[PostParse Fix] Converted to edit_lines with insertion at line ${insertLine}`);
-}
-}
-});
-// Validate and fix actions
-const validation = validateAndFixActions(parsed.actions, userMessage, context, userId);
-parsed.actions = validation.actions;
-if (validation.warnings.length > 0) {
-parsed.message = `${parsed.message}\n${validation.warnings.join('\n')}`;
-}
-// Enhance actions
-parsed.actions.forEach((action, idx) => {
-if (action.action === 'edit_lines') {
-if (!action.edits || !Array.isArray(action.edits) || action.edits.length === 0) {
-console.warn(`[Edit] No edits provided for action ${idx}, converting to create`);
-action.action = 'create';
-action.name = action.target || `FixedScript${idx+1}.lua`;
-delete action.target;
-delete action.edits;
-action.classtype = 'ModuleScript';
-action.properties = {
-Source: `-- Fixed version of ${action.name}
-`
-};
-} else {
-action.edits = action.edits.map(edit => {
-if (edit.lineNumber) {
-return {
-lineNumber: parseInt(edit.lineNumber),
-newContent: (edit.newContent || '').toString().trim() || `-- Fixed line ${edit.lineNumber}`
-};
-} else if (edit.startLine && edit.endLine) {
-return {
-startLine: parseInt(edit.startLine),
-endLine: parseInt(edit.endLine),
-newContent: Array.isArray(edit.newContent)
-? edit.newContent.map(line => line.trim())
-: (edit.newContent || '').toString().split('\n').map(line => line.trim())
-};
-}
-return null;
-}).filter(Boolean);
-}
-} else if (action.action === 'create') {
-if (!action.properties) action.properties = {};
-if (action.classtype && action.classtype.includes('Script')) {
-let source = action.properties.Source || '';
-if (source.length < 30 ||
-(!source.includes('local') && !source.includes('function') && !source.includes('game.')) ||
-source.includes('-- TODO') ||
-source.includes('-- Add') ||
-source.includes('-- Implement')) {
-console.warn(`[Execution] Incomplete code in action ${idx}, enhancing...`);
-const scriptType = action.classtype === 'LocalScript' ? 'client' : 'server';
-action.properties.Source = `-- ${action.name || `Script${idx+1}`} (${scriptType})
--- Implementation for: ${userMessage.substring(0, 60)}
-local function main()
-\tprint("${action.name || 'Script'} loaded successfully")
-\t
-\t-- Implementation logic
-\t${source.replace(/^-- /gm, '\t-- ')}
-\t
-\twarn("Script ready")
-end
-main()`;
-}
-action.properties.Source = action.properties.Source
-.replace(/-- TODO:.*$/gm, '-- Implemented')
-.replace(/-- Add.*here.*$/gm, '-- Ready')
-.replace(/-- Implement.*$/gm, '-- Complete');
-}
-if (action.classtype && /Gui|Frame|Button|Text|Label|Screen|Image/.test(action.classtype)) {
-if (action.properties.Visible === undefined) action.properties.Visible = true;
-if (!action.properties.Size) {
-action.properties.Size = action.classtype.includes('Screen') ?
-'UDim2.new(1, 0, 1, 0)' : 'UDim2.new(0, 200, 0, 50)';
-}
-if (!action.properties.Position) action.properties.Position = 'UDim2.new(0, 0, 0, 0)';
-}
-if (action.classtype === 'Part' || action.classtype === 'MeshPart') {
-if (!action.properties.Size) action.properties.Size = 'Vector3.new(4, 1, 2)';
-if (!action.properties.Position) action.properties.Position = 'Vector3.new(0, 5, 0)';
-if (!action.properties.Anchored) action.properties.Anchored = true;
-}
-}
-});
-if (thoughtCallback) await thoughtCallback(`✅ Validated ${parsed.actions.length} action(s) with proper script placement`, 'success');
-await new Promise(resolve => setTimeout(resolve, 300));
-project.lastExecution = { ...parsed, timestamp: Date.now() };
-} else if (parsed.type === 'plan') {
-if (thoughtCallback) await thoughtCallback('📋 Optimizing plan steps...', 'thinking');
-await new Promise(resolve => setTimeout(resolve, 400));
-const uniqueSteps = [];
-const seenDescriptions = new Set();
-if (parsed.steps && Array.isArray(parsed.steps)) {
-for (const step of parsed.steps) {
-if (!step || !step.description) continue;
-const normalized = step.description.toLowerCase().trim();
-if (seenDescriptions.has(normalized)) {
-console.warn(`[Plan] Skipping duplicate step: ${step.description}`);
-continue;
-}
-seenDescriptions.add(normalized);
-uniqueSteps.push({
-stepId: step.stepId || `step_${uniqueSteps.length + 1}`,
-description: step.description,
-status: 'pending'
-});
-}
-}
-let maxSteps;
-if (userMessage.length > 300 || userLower.includes('complete game') || userLower.includes('entire system')) {
-maxSteps = 4;
-} else if (userMessage.length > 150) {
-maxSteps = 3;
-} else {
-maxSteps = 2;
-}
-parsed.steps = uniqueSteps.slice(0, maxSteps);
-if (thoughtCallback) await thoughtCallback(`✅ Plan ready with ${parsed.steps.length} unique steps`, 'success');
-await new Promise(resolve => setTimeout(resolve, 300));
-project.currentPlan = parsed;
-} else if (parsed.type === 'chat') {
-if (thoughtCallback) await thoughtCallback('💬 Answer prepared', 'success');
-await new Promise(resolve => setTimeout(resolve, 200));
-}
-memory.addConversation(userId, userMessage, parsed.message, parsed.type);
-if (thoughtCallback) await thoughtCallback('✨ Response complete and ready', 'success');
-return parsed;
-}, userId);
+
+// ============================================================================
+// UNIVERSAL AI WITH THOUGHTS - COMPLETE UPDATED VERSION
+// ============================================================================
+async function universalAIWithThoughts(userMessage, context, userId, thoughtCallback) {
+    return await SmartRetry.withRetry(async (attempt) => {
+        // Start thinking process
+        if (thoughtCallback) await thoughtCallback('🔍 Analyzing your request...', 'thinking');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        // Get project context
+        const project = memory.getProject(userId);
+        const mentionedFiles = (userMessage.match(/@([\w.]+)/g) || []).map(f => f.substring(1));
+        
+        if (mentionedFiles.length > 0) {
+            project.mentionedFiles = mentionedFiles;
+            if (thoughtCallback) await thoughtCallback(`📄 Found mentioned file(s): ${mentionedFiles.join(', ')}`, 'info');
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        
+        // Analyze game context if available
+        let gameContext = null;
+        if (context?.fileContents && Object.keys(context.fileContents).length > 0) {
+            if (thoughtCallback) await thoughtCallback('🧠 Understanding game structure...', 'thinking');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            gameContext = await analyzeGameContext(context, mentionedFiles, userId);
+            
+            if (thoughtCallback) await thoughtCallback(`🏗️ Detected: ${gameContext.gameType} architecture`, 'info');
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        
+        // Determine response type based on request
+        if (thoughtCallback) await thoughtCallback('🧭 Determining best approach...', 'thinking');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        const userLower = userMessage.toLowerCase();
+        const hasAtSymbol = userMessage.includes('@');
+        const existingFilesDetected = [];
+        
+        // Check which mentioned files actually exist
+        if (mentionedFiles.length > 0 && context?.fileContents) {
+            for (const fileName of mentionedFiles) {
+                if (context.fileContents[fileName]) {
+                    existingFilesDetected.push(fileName);
+                }
+            }
+        }
+        
+        // Determine response type
+        let responseType = 'execution';
+        
+        if (/^(what|how|why|when|where|explain|tell me|show me|can you)\b/i.test(userLower) && 
+            !/\b(create|make|add|build|script|code|function|implement|write|new)\b/.test(userLower)) {
+            responseType = 'chat';
+            if (thoughtCallback) await thoughtCallback('💬 Detected question - preparing answer', 'info');
+        } else if (/\b(plan|steps|guide|how to|how do i|complex|complete|entire|full|game)\b/.test(userLower) && 
+                  userMessage.length > 150 && !hasAtSymbol) {
+            responseType = 'plan';
+            if (thoughtCallback) await thoughtCallback('📋 Detected complex request - creating step-by-step plan', 'info');
+        } else if (existingFilesDetected.length > 0 || 
+                  /\b(add to|modify|update|enhance|extend|improve|append|insert|edit|change)\b/.test(userLower)) {
+            responseType = 'execution';
+            if (thoughtCallback) await thoughtCallback('✏️ Detected modification request - preparing targeted edits', 'info');
+        } else if (/\b(create|make|build|script|code|function|ui|gui|system|implement|write|new)\b/.test(userLower)) {
+            responseType = 'execution';
+            if (thoughtCallback) await thoughtCallback('⚡ Detected creation request - preparing implementation', 'info');
+        } else {
+            if (thoughtCallback) await thoughtCallback('⚙️ Processing your request...', 'thinking');
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Prepare AI prompt
+        if (thoughtCallback) await thoughtCallback('📝 Preparing AI instructions...', 'thinking');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-3-flash-preview',
+            generationConfig: {
+                temperature: 0.3,
+                maxOutputTokens: 4000,
+                responseMimeType: 'application/json',
+            },
+            systemInstruction: SYSTEM_INSTRUCTION
+        });
+        
+        let prompt = `USER REQUEST: ${userMessage}\n\n`;
+        
+        // Add critical warnings for existing files
+        if (existingFilesDetected.length > 0) {
+            prompt += `🚨 IMPORTANT: The following files EXIST in the workspace:\n`;
+            existingFilesDetected.forEach(file => {
+                const content = context.fileContents[file];
+                const lines = content.split('\n').length;
+                prompt += `• ${file} (${lines} lines)\n`;
+            });
+            prompt += `\nYou MUST use "edit_lines" action for these files, NOT "create".\n`;
+            prompt += `Specify exact line numbers where code should be added/changed.\n\n`;
+        }
+        
+        // Add game context if available
+        if (gameContext) {
+            prompt += `=== GAME CONTEXT ===\n`;
+            prompt += `Type: ${gameContext.gameType}\n`;
+            prompt += `Architecture: ${gameContext.architecture}\n`;
+            if (gameContext.existingSystems.length > 0) {
+                prompt += `Existing Systems: ${gameContext.existingSystems.join(', ')}\n`;
+            }
+            if (gameContext.integrationPoints.length > 0) {
+                prompt += `Integration Points: ${gameContext.integrationPoints.map(p => p.type).join(', ')}\n`;
+            }
+            prompt += '\n';
+        }
+        
+        // Add selected objects info
+        if (context?.selectedObjects && Array.isArray(context.selectedObjects) && context.selectedObjects.length > 0) {
+            prompt += `SELECTED IN STUDIO:\n`;
+            context.selectedObjects.forEach(obj => {
+                if (obj?.Name && obj?.ClassName) {
+                    prompt += `• ${obj.Name} (${obj.ClassName})\n`;
+                }
+            });
+            prompt += '\n';
+        }
+        
+        // Add file contents for mentioned files
+        if (mentionedFiles.length > 0 && context?.fileContents) {
+            prompt += `FILE CONTENTS (for context):\n`;
+            mentionedFiles.forEach(file => {
+                const content = context.fileContents[file];
+                if (content) {
+                    prompt += `\n--- ${file} ---\n`;
+                    const lines = content.split('\n');
+                    const preview = lines.slice(0, 50).join('\n');
+                    prompt += preview;
+                    if (lines.length > 50) {
+                        prompt += `\n... (${lines.length - 50} more lines)\n`;
+                    }
+                }
+            });
+            prompt += '\n';
+        }
+        
+        // Add response type guidance
+        if (responseType === 'execution') {
+            if (existingFilesDetected.length > 0) {
+                prompt += `\n🔧 RESPONSE REQUIREMENTS:\n`;
+                prompt += `• Type: "execution"\n`;
+                prompt += `• Use "edit_lines" for existing files\n`;
+                prompt += `• Specify line numbers precisely\n`;
+                prompt += `• Add code at logical positions (end of functions, before returns)\n`;
+            } else {
+                prompt += `\n⚡ RESPONSE REQUIREMENTS:\n`;
+                prompt += `• Type: "execution"\n`;
+                prompt += `• Use "create" actions for new files\n`;
+                prompt += `• Follow script placement rules strictly\n`;
+                prompt += `• Provide complete, working Lua code\n`;
+            }
+        } else if (responseType === 'plan') {
+            prompt += `\n📋 RESPONSE REQUIREMENTS:\n`;
+            prompt += `• Type: "plan"\n`;
+            prompt += `• 2-4 clear, unique steps\n`;
+            prompt += `• Each step should be executable independently\n`;
+            prompt += `• Steps should build logically\n`;
+        }
+        
+        prompt += `\n🎯 FINAL REMINDERS:\n`;
+        prompt += `• Return ONLY valid JSON\n`;
+        prompt += `• Complete all JSON structures (close all braces/brackets)\n`;
+        prompt += `• No markdown, no code fences\n`;
+        prompt += `• Scripts go in correct containers\n`;
+        
+        // Generate response
+        if (thoughtCallback) await thoughtCallback('🤖 Generating response...', 'thinking');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const result = await model.generateContent(prompt);
+        let responseText = result.response?.text();
+        
+        if (!responseText || responseText === 'undefined' || responseText.trim() === '') {
+            console.error('[AI] Empty response received');
+            throw new Error('AI returned empty response');
+        }
+        
+        // Log raw response for debugging
+        console.log('[AI] Raw response length:', responseText.length);
+        console.log('[AI] Raw response start:', responseText.substring(0, 200));
+        
+        if (thoughtCallback) await thoughtCallback('✅ Response received', 'success');
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Parse and validate response
+        if (thoughtCallback) await thoughtCallback('🔧 Validating response format...', 'thinking');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        let parsed;
+        try {
+            // First try direct parse
+            parsed = JSON.parse(responseText);
+            console.log('[Parse] Direct parse succeeded');
+        } catch (parseError) {
+            console.log('[Parse] Direct parse failed, attempting fixes...');
+            
+            try {
+                // Apply JSON fixes
+                const fixedResponse = fixIncompleteJSON(responseText);
+                parsed = JSON.parse(fixedResponse);
+                console.log('[Parse] Fixed parse succeeded');
+            } catch (fixError) {
+                console.error('[Parse] All parse attempts failed:', fixError.message);
+                console.error('[Parse] Response was:', responseText.substring(0, 500));
+                
+                // Create safe fallback response
+                parsed = {
+                    type: 'chat',
+                    message: "I encountered an issue processing your request. Please try rephrasing or asking for something specific."
+                };
+                
+                if (thoughtCallback) await thoughtCallback('⚠️ Response formatting issue detected', 'warning');
+            }
+        }
+        
+        // Ensure response has required fields
+        if (!parsed.type) parsed.type = 'chat';
+        if (!parsed.message) parsed.message = 'Processing complete';
+        
+        // Post-parse processing based on type
+        if (parsed.type === 'execution') {
+            if (thoughtCallback) await thoughtCallback('⚙️ Validating execution actions...', 'thinking');
+            await new Promise(resolve => setTimeout(resolve, 400));
+            
+            // Ensure actions array exists
+            if (!parsed.actions || !Array.isArray(parsed.actions) || parsed.actions.length === 0) {
+                console.warn('[Execution] No actions provided');
+                parsed.actions = [];
+                
+                // If we have mentioned files but no actions, create appropriate edit actions
+                if (existingFilesDetected.length > 0) {
+                    parsed.actions = existingFilesDetected.map(file => ({
+                        action: 'edit_lines',
+                        target: file,
+                        parent: 'game.ServerScriptService',
+                        edits: [{
+                            lineNumber: 1,
+                            newContent: `-- Modified by Acidnade AI\n-- Implementation for: ${userMessage.substring(0, 50)}`
+                        }]
+                    }));
+                }
+            }
+            
+            // Convert create to edit_lines for existing files
+            parsed.actions = parsed.actions.map((action, idx) => {
+                if (action.action === 'create' && action.name && existingFilesDetected.includes(action.name)) {
+                    console.warn(`[Auto-Fix] Converting create to edit_lines for existing file: ${action.name}`);
+                    
+                    const existingContent = context.fileContents[action.name];
+                    if (existingContent) {
+                        const lines = existingContent.split('\n');
+                        
+                        return {
+                            action: 'edit_lines',
+                            target: action.name,
+                            parent: action.parent || 'game.ServerScriptService',
+                            edits: [{
+                                lineNumber: lines.length,
+                                newContent: `\n-- Added by Acidnade AI\n${action.properties?.Source || '-- New functionality'}\n`
+                            }]
+                        };
+                    }
+                }
+                return action;
+            });
+            
+            // Validate and fix all actions
+            const validation = validateAndFixActions(parsed.actions, userMessage, context, userId);
+            parsed.actions = validation.actions;
+            
+            if (validation.warnings.length > 0) {
+                parsed.message += `\n\n${validation.warnings.join('\n')}`;
+            }
+            
+            // Enhance code quality
+            parsed.actions.forEach(action => {
+                if (action.action === 'create' && action.properties?.Source) {
+                    let source = action.properties.Source;
+                    
+                    // Remove placeholders
+                    source = source.replace(/-- TODO[^\n]*\n?/g, '')
+                                  .replace(/-- Add[^\n]*here[^\n]*\n?/g, '')
+                                  .replace(/-- Implement[^\n]*\n?/g, '');
+                    
+                    // Add proper header if missing
+                    if (!source.includes('--')) {
+                        const header = `-- ${action.name || 'Script'}\n-- Generated by Acidnade AI\n\n`;
+                        source = header + source;
+                    }
+                    
+                    action.properties.Source = source;
+                }
+            });
+            
+            if (thoughtCallback) await thoughtCallback(`✅ ${parsed.actions.length} action(s) validated`, 'success');
+            
+            // Store for reference
+            project.lastExecution = { ...parsed, timestamp: Date.now() };
+            
+        } else if (parsed.type === 'plan') {
+            if (thoughtCallback) await thoughtCallback('📋 Optimizing plan structure...', 'thinking');
+            await new Promise(resolve => setTimeout(resolve, 400));
+            
+            // Ensure steps exist and are unique
+            if (parsed.steps && Array.isArray(parsed.steps)) {
+                const uniqueSteps = [];
+                const seen = new Set();
+                
+                for (const step of parsed.steps) {
+                    if (!step || !step.description) continue;
+                    
+                    const normalized = step.description.toLowerCase().trim()
+                        .replace(/^[0-9]+\.\s*/, '')
+                        .replace(/^\s*\W+\s*/, '');
+                    
+                    if (!seen.has(normalized) && normalized.length > 10) {
+                        seen.add(normalized);
+                        uniqueSteps.push({
+                            stepId: step.stepId || `step_${uniqueSteps.length + 1}`,
+                            description: step.description,
+                            status: 'pending'
+                        });
+                    }
+                }
+                
+                // Limit to appropriate number of steps
+                const stepCount = Math.min(Math.max(2, uniqueSteps.length), 4);
+                parsed.steps = uniqueSteps.slice(0, stepCount);
+            } else {
+                parsed.steps = [
+                    { stepId: 'step_1', description: 'Create initial implementation' },
+                    { stepId: 'step_2', description: 'Add additional functionality' }
+                ];
+            }
+            
+            if (thoughtCallback) await thoughtCallback(`✅ Plan ready with ${parsed.steps.length} steps`, 'success');
+            
+            // Store plan
+            project.currentPlan = parsed;
+            
+        } else if (parsed.type === 'chat') {
+            if (thoughtCallback) await thoughtCallback('💬 Answer prepared', 'success');
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // Add to conversation history
+        memory.addConversation(userId, userMessage, parsed.message, parsed.type);
+        
+        if (thoughtCallback) await thoughtCallback('✨ Response complete', 'success');
+        
+        return parsed;
+        
+    }, userId);
 }
 // ============================================================================
 // STEP EXECUTION
