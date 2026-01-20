@@ -5,7 +5,7 @@ const GEMINI_API_KEY = 'AIzaSyApWjzIzhjzpg0jMXs43b9Q5LsSOIX5tSg';
 const GEMINI_MODEL = 'gemini-3-flash-preview';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
-// Variável global para estado (resetada entre cold starts)
+// Estado global (persiste entre requests no mesmo container)
 global.currentGameState = global.currentGameState || null;
 
 export default async function handler(req, res) {
@@ -19,11 +19,11 @@ export default async function handler(req, res) {
         return res.status(200).end();
     }
 
-    const { pathname } = new URL(req.url, `https://${req.headers.host}`);
+    const path = req.url || '/';
 
     try {
         // ============ ROTA: STATUS ============
-        if (pathname === '/status' && req.method === 'GET') {
+        if (path.includes('/status') && req.method === 'GET') {
             console.log('✓ Status check');
             return res.status(200).json({ 
                 status: 'online',
@@ -34,14 +34,14 @@ export default async function handler(req, res) {
         }
 
         // ============ ROTA: GAME STATE ============
-        if (pathname === '/game-state' && req.method === 'POST') {
+        if (path.includes('/game-state') && req.method === 'POST') {
             global.currentGameState = req.body;
             console.log('✓ Estado do jogo recebido');
             return res.status(200).json({ ok: true });
         }
 
         // ============ ROTA: GERAR CÓDIGO ============
-        if (pathname === '/generate' && req.method === 'POST') {
+        if (path.includes('/generate') && req.method === 'POST' && !path.includes('autonomous')) {
             const { pseudoCode, gameState } = req.body;
             
             if (!pseudoCode) {
@@ -51,7 +51,7 @@ export default async function handler(req, res) {
                 });
             }
 
-            console.log('🤖 Gerando código para:', pseudoCode.substring(0, 50) + '...');
+            console.log('🤖 Gerando código:', pseudoCode.substring(0, 50) + '...');
             
             const context = gameState || global.currentGameState || {};
             const contextStr = JSON.stringify(context, null, 2);
@@ -133,7 +133,7 @@ Converta isso em código Lua funcional seguindo as regras acima.`;
         }
 
         // ============ ROTA: MODO AUTÔNOMO ============
-        if (pathname === '/generate-autonomous' && req.method === 'POST') {
+        if (path.includes('/generate-autonomous') && req.method === 'POST') {
             const { task, gameState } = req.body;
             
             if (!task) {
@@ -208,18 +208,23 @@ Crie um plano de ação completo em JSON (sem markdown).`;
             return res.status(200).json(plan);
         }
 
-        // Rota não encontrada
-        return res.status(404).json({ 
-            error: 'Rota não encontrada',
-            available: ['/status', '/game-state', '/generate', '/generate-autonomous']
+        // Rota raiz ou não encontrada
+        return res.status(200).json({ 
+            message: 'Roblox AI Backend - Vercel',
+            status: 'online',
+            routes: [
+                'GET  /api/status',
+                'POST /api/game-state', 
+                'POST /api/generate',
+                'POST /api/generate-autonomous'
+            ]
         });
 
     } catch (error) {
         console.error('❌ Erro no handler:', error.message);
         return res.status(500).json({ 
             error: error.message,
-            code: `-- Erro ao processar requisição\n-- ${error.message}`,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            code: `-- Erro ao processar requisição\n-- ${error.message}`
         });
     }
 }
