@@ -1,8 +1,8 @@
 // index.js
 // Backend AI Roblox com Express para Vercel
 
-import express from 'express';
-import cors from 'cors';
+const express = require('express');
+const cors = require('cors');
 
 const app = express();
 
@@ -63,7 +63,7 @@ REGRAS IMPORTANTES:
 4. Valide se os Instances referenciados existem no contexto
 5. Use WaitForChild para segurança
 6. Adicione comentários explicativos em português
-7. RETORNE APENAS O CÓDIGO LUA, SEM MARKDOWN (```lua), SEM EXPLICAÇÕES
+7. RETORNE APENAS O CÓDIGO LUA, SEM MARKDOWN (\`\`\`lua), SEM EXPLICAÇÕES
 
 IMPORTANTE: O código deve ser executável diretamente no Roblox Studio.`;
 
@@ -231,4 +231,13 @@ app.get('/', (req, res) => {
     });
 });
 
-export default app;
+// Inicia o servidor
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+    console.log(`🌐 URL: http://localhost:${PORT}`);
+    console.log(`🤖 Modelo Gemini: ${GEMINI_MODEL}`);
+});
+
+// Exporta o app para Vercel
+module.exports = app;
