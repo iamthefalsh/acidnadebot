@@ -1,243 +1,161 @@
-// index.js
-// Backend AI Roblox com Express para Vercel
-
-const express = require('express');
-const cors = require('cors');
-
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const express = require("express");
 const app = express();
+app.use(express.json());
 
-const GEMINI_API_KEY = 'AIzaSyApWjzIzhjzpg0jMXs43b9Q5LsSOIX5tSg';
-const GEMINI_MODEL = 'gemini-3-flash-preview';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-
-let currentGameState = null;
-
-// Middleware
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-
-// ============ ROTA: STATUS ============
-app.get('/status', (req, res) => {
-    console.log('✓ Status check');
-    res.json({ 
-        status: 'online',
-        connected: true,
-        timestamp: Date.now(),
-        model: GEMINI_MODEL
-    });
-});
-
-// ============ ROTA: GAME STATE ============
-app.post('/game-state', (req, res) => {
-    currentGameState = req.body;
-    console.log('✓ Estado do jogo recebido');
-    res.json({ ok: true });
-});
-
-// ============ ROTA: GERAR CÓDIGO ============
-app.post('/generate', async (req, res) => {
-    try {
-        const { pseudoCode, gameState } = req.body;
-        
-        if (!pseudoCode) {
-            return res.status(400).json({ 
-                error: 'pseudoCode é obrigatório',
-                code: '-- Erro: pseudoCode não fornecido'
-            });
-        }
-
-        console.log('🤖 Gerando código:', pseudoCode.substring(0, 50) + '...');
-        
-        const context = gameState || currentGameState || {};
-        const contextStr = JSON.stringify(context, null, 2);
-        
-        const systemPrompt = `Você é um especialista em Roblox Lua. Converta pseudocódigo em código Lua funcional.
-
-CONTEXTO DO JOGO:
-${contextStr}
-
-REGRAS IMPORTANTES:
-1. Gere código Lua COMPLETO e FUNCIONAL
-2. Use TweenService para animações suaves
-3. Implemente debounce automaticamente quando necessário
-4. Valide se os Instances referenciados existem no contexto
-5. Use WaitForChild para segurança
-6. Adicione comentários explicativos em português
-7. RETORNE APENAS O CÓDIGO LUA, SEM MARKDOWN (\`\`\`lua), SEM EXPLICAÇÕES
-
-IMPORTANTE: O código deve ser executável diretamente no Roblox Studio.`;
-
-        const userPrompt = `PSEUDOCÓDIGO:
-${pseudoCode}
-
-Converta isso em código Lua funcional seguindo as regras acima.`;
-
-        const response = await fetch(GEMINI_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
-                }],
-                generationConfig: {
-                    temperature: 0.7,
-                    maxOutputTokens: 8000,
-                }
-            })
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('❌ Erro Gemini API:', errorText);
-            throw new Error(`Gemini API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        if (!data.candidates || !data.candidates[0]) {
-            console.error('❌ Resposta inválida:', JSON.stringify(data));
-            throw new Error('Resposta inválida da Gemini API');
-        }
-
-        let generatedText = data.candidates[0].content.parts[0].text;
-        
-        generatedText = generatedText
-            .replace(/```lua\n?/gi, '')
-            .replace(/```\n?/g, '')
-            .trim();
-
-        console.log('✓ Código gerado!');
-
-        const timestamp = Date.now();
-        const action = {
-            action: 'create',
-            target: `ServerScriptService.AIScript_${timestamp}`,
-            instanceType: 'Script',
-            code: generatedText,
-            description: 'Script gerado pela IA'
-        };
-
-        res.json({ 
-            code: generatedText,
-            action: action,
-            timestamp: timestamp
-        });
-
-    } catch (error) {
-        console.error('❌ Erro:', error.message);
-        res.status(500).json({ 
-            error: error.message,
-            code: `-- Erro ao processar\n-- ${error.message}`
-        });
+// CORS support for multiple origins
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") {
+        res.sendStatus(200);
+    } else {
+        next();
     }
 });
 
-// ============ ROTA: MODO AUTÔNOMO ============
-app.post('/generate-autonomous', async (req, res) => {
-    try {
-        const { task, gameState } = req.body;
-        
-        if (!task) {
-            return res.status(400).json({ 
-                error: 'task é obrigatório',
-                plan: 'Erro',
-                steps: []
-            });
-        }
+// API Keys from environment or fallback (use env vars in production)
+const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyD_wG2YI7Q6hphOl8eLkoPKD-hxsehSpkI,AIzaSyAODHxEXWRWVKsP163DqVmZ5uPzOBxm0Q8,AIzaSyALu99r6lLDQtjJGtQlZOyI9cLrhf3KZXE").split(",");
+let currentKeyIndex = 0;
+const SYSTEM_PROMPT = `
+Você é um Agente Autónomo do Roblox Studio.
+CAPACIDADES ESPECIAIS:
+- Atributos: Você pode ler e sugerir mudanças em Attributes usando obj:SetAttribute() e obj:GetAttribute().
+- Leitura por Referência: Se o usuário mencionar um objeto que não está no contexto, use a ação "READ" com o caminho completo (ex: game.ReplicatedStorage.Skins).
+- Resolução de Erros: Se o usuário colar um erro do Output, analise a stack trace e sugira o "EDIT" exato.
 
-        console.log('⚡ Modo autônomo:', task.substring(0, 50) + '...');
-        
-        const context = gameState || currentGameState || {};
-        const contextStr = JSON.stringify(context, null, 2);
-        
-        const systemPrompt = `Você é uma IA autônoma especializada em Roblox Studio.
+ESTRUTURA DE DADOS:
+Ao receber instâncias, observe a propriedade 'Attributes'. Use-os para lógica de precificação ou configuração de skins.
 
-CONTEXTO DO JOGO:
-${contextStr}
-
-TAREFA: Criar um PLANO DE AÇÃO COMPLETO em JSON.
-
-FORMATO (SEM MARKDOWN, APENAS JSON):
+RESPONDA APENAS JSON: Não inclua explicações fora do JSON. Estrutura de saída esperada:
 {
-  "plan": "Descrição do que será feito",
-  "steps": [
-    {
-      "action": "create",
-      "target": "workspace.NovaPart",
-      "description": "Descrição da ação",
-      "code": "-- código lua completo",
-      "instanceType": "Part"
-    }
+  "thinking": "string",
+  "tasks": [
+    { "action": "READ|EDIT|CREATE|DELETE|SELECT", "targetPath": "game.ReplicatedStorage.Skins", "targetName":"string", "className":"string", "newSource":"string", "parentName":"string" }
   ]
 }
+`;
 
-REGRAS:
-- action: create, edit, delete
-- target: caminho completo
-- code: Lua funcional completo
-- Crie quantos steps necessários`;
+const KNOWLEDGE_INJECTIONS = `
+DEFINIÇÕES ADICIONAIS (Knowledge Injections):
+- SkinType: string enum (Default, Animated, Accessory)
+- Price: number (in-game currency integer)
+- Rarity: string (Common, Rare, Epic, Legendary)
+- EquipSlot: string (Head, Torso, Legs, Accessory)
 
-        const userPrompt = `TAREFA:
-${task}
+Quando sugerir mudanças em atributos, especifique comandos Luau exatos (ex: obj:SetAttribute("Price", 100)).
+`;
 
-Crie um plano de ação completo em JSON (sem markdown).`;
+function extractKeywords(text) {
+    if (!text) return [];
+    const matches = text.toLowerCase().match(/\b[a-z]{4,}\b/g) || [];
+    return Array.from(new Set(matches)).slice(0, 40);
+}
 
-        const response = await fetch(GEMINI_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
-                }],
-                generationConfig: {
-                    temperature: 0.7,
-                    maxOutputTokens: 8000,
-                }
-            })
-        });
+function summarizeSelection(selectionContext, instruction) {
+    if (!Array.isArray(selectionContext)) return '[]';
+    const keywords = extractKeywords(instruction);
+    const summary = selectionContext.map(item => {
+        const name = (item.Name || '').toLowerCase();
+        let hit = false;
+        if (keywords.some(k => name.includes(k))) hit = true;
+        if (item.Source && keywords.some(k => (item.Source || '').toLowerCase().includes(k))) hit = true;
+        if (item.Attributes) {
+            for (const [k, v] of Object.entries(item.Attributes)) {
+                const pair = (k + ' ' + String(v)).toLowerCase();
+                if (keywords.some(kw => pair.includes(kw))) { hit = true; break; }
+            }
+        }
+        if (hit) {
+            return Object.assign({}, item, { Source: item.Source ? String(item.Source).slice(0, 4000) : undefined, _included_full: true });
+        }
+        return { Name: item.Name, ClassName: item.ClassName, Path: item.Path, Attributes: item.Attributes, ChildrenNames: item.ChildrenNames };
+    });
+    return JSON.stringify(summary, null, 2);
+}
 
-        const data = await response.json();
-        let result = data.candidates[0].content.parts[0].text;
-        
-        result = result.replace(/```json\n?/gi, '').replace(/```\n?/g, '').trim();
-        
-        const plan = JSON.parse(result);
-        
-        console.log('✓ Plano criado com', plan.steps?.length || 0, 'steps');
-        
-        res.json(plan);
-
+async function askGemini(prompt) {
+    const genAI = new GoogleGenerativeAI(apiKeys[currentKeyIndex]);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    try {
+        const result = await model.generateContent(prompt);
+        return result.response.text();
     } catch (error) {
-        console.error('❌ Erro:', error.message);
-        res.status(500).json({ 
-            error: error.message,
-            plan: 'Erro ao criar plano',
-            steps: []
-        });
+        if (currentKeyIndex < apiKeys.length - 1) {
+            currentKeyIndex++;
+            return askGemini(prompt);
+        }
+        throw error;
+    }
+}
+
+app.post("/process", async (req, res) => {
+    try {
+        const { instruction, selectionContext, history, readResults } = req.body;
+
+        if (!instruction) {
+            return res.status(400).json({ error: "Instrução é obrigatória" });
+        }
+
+        const selectionSummary = summarizeSelection(selectionContext, instruction);
+        const fullPrompt = `
+        ${SYSTEM_PROMPT}
+        ${KNOWLEDGE_INJECTIONS}
+
+        HISTÓRICO DA CONVERSA:
+        ${JSON.stringify(history)}
+
+        CONTEXTO DE SELEÇÃO (RESUMIDO PARA REDUÇÃO DE TOKENS):
+        ${selectionSummary}
+
+        INSTRUÇÃO ATUAL:
+        ${instruction}
+
+        SE FORNECIDO, AQUI HÁ READ_RESULTS ENVIADOS PELO PLUGIN (conteúdos de pastas solicitadas):
+        ${JSON.stringify(readResults)}
+
+        Observação: se precisar de conteúdo adicional, retorne tarefas com "action":"READ" e um "targetPath".
+
+        RESPONDA NO FORMATO JSON (SEM MARKDOWN):
+        {
+            "thinking": "Explicação curta do raciocínio",
+            "tasks": [
+                { "action": "READ|EDIT|CREATE|DELETE|SELECT", "targetPath": "string", "targetName": "string", "className": "string", "newSource": "string", "parentName": "string" }
+            ]
+        }
+        `;
+
+        const responseText = await askGemini(fullPrompt);
+        const cleanJson = responseText.replace(/```json|```/g, "").trim();
+        const parsed = JSON.parse(cleanJson);
+        res.json(parsed);
+    } catch (err) {
+        console.error("Erro no /process:", err);
+        res.status(500).json({ error: err.message });
     }
 });
 
-// Rota raiz
-app.get('/', (req, res) => {
-    res.json({
-        message: 'Roblox AI Backend',
-        status: 'online',
-        routes: [
-            'GET  /status',
-            'POST /game-state',
-            'POST /generate',
-            'POST /generate-autonomous'
-        ]
+// Health check endpoint
+app.get("/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Root endpoint
+app.get("/", (req, res) => {
+    res.json({ 
+        name: "Gemini AI Editor Server",
+        version: "1.0.0",
+        endpoint: "/process",
+        deployedAt: "https://acidnadebot.vercel.app"
     });
 });
 
-// Inicia o servidor
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}`);
-    console.log(`🌐 URL: http://localhost:${PORT}`);
-    console.log(`🤖 Modelo Gemini: ${GEMINI_MODEL}`);
-});
+// Local server listener (only for development)
+const PORT = process.env.PORT || 5000;
+if (!process.env.VERCEL) {
+    app.listen(PORT, () => console.log(`🚀 Servidor Inteligente rodando em http://localhost:${PORT}`));
+}
 
-// Exporta o app para Vercel
+// Export for Vercel
 module.exports = app;
