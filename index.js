@@ -20,6 +20,7 @@ const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyD_wG2YI7Q6hphOl8eLkoPKD-h
 let currentKeyIndex = 0;
 const SYSTEM_PROMPT = `
 Você é um Agente Autónomo do Roblox Studio.
+
 CAPACIDADES ESPECIAIS:
 - Atributos: Você pode ler e sugerir mudanças em Attributes usando obj:SetAttribute() e obj:GetAttribute().
 - Leitura por Referência: Se o usuário mencionar um objeto que não está no contexto, use a ação "READ" com o caminho completo (ex: game.ReplicatedStorage.Skins).
@@ -30,11 +31,18 @@ Ao receber instâncias, observe a propriedade 'Attributes'. Use-os para lógica 
 
 RESPONDA APENAS JSON: Não inclua explicações fora do JSON. Estrutura de saída esperada:
 {
-  "thinking": "string",
-  "tasks": [
-    { "action": "READ|EDIT|CREATE|DELETE|SELECT", "targetPath": "game.ReplicatedStorage.Skins", "targetName":"string", "className":"string", "newSource":"string", "parentName":"string" }
+  "thinking": "Explicação curta do raciocínio (este aparecerá como bolha)",
+  "actions": [
+    { "type": "message_to_user", "content": "Mensagem para o usuário" },
+    { "type": "create", "className": "Script", "name": "MyScript", "parentPath": "game.ServerScriptService", "source": "print('oi')" },
+    { "type": "edit", "targetPath": "game.ServerScriptService.MyScript", "newSource": "print('código novo')" },
+    { "type": "delete", "targetPath": "game.ServerScriptService.OldScript" },
+    { "type": "read", "targetPath": "game.ReplicatedStorage.Config" },
+    { "type": "select", "targetPath": "game.ServerScriptService.MyScript" }
   ]
 }
+
+IMPORTANTE: Cada ação aparecerá como uma bolha separada no chat. Use "message_to_user" para comunicar com o usuário. SEMPRE execute as ações (create, edit, delete, etc), não apenas explique.
 `;
 
 const KNOWLEDGE_INJECTIONS = `
@@ -104,7 +112,7 @@ app.post("/process", async (req, res) => {
         ${KNOWLEDGE_INJECTIONS}
 
         HISTÓRICO DA CONVERSA:
-        ${JSON.stringify(history)}
+        ${JSON.stringify(history || [])}
 
         CONTEXTO DE SELEÇÃO (RESUMIDO PARA REDUÇÃO DE TOKENS):
         ${selectionSummary}
@@ -113,15 +121,15 @@ app.post("/process", async (req, res) => {
         ${instruction}
 
         SE FORNECIDO, AQUI HÁ READ_RESULTS ENVIADOS PELO PLUGIN (conteúdos de pastas solicitadas):
-        ${JSON.stringify(readResults)}
+        ${JSON.stringify(readResults || [])}
 
-        Observação: se precisar de conteúdo adicional, retorne tarefas com "action":"READ" e um "targetPath".
+        Observação: SEMPRE execute as ações solicitadas pelo usuário. Não apenas explique. Use message_to_user para comunicar.
 
         RESPONDA NO FORMATO JSON (SEM MARKDOWN):
         {
             "thinking": "Explicação curta do raciocínio",
-            "tasks": [
-                { "action": "READ|EDIT|CREATE|DELETE|SELECT", "targetPath": "string", "targetName": "string", "className": "string", "newSource": "string", "parentName": "string" }
+            "actions": [
+                { "type": "message_to_user|create|edit|delete|read|select", "content": "string", "className": "string", "name": "string", "parentPath": "string", "source": "string", "targetPath": "string", "newSource": "string" }
             ]
         }
         `;
