@@ -85,7 +85,7 @@ function summarizeSelection(selectionContext, instruction) {
 
 async function askGemini(prompt) {
     const genAI = new GoogleGenerativeAI(apiKeys[currentKeyIndex]);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
     try {
         const result = await model.generateContent(prompt);
         return result.response.text();
