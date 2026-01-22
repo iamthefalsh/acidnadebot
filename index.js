@@ -16,7 +16,7 @@ app.use((req, res, next) => {
 });
 
 // API Keys from environment or fallback (use env vars in production)
-const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyAODHxEXWRWVKsP163DqVmZ5uPzOBxm0Q8,AIzaSyALu99r6lLDQtjJGtQlZOyI9cLrhf3KZXE").split(",");
+const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyALu99r6lLDQtjJGtQlZOyI9cLrhf3KZXE").split(",");
 let currentKeyIndex = 0;
 const SYSTEM_PROMPT = `
 Você é um Agente Autónomo do Roblox Studio.
