@@ -21,7 +21,7 @@ let isProcessing = false;
 const RATE_LIMIT_DELAY = 2000; // 2 seconds between requests to avoid hitting API limits
 
 // API Keys from environment or fallback (use env vars in production)
-const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyD_wG2YI7Q6hphOl8eLkoPKD-hxsehSpkI,AIzaSyAODHxEXWRWVKsP163DqVmZ5uPzOBxm0Q8,AIzaSyALu99r6lLDQtjJGtQlZOyI9cLrhf3KZXE").split(",");
+const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyAWtXai8ppWt5QS7KVEVPMf_6QqlQN6RXc").split(",");
 let currentKeyIndex = 0;
 let lastRequestTime = 0;
 const SYSTEM_PROMPT = `
