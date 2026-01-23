@@ -15,9 +15,15 @@ app.use((req, res, next) => {
     }
 });
 
+// Rate limiting
+const requestQueue = [];
+let isProcessing = false;
+const RATE_LIMIT_DELAY = 2000; // 2 seconds between requests to avoid hitting API limits
+
 // API Keys from environment or fallback (use env vars in production)
-const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyALu99r6lLDQtjJGtQlZOyI9cLrhf3KZXE").split(",");
+const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyD_wG2YI7Q6hphOl8eLkoPKD-hxsehSpkI,AIzaSyAODHxEXWRWVKsP163DqVmZ5uPzOBxm0Q8,AIzaSyALu99r6lLDQtjJGtQlZOyI9cLrhf3KZXE").split(",");
 let currentKeyIndex = 0;
+let lastRequestTime = 0;
 const SYSTEM_PROMPT = `
 Você é um Agente Autónomo do Roblox Studio.
 
@@ -83,19 +89,52 @@ function summarizeSelection(selectionContext, instruction) {
     return JSON.stringify(summary, null, 2);
 }
 
-async function askGemini(prompt) {
-    const genAI = new GoogleGenerativeAI(apiKeys[currentKeyIndex]);
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+// Queue processor with rate limiting
+async function processQueue() {
+    if (isProcessing || requestQueue.length === 0) return;
+    isProcessing = true;
+    
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastRequestTime;
+    if (timeSinceLastRequest < RATE_LIMIT_DELAY) {
+        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastRequest));
+    }
+    
+    const { prompt, resolve, reject } = requestQueue.shift();
+    try {
+        const result = await askGeminiDirect(prompt);
+        resolve(result);
+    } catch (error) {
+        reject(error);
+    }
+    
+    lastRequestTime = Date.now();
+    isProcessing = false;
+    processQueue(); // Process next in queue
+}
+
+async function askGeminiDirect(prompt) {
+    const genAI = new GoogleGenerativeAI(apiKeys[currentKeyIndex].trim());
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
     try {
         const result = await model.generateContent(prompt);
         return result.response.text();
     } catch (error) {
+        console.error(`Erro com chave ${currentKeyIndex}:`, error.message);
         if (currentKeyIndex < apiKeys.length - 1) {
             currentKeyIndex++;
-            return askGemini(prompt);
+            return askGeminiDirect(prompt);
         }
         throw error;
     }
+}
+
+// Queued request handler
+function queueGeminiRequest(prompt) {
+    return new Promise((resolve, reject) => {
+        requestQueue.push({ prompt, resolve, reject });
+        processQueue();
+    });
 }
 
 app.post("/process", async (req, res) => {
@@ -104,6 +143,10 @@ app.post("/process", async (req, res) => {
 
         if (!instruction) {
             return res.status(400).json({ error: "Instrução é obrigatória" });
+        }
+        
+        if (requestQueue.length > 5) {
+            return res.status(429).json({ error: "Muitas requisições. Aguarde..." });
         }
 
         const selectionSummary = summarizeSelection(selectionContext, instruction);
@@ -134,13 +177,13 @@ app.post("/process", async (req, res) => {
         }
         `;
 
-        const responseText = await askGemini(fullPrompt);
+        const responseText = await queueGeminiRequest(fullPrompt);
         const cleanJson = responseText.replace(/```json|```/g, "").trim();
         const parsed = JSON.parse(cleanJson);
         res.json(parsed);
     } catch (err) {
-        console.error("Erro no /process:", err);
-        res.status(500).json({ error: err.message });
+        console.error("Erro no /process:", err.message);
+        res.status(500).json({ error: err.message || "Erro ao processar" });
     }
 });
 
