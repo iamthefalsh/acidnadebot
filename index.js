@@ -1,212 +1,409 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const express = require("express");
+// server.js - Sistema Lemonade AI para Roblox
+// Sistema conversacional com multi-edit e pensamento em batches
+
+import express from 'express';
+import cors from 'cors';
+
 const app = express();
-app.use(express.json());
 
-// CORS support for multiple origins
-app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type");
-    if (req.method === "OPTIONS") {
-        res.sendStatus(200);
-    } else {
-        next();
-    }
-});
+const GEMINI_API_KEY = "AIzaSyApWjzIzhjzpg0jMXs43b9Q5LsSOIX5tSg";
+const GEMINI_MODEL = "gemini-3-flash-preview";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
-// Rate limiting
-const requestQueue = [];
-let isProcessing = false;
-const RATE_LIMIT_DELAY = 2000; // 2 seconds between requests to avoid hitting API limits
+// Estado global
+let currentGameState = null;
+let conversations = new Map(); // sessionId -> conversa
 
-// API Keys from environment or fallback (use env vars in production)
-const apiKeys = (process.env.GEMINI_API_KEYS || "AIzaSyAWtXai8ppWt5QS7KVEVPMf_6QqlQN6RXc").split(",");
-let currentKeyIndex = 0;
-let lastRequestTime = 0;
-const SYSTEM_PROMPT = `
-Você é um Agente Autónomo do Roblox Studio.
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
 
-CAPACIDADES ESPECIAIS:
-- Atributos: Você pode ler e sugerir mudanças em Attributes usando obj:SetAttribute() e obj:GetAttribute().
-- Leitura por Referência: Se o usuário mencionar um objeto que não está no contexto, use a ação "READ" com o caminho completo (ex: game.ReplicatedStorage.Skins).
-- Resolução de Erros: Se o usuário colar um erro do Output, analise a stack trace e sugira o "EDIT" exato.
+// PROMPT SISTEMA PRINCIPAL - O cérebro do agente
+const SYSTEM_PROMPT = `Você é um AGENTE DE DESENVOLVIMENTO AUTÔNOMO para Roblox Studio, similar ao Cursor/Windsurf.
 
-ESTRUTURA DE DADOS:
-Ao receber instâncias, observe a propriedade 'Attributes'. Use-os para lógica de precificação ou configuração de skins.
+# IDENTIDADE E PAPEL
+Você é um desenvolvedor Roblox experiente que pode:
+- Conversar naturalmente sobre desenvolvimento
+- Analisar código e arquitetura existente
+- Criar, editar e deletar qualquer coisa no jogo
+- Fazer múltiplas modificações de uma vez
+- Pensar profundamente antes de agir
 
-RESPONDA APENAS JSON: Não inclua explicações fora do JSON. Estrutura de saída esperada:
+# CAPACIDADES TÉCNICAS
+
+## Multi-Edit System
+Você pode editar QUALQUER COISA simultaneamente:
+- Múltiplos scripts (editar linhas específicas ou reescrever completo)
+- Múltiplas instâncias (criar, modificar propriedades, deletar)
+- Múltiplos arquivos ao mesmo tempo
+- Operações em batch otimizadas
+
+## Tipos de Ação
+1. **create** - Criar novo script/objeto
+2. **edit** - Editar linhas específicas de um script
+3. **rewrite** - Reescrever script completo
+4. **modify** - Modificar propriedades de instância
+5. **delete** - Deletar objeto
+6. **batch** - Executar múltiplas ações
+
+# PROCESSO DE PENSAMENTO (CRÍTICO!)
+
+Quando receber uma solicitação, você DEVE seguir este processo em 2 ETAPAS:
+
+## ETAPA 1: PENSAMENTO (thinking)
+Analise profundamente:
+- O que o usuário quer?
+- Qual o estado atual do jogo?
+- Quais arquivos/objetos precisam ser modificados?
+- Qual a melhor abordagem?
+- Há dependências ou ordem de execução?
+- Quais são os riscos ou problemas potenciais?
+
+## ETAPA 2: AÇÃO (actions)
+Depois de pensar, execute as ações necessárias.
+
+# FORMATO DE RESPOSTA
+
+Você SEMPRE responde em JSON com esta estrutura
+EXEMPLO:
+
+\`\`\`json
 {
-  "thinking": "Explicação curta do raciocínio (este aparecerá como bolha)",
+  "thinking": "Análise detalhada do que precisa ser feito, considerações técnicas, plano de ação...",
+  "response": "Mensagem amigável para o usuário explicando o que você vai fazer",
   "actions": [
-    { "type": "message_to_user", "content": "Mensagem para o usuário" },
-    { "type": "create", "className": "Script", "name": "MyScript", "parentPath": "game.ServerScriptService", "source": "print('oi')" },
-    { "type": "edit", "targetPath": "game.ServerScriptService.MyScript", "newSource": "print('código novo')" },
-    { "type": "delete", "targetPath": "game.ServerScriptService.OldScript" },
-    { "type": "read", "targetPath": "game.ReplicatedStorage.Config" },
-    { "type": "select", "targetPath": "game.ServerScriptService.MyScript" }
+    {
+      "type": "edit",
+      "target": "ServerScriptService.MainScript",
+      "description": "Adiciona sistema de pontuação",
+      "changes": [
+        {
+          "line": 15,
+          "old": "local score = 0",
+          "new": "local score = 100 -- Valor inicial aumentado"
+        }
+      ]
+    },
+    {
+      "type": "create",
+      "target": "ReplicatedStorage.Modules.ScoreManager",
+      "instanceType": "ModuleScript",
+      "description": "Cria módulo de gerenciamento de pontuação",
+      "code": "local ScoreManager = {}\\n..."
+    }
+  ],
+  "needsMoreInfo": false,
+  "followUpQuestion": null
+}
+\`\`\`
+
+# REGRAS IMPORTANTES
+
+1. **SEMPRE pense antes de agir** - thinking é obrigatório
+2. **Seja específico** - nomes exatos, linhas exatas
+3. **Explique suas decisões** - o usuário precisa entender
+4. **Use boas práticas** - código limpo, comentado, eficiente
+5. **Considere o contexto** - analise o que já existe antes de criar
+6. **Seja conversacional** - responda de forma amigável
+7. **Peça confirmação** para mudanças grandes/destrutivas
+8. **Multi-edit quando possível** - otimize operações em batch
+
+# EXEMPLOS DE INTERAÇÃO
+
+## Exemplo 1: Edição Simples
+User: "faz a porta abrir mais devagar"
+
+Response:
+\`\`\`json
+{
+  "thinking": "Usuário quer que a porta abra mais devagar. Analisando o código da porta... Encontrei DoorScript com TweenService usando 0.5 segundos. Vou aumentar para 2 segundos para movimento mais suave.",
+  "response": "Entendi! Vou ajustar a animação da porta para abrir em 2 segundos ao invés de 0.5. Isso vai deixar bem mais suave.",
+  "actions": [
+    {
+      "type": "edit",
+      "target": "workspace.Door.DoorScript",
+      "changes": [
+        {
+          "line": 12,
+          "old": "local tweenInfo = TweenInfo.new(0.5)",
+          "new": "local tweenInfo = TweenInfo.new(2) -- Animação mais lenta"
+        }
+      ]
+    }
   ]
 }
+\`\`\`
 
-IMPORTANTE: Cada ação aparecerá como uma bolha separada no chat. Use "message_to_user" para comunicar com o usuário. SEMPRE execute as ações (create, edit, delete, etc), não apenas explique.
-`;
+## Exemplo 2: Criação Complexa
+User: "cria um sistema de inventário completo com UI"
 
-const KNOWLEDGE_INJECTIONS = `
-DEFINIÇÕES ADICIONAIS (Knowledge Injections):
-- SkinType: string enum (Default, Animated, Accessory)
-- Price: number (in-game currency integer)
-- Rarity: string (Common, Rare, Epic, Legendary)
-- EquipSlot: string (Head, Torso, Legs, Accessory)
+Response:
+\`\`\`json
+{
+  "thinking": "Sistema de inventário completo requer: 1) ModuleScript para lógica, 2) RemoteEvents para client-server, 3) UI no StarterGui, 4) Sistema de salvamento. Vou criar estrutura modular e escalável.",
+  "response": "Vou criar um sistema de inventário completo! Isso inclui:\\n- Módulo de gerenciamento (20 slots)\\n- UI responsiva\\n- Sistema de drag & drop\\n- Salvamento automático\\n\\nSerão 5 arquivos criados. Quer que eu prossiga?",
+  "actions": [...],
+  "needsMoreInfo": false
+}
+\`\`\`
 
-Quando sugerir mudanças em atributos, especifique comandos Luau exatos (ex: obj:SetAttribute("Price", 100)).
-`;
+# CONTEXTO DO JOGO
+O estado atual do jogo será fornecido em cada mensagem. Use-o para:
+- Entender estrutura existente
+- Evitar conflitos de nomes
+- Identificar dependências
+- Fazer decisões informadas
 
-function extractKeywords(text) {
-    if (!text) return [];
-    const matches = text.toLowerCase().match(/\b[a-z]{4,}\b/g) || [];
-    return Array.from(new Set(matches)).slice(0, 40);
+# SEGURANÇA
+- Nunca delete sem confirmar
+- Avise sobre mudanças que podem quebrar coisas
+- Faça backup mental de código importante
+- Sugira testes após mudanças críticas
+
+Agora você está pronto para ajudar o desenvolvedor. Seja proativo, inteligente e útil!`;
+
+// Cria ou recupera conversa
+function getConversation(sessionId) {
+    if (!conversations.has(sessionId)) {
+        conversations.set(sessionId, {
+            messages: [],
+            messageCount: 0,
+            lastSystemPrompt: 0
+        });
+    }
+    return conversations.get(sessionId);
 }
 
-function summarizeSelection(selectionContext, instruction) {
-    if (!Array.isArray(selectionContext)) return '[]';
-    const keywords = extractKeywords(instruction);
-    const summary = selectionContext.map(item => {
-        const name = (item.Name || '').toLowerCase();
-        let hit = false;
-        if (keywords.some(k => name.includes(k))) hit = true;
-        if (item.Source && keywords.some(k => (item.Source || '').toLowerCase().includes(k))) hit = true;
-        if (item.Attributes) {
-            for (const [k, v] of Object.entries(item.Attributes)) {
-                const pair = (k + ' ' + String(v)).toLowerCase();
-                if (keywords.some(kw => pair.includes(kw))) { hit = true; break; }
+// Adiciona mensagem à conversa
+function addMessage(sessionId, role, content) {
+    const conv = getConversation(sessionId);
+    conv.messages.push({ role, content });
+    if (role === 'user') {
+        conv.messageCount++;
+    }
+}
+
+// Verifica se precisa re-injetar o prompt sistema
+function needsSystemPromptRefresh(conv) {
+    return conv.messageCount > 0 && conv.messageCount % 4 === 0 && 
+           conv.messageCount !== conv.lastSystemPrompt;
+}
+
+// Chama Gemini API
+async function callGemini(messages) {
+    const response = await fetch(GEMINI_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            contents: messages.map(msg => ({
+                role: msg.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: msg.content }]
+            })),
+            generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 8000,
+            }
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`Gemini API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.candidates || !data.candidates[0]) {
+        throw new Error('Invalid Gemini response');
+    }
+
+    return data.candidates[0].content.parts[0].text;
+}
+
+// Limpa resposta JSON
+function cleanJSON(text) {
+    return text
+        .replace(/```json\n?/gi, '')
+        .replace(/```\n?/g, '')
+        .trim();
+}
+
+// ============ ROTAS ============
+
+app.get('/status', (req, res) => {
+    res.json({ 
+        status: 'online',
+        model: GEMINI_MODEL,
+        activeConversations: conversations.size
+    });
+});
+
+app.post('/game-state', (req, res) => {
+    currentGameState = req.body;
+    console.log('✓ Estado do jogo atualizado');
+    res.json({ ok: true });
+});
+
+// Rota principal de chat
+app.post('/chat', async (req, res) => {
+    try {
+        const { message, sessionId, gameState } = req.body;
+        
+        if (!message) {
+            return res.status(400).json({ error: 'message é obrigatório' });
+        }
+
+        const session = sessionId || 'default';
+        const conv = getConversation(session);
+        const state = gameState || currentGameState || {};
+
+        console.log(`💬 [${session}] Mensagem ${conv.messageCount + 1}:`, message.substring(0, 50));
+
+        // Monta mensagens para enviar
+        let messagesToSend = [];
+
+        // Verifica se precisa re-injetar prompt sistema
+        if (conv.messages.length === 0 || needsSystemPromptRefresh(conv)) {
+            messagesToSend.push({
+                role: 'user',
+                content: SYSTEM_PROMPT + '\n\n--- INÍCIO DA CONVERSA ---'
+            });
+            conv.lastSystemPrompt = conv.messageCount;
+            console.log(`🔄 [${session}] Sistema prompt injetado (msg ${conv.messageCount})`);
+        }
+
+        // Adiciona histórico da conversa (últimas 10 mensagens)
+        const recentMessages = conv.messages.slice(-10);
+        messagesToSend.push(...recentMessages);
+
+        // Adiciona mensagem atual do usuário com contexto do jogo
+        const userMessage = `ESTADO ATUAL DO JOGO:
+\`\`\`json
+${JSON.stringify(state, null, 2)}
+\`\`\`
+
+MENSAGEM DO USUÁRIO:
+${message}`;
+
+        messagesToSend.push({ role: 'user', content: userMessage });
+
+        // PRIMEIRA RODADA: Pensamento
+        console.log(`🤔 [${session}] Fase 1: Pensamento...`);
+        let response = await callGemini(messagesToSend);
+        let cleanResponse = cleanJSON(response);
+
+        // Tenta parsear
+        let parsed;
+        try {
+            parsed = JSON.parse(cleanResponse);
+        } catch (e) {
+            // Se não é JSON, trata como resposta texto simples
+            parsed = {
+                thinking: "Processando resposta...",
+                response: cleanResponse,
+                actions: [],
+                needsMoreInfo: false
+            };
+        }
+
+        // Se tem ações, faz SEGUNDA RODADA de pensamento
+        if (parsed.actions && parsed.actions.length > 0) {
+            console.log(`🧠 [${session}] Fase 2: Refinamento (${parsed.actions.length} ações)...`);
+            
+            messagesToSend.push({
+                role: 'assistant',
+                content: JSON.stringify(parsed)
+            });
+
+            messagesToSend.push({
+                role: 'user',
+                content: `Revise seu plano de ação. Está tudo certo? Há alguma otimização possível? Algum risco que não considerou?
+
+Retorne o JSON final refinado (mesmo formato).`
+            });
+
+            const refinedResponse = await callGemini(messagesToSend);
+            const refinedClean = cleanJSON(refinedResponse);
+            
+            try {
+                parsed = JSON.parse(refinedClean);
+                console.log(`✅ [${session}] Plano refinado!`);
+            } catch (e) {
+                console.log(`⚠️ [${session}] Usando plano original (refinamento falhou)`);
             }
         }
-        if (hit) {
-            return Object.assign({}, item, { Source: item.Source ? String(item.Source).slice(0, 4000) : undefined, _included_full: true });
-        }
-        return { Name: item.Name, ClassName: item.ClassName, Path: item.Path, Attributes: item.Attributes, ChildrenNames: item.ChildrenNames };
-    });
-    return JSON.stringify(summary, null, 2);
-}
 
-// Queue processor with rate limiting
-async function processQueue() {
-    if (isProcessing || requestQueue.length === 0) return;
-    isProcessing = true;
-    
-    const now = Date.now();
-    const timeSinceLastRequest = now - lastRequestTime;
-    if (timeSinceLastRequest < RATE_LIMIT_DELAY) {
-        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastRequest));
-    }
-    
-    const { prompt, resolve, reject } = requestQueue.shift();
-    try {
-        const result = await askGeminiDirect(prompt);
-        resolve(result);
-    } catch (error) {
-        reject(error);
-    }
-    
-    lastRequestTime = Date.now();
-    isProcessing = false;
-    processQueue(); // Process next in queue
-}
+        // Salva na conversa
+        addMessage(session, 'user', message);
+        addMessage(session, 'assistant', JSON.stringify(parsed));
 
-async function askGeminiDirect(prompt) {
-    const genAI = new GoogleGenerativeAI(apiKeys[currentKeyIndex].trim());
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-    try {
-        const result = await model.generateContent(prompt);
-        return result.response.text();
-    } catch (error) {
-        console.error(`Erro com chave ${currentKeyIndex}:`, error.message);
-        if (currentKeyIndex < apiKeys.length - 1) {
-            currentKeyIndex++;
-            return askGeminiDirect(prompt);
-        }
-        throw error;
-    }
-}
+        console.log(`📤 [${session}] Respondendo com ${parsed.actions?.length || 0} ações`);
 
-// Queued request handler
-function queueGeminiRequest(prompt) {
-    return new Promise((resolve, reject) => {
-        requestQueue.push({ prompt, resolve, reject });
-        processQueue();
-    });
-}
-
-app.post("/process", async (req, res) => {
-    try {
-        const { instruction, selectionContext, history, readResults } = req.body;
-
-        if (!instruction) {
-            return res.status(400).json({ error: "Instrução é obrigatória" });
-        }
-        
-        if (requestQueue.length > 5) {
-            return res.status(429).json({ error: "Muitas requisições. Aguarde..." });
-        }
-
-        const selectionSummary = summarizeSelection(selectionContext, instruction);
-        const fullPrompt = `
-        ${SYSTEM_PROMPT}
-        ${KNOWLEDGE_INJECTIONS}
-
-        HISTÓRICO DA CONVERSA:
-        ${JSON.stringify(history || [])}
-
-        CONTEXTO DE SELEÇÃO (RESUMIDO PARA REDUÇÃO DE TOKENS):
-        ${selectionSummary}
-
-        INSTRUÇÃO ATUAL:
-        ${instruction}
-
-        SE FORNECIDO, AQUI HÁ READ_RESULTS ENVIADOS PELO PLUGIN (conteúdos de pastas solicitadas):
-        ${JSON.stringify(readResults || [])}
-
-        Observação: SEMPRE execute as ações solicitadas pelo usuário. Não apenas explique. Use message_to_user para comunicar.
-
-        RESPONDA NO FORMATO JSON (SEM MARKDOWN):
-        {
-            "thinking": "Explicação curta do raciocínio",
-            "actions": [
-                { "type": "message_to_user|create|edit|delete|read|select", "content": "string", "className": "string", "name": "string", "parentPath": "string", "source": "string", "targetPath": "string", "newSource": "string" }
-            ]
-        }
-        `;
-
-        const responseText = await queueGeminiRequest(fullPrompt);
-        const cleanJson = responseText.replace(/```json|```/g, "").trim();
-        const parsed = JSON.parse(cleanJson);
         res.json(parsed);
-    } catch (err) {
-        console.error("Erro no /process:", err.message);
-        res.status(500).json({ error: err.message || "Erro ao processar" });
+
+    } catch (error) {
+        console.error('❌ Erro no chat:', error.message);
+        res.status(500).json({ 
+            error: error.message,
+            response: 'Desculpe, ocorreu um erro ao processar sua mensagem.'
+        });
     }
 });
 
-// Health check endpoint
-app.get("/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+// Limpa conversa
+app.post('/reset-conversation', (req, res) => {
+    const { sessionId } = req.body;
+    const session = sessionId || 'default';
+    
+    conversations.delete(session);
+    console.log(`🗑️ Conversa ${session} resetada`);
+    
+    res.json({ ok: true });
 });
 
-// Root endpoint
-app.get("/", (req, res) => {
-    res.json({ 
-        name: "Gemini AI Editor Server",
-        version: "1.0.0",
-        endpoint: "/process",
-        deployedAt: "https://acidnadebot.vercel.app"
+// Lista conversas ativas
+app.get('/conversations', (req, res) => {
+    const list = [];
+    conversations.forEach((conv, id) => {
+        list.push({
+            sessionId: id,
+            messageCount: conv.messageCount,
+            messages: conv.messages.length
+        });
+    });
+    res.json({ conversations: list });
+});
+
+// Rota raiz
+app.get('/', (req, res) => {
+    res.json({
+        name: 'Lemonade AI - Roblox Studio Agent',
+        version: '2.0.0',
+        model: GEMINI_MODEL,
+        features: [
+            'Conversational AI',
+            'Multi-edit system',
+            'Batch thinking',
+            'Context preservation',
+            'Auto system prompt refresh'
+        ],
+        routes: [
+            'GET  /status',
+            'POST /game-state',
+            'POST /chat',
+            'POST /reset-conversation',
+            'GET  /conversations'
+        ]
     });
 });
 
-// Local server listener (only for development)
-const PORT = process.env.PORT || 5000;
-if (!process.env.VERCEL) {
-    app.listen(PORT, () => console.log(`🚀 Servidor Inteligente rodando em http://localhost:${PORT}`));
-}
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log('═══════════════════════════════════════════════');
+    console.log('🍋 Lemonade AI - Roblox Studio Agent');
+    console.log('📍 URL: http://localhost:' + PORT);
+    console.log('🤖 Modelo: ' + GEMINI_MODEL);
+    console.log('💬 Sistema conversacional ativo');
+    console.log('🧠 Pensamento em batches habilitado');
+    console.log('═══════════════════════════════════════════════');
+});
 
-// Export for Vercel
-module.exports = app;
+export default app;
