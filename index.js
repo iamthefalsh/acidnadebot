@@ -1,4 +1,4 @@
-// server.js - Sistema Lemonade AI para Roblox (FIXED - Rate Limit Solution)
+// server.js - Sistema Lemonade AI para Roblox (FIXED - Ações Estruturadas)
 import express from 'express';
 import cors from 'cors';
 
@@ -8,13 +8,13 @@ const GEMINI_API_KEY = "AIzaSyAwXC00BXlfyjKJkMQsjtAvf8uUqYiNFOk";
 const GEMINI_MODEL = "gemini-3-flash-preview";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
-// ============ RATE LIMITER SIMPLIFICADO ============
+// ============ RATE LIMITER ============
 
 class RateLimiter {
     constructor() {
         this.lastCall = 0;
-        this.MIN_DELAY = 5000; // 5 segundos entre chamadas (aumentado para evitar 429)
-        this.queues = new Map(); // Por sessão
+        this.MIN_DELAY = 5000; // 5 segundos entre chamadas
+        this.queues = new Map();
         this.processing = new Map();
     }
 
@@ -39,32 +39,24 @@ class RateLimiter {
         const { task, resolve, reject } = queue[0];
 
         try {
-            // Delay global obrigatório
             const now = Date.now();
             const delay = Math.max(0, this.lastCall + this.MIN_DELAY - now);
             
             if (delay > 0) {
-                console.log(`⏳ [${sessionId}] Delay global: ${delay}ms`);
+                console.log(`⏳ [${sessionId}] Delay: ${delay}ms`);
                 await new Promise(r => setTimeout(r, delay));
             }
 
-            // Executa a tarefa
             console.log(`🚀 [${sessionId}] Chamando Gemini...`);
             const result = await task();
             
-            // Atualiza timestamp da última chamada
             this.lastCall = Date.now();
-            
-            // Remove da fila e resolve
             queue.shift();
             resolve(result);
             
         } catch (error) {
-            // Tratamento específico para 429
             if (error.message.includes('429')) {
-                console.log(`⚠️ [${sessionId}] Rate limit detectado. Aguardando 10s...`);
-                
-                // Aguarda 10 segundos e tenta de novo (mantém na fila)
+                console.log(`⚠️ [${sessionId}] Rate limit. Aguardando 10s...`);
                 setTimeout(() => {
                     this.processing.set(sessionId, false);
                     this.processQueue(sessionId);
@@ -72,7 +64,6 @@ class RateLimiter {
                 return;
             }
             
-            // Outro erro: remove e rejeita
             queue.shift();
             reject(error);
             
@@ -85,85 +76,185 @@ class RateLimiter {
     }
 }
 
-// Inicializa rate limiter
 const rateLimiter = new RateLimiter();
+let conversations = new Map();
 
-// Estado das conversas
-let conversations = new Map(); // sessionId -> {messages: [], hasSystemPrompt: boolean}
-
-// Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// ============ SYSTEM PROMPT COMPLETO ============
+// ============ SYSTEM PROMPT FOCADO EM AÇÕES ============
 
-const SYSTEM_PROMPT = `Você é um AGENTE DE DESENVOLVIMENTO AUTÔNOMO para Roblox Studio.
+const SYSTEM_PROMPT = `# VOCÊ É UM ASSISTENTE DE DESENVOLVIMENTO ROBOX
+# SUA TAREFA: ANALISAR E MODIFICAR CÓDIGO USANDO AÇÕES ESTRUTURADAS
 
-# IDENTIDADE
-Você é um desenvolvedor Roblox experiente especializado em:
-- Criar, editar e deletar scripts/objetos
-- Análise de código e arquitetura
-- Modificações múltiplas simultâneas
-- Pensamento profundo antes de agir
+## REGRA PRIMÁRIA: NUNCA RETORNE CÓDIGO COMPLETO COMO TEXTO
+## SEMPRE RETORNE AÇÕES JSON PARA EDITAR/CRIAR ARQUIVOS
 
-# FORMATO DE RESPOSTA OBRIGATÓRIO
-Você SEMPRE responde em JSON com este formato:
+# FORMATO DE RESPOSTA OBRIGATÓRIO:
 {
-  "thinking": "Análise detalhada aqui...",
-  "response": "Resposta amigável ao usuário...",
+  "thinking": "Análise breve do que precisa ser feito...",
+  "response": "Mensagem para o usuário explicando o que será modificado...",
   "actions": [
     {
-      "type": "edit/create/rewrite/modify/delete/batch",
-      "target": "caminho.do.objeto",
-      "description": "descrição da ação",
-      // ... outros campos específicos do tipo
+      "type": "edit",
+      "target": "ServerScriptService.MainScript",
+      "description": "Adiciona função de limpeza",
+      "changes": [
+        {
+          "line": 45,
+          "old": "local function cleanup()",
+          "new": "local function cleanup() -- Limpa estado do jogo"
+        },
+        {
+          "line": 46,
+          "old": "    print('Cleaning')",
+          "new": "    print('✔️ Cleaning up round data.')"
+        }
+      ]
+    },
+    {
+      "type": "create",
+      "target": "ReplicatedStorage.Modules.GameManager",
+      "instanceType": "ModuleScript",
+      "description": "Cria módulo de gerenciamento",
+      "code": "local GameManager = {}\\nfunction GameManager.init()\\n    -- código aqui\\nend\\nreturn GameManager"
     }
-  ],
-  "needsMoreInfo": false,
-  "followUpQuestion": null
+  ]
 }
 
-# TIPOS DE AÇÃO SUPORTADOS
-1. create - Criar novo script/objeto
-2. edit - Editar linhas específicas
-3. rewrite - Reescrever script completo
-4. modify - Modificar propriedades
-5. delete - Deletar objeto
-6. batch - Múltiplas ações
+# TIPOS DE AÇÃO DISPONÍVEIS:
 
-# PROCESSO DE PENSAMENTO
-1. ANALISE: O que o usuário quer? Estado atual do jogo?
-2. PLANO: Qual melhor abordagem? Riscos?
-3. AÇÃO: Execute as modificações necessárias.
+## 1. EDIT (EDITA LINHAS ESPECÍFICAS)
+- Use para modificar partes de scripts existentes
+- Especifique linha exata, conteúdo antigo e novo
+- Exemplo: Corrigir bug em uma função específica
 
-# CONTEXTO DO JOGO
+## 2. CREATE (CRIA NOVO SCRIPT/OBJETO)
+- Use para criar novos arquivos
+- Forneça código completo para o novo script
+- Exemplo: Criar um novo módulo ou sistema
+
+## 3. REWRITE (REESCREVE SCRIPT COMPLETO)
+- Use para substituir arquivo inteiro
+- Forneça novo código completo
+- CUIDADO: Backup mental do código original
+
+## 4. MODIFY (MODIFICA PROPRIEDADES)
+- Use para modificar propriedades de instâncias
+- Exemplo: Mudar Position, Size, etc.
+
+## 5. DELETE (REMOVE OBJETO)
+- Use para deletar scripts/objetos
+- SEMPRE confirme antes de deletar
+
+## 6. BATCH (MÚLTIPLAS AÇÕES)
+- Use para executar várias ações ao mesmo tempo
+- Mantenha ações relacionadas juntas
+
+# EXEMPLOS DE USO:
+
+## USUÁRIO DIZ: "faz a porta abrir mais devagar"
+RESPOSTA CORRETA:
+\`\`\`json
+{
+  "thinking": "Usuário quer porta mais lenta. Analisando DoorScript...",
+  "response": "Vou ajustar a animação da porta de 0.5s para 2s.",
+  "actions": [
+    {
+      "type": "edit",
+      "target": "workspace.Door.DoorScript",
+      "description": "Aumenta tempo de animação",
+      "changes": [
+        {
+          "line": 12,
+          "old": "local tweenInfo = TweenInfo.new(0.5)",
+          "new": "local tweenInfo = TweenInfo.new(2) -- Mais lento"
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+## USUÁRIO DIZ: "corrige o bug no MainScript linha 30"
+RESPOSTA CORRETA:
+\`\`\`json
+{
+  "thinking": "Bug na linha 30 do MainScript...",
+  "response": "Corrigindo bug de referência nula.",
+  "actions": [
+    {
+      "type": "edit",
+      "target": "ServerScriptService.MainScript",
+      "description": "Fix null reference bug",
+      "changes": [
+        {
+          "line": 30,
+          "old": "local player = Players[playerId]",
+          "new": "local player = Players:FindFirstChild(playerId)\\nif not player then return end"
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+## USUÁRIO DIZ: "cria um sistema de inventário"
+RESPOSTA CORRETA:
+\`\`\`json
+{
+  "thinking": "Sistema de inventário requer ModuleScript e UI...",
+  "response": "Criando sistema de inventário com 20 slots.",
+  "actions": [
+    {
+      "type": "create",
+      "target": "ReplicatedStorage.Modules.Inventory",
+      "instanceType": "ModuleScript",
+      "description": "Módulo principal do inventário",
+      "code": "local Inventory = {}\\nInventory.Slots = {}\\nfunction Inventory.addItem(item, slot)\\n    -- implementação\\nend\\nreturn Inventory"
+    },
+    {
+      "type": "create",
+      "target": "StarterGui.InventoryUI",
+      "instanceType": "ScreenGui",
+      "description": "Interface do inventário",
+      "properties": {
+        "Name": "InventoryUI",
+        "ResetOnSpawn": false
+      }
+    }
+  ]
+}
+\`\`\`
+
+# IMPORTANTE:
+1. NUNCA retorne código completo em "response"
+2. SEMPRE use "actions" para especificar mudanças
+3. Seja específico com números de linha
+4. Mantenha "thinking" breve e técnico
+5. "response" deve ser amigável para o usuário
+
+# CONTEXTO DO JOGO:
 O estado atual será fornecido. Use para:
-- Evitar conflitos de nomes
-- Identificar dependências
-- Tomar decisões informadas
+- Identificar scripts existentes
+- Evitar criar duplicatas
+- Entender estrutura do projeto
 
-# SEGURANÇA
-- Confirme mudanças grandes/destrutivas
-- Sugira testes após mudanças críticas
-- Mantenha boas práticas de código
+--- VOCÊ ESTÁ PRONTO. SEMPRE RETORNE JSON COM AÇÕES ---`;
 
---- AGORA VOCÊ ESTÁ PRONTO PARA AJUDAR ---`;
+// ============ FUNÇÕES ============
 
-// ============ FUNÇÕES AUXILIARES ============
-
-// Obtém ou cria conversa
 function getConversation(sessionId) {
     if (!conversations.has(sessionId)) {
         conversations.set(sessionId, {
-            messages: [], // Histórico completo
-            hasSystemPrompt: false, // Flag para verificar se já enviou o system prompt
+            messages: [],
+            hasSystemPrompt: false,
             messageCount: 0
         });
     }
     return conversations.get(sessionId);
 }
 
-// Adiciona mensagem ao histórico
 function addMessage(sessionId, role, content) {
     const conv = getConversation(sessionId);
     conv.messages.push({ role, content });
@@ -172,7 +263,6 @@ function addMessage(sessionId, role, content) {
     }
 }
 
-// Chama a API Gemini
 async function callGemini(messages) {
     const response = await fetch(GEMINI_URL, {
         method: 'POST',
@@ -184,108 +274,168 @@ async function callGemini(messages) {
             })),
             generationConfig: {
                 temperature: 0.7,
-                maxOutputTokens: 4000, // Reduzido para evitar custos
+                maxOutputTokens: 4000,
+                topP: 0.95,
+                topK: 40
             }
         })
     });
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+        throw new Error(`API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
-    if (!data.candidates || !data.candidates[0]) {
-        throw new Error('Invalid Gemini response');
-    }
-
     return data.candidates[0].content.parts[0].text;
 }
 
-// Limpa resposta JSON
 function cleanJSON(text) {
-    return text
-        .replace(/```json\n?/gi, '')
-        .replace(/```\n?/g, '')
-        .trim();
+    // Remove qualquer markdown e extrai JSON
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        return jsonMatch[0];
+    }
+    return text.replace(/```json\n?/gi, '').replace(/```\n?/g, '').trim();
 }
 
-// Processa uma mensagem (APENAS 1 CHAMADA GEMINI)
+function validateActions(actions) {
+    if (!Array.isArray(actions)) return [];
+    
+    return actions.filter(action => {
+        // Valida estrutura básica
+        if (!action.type || !action.target || !action.description) return false;
+        
+        // Validações específicas por tipo
+        switch (action.type) {
+            case 'edit':
+                return Array.isArray(action.changes) && action.changes.length > 0;
+            case 'create':
+                return action.instanceType && action.code;
+            case 'rewrite':
+                return action.code;
+            case 'modify':
+                return action.properties && typeof action.properties === 'object';
+            case 'delete':
+                return true; // Apenas precisa do target
+            case 'batch':
+                return Array.isArray(action.actions) && action.actions.length > 0;
+            default:
+                return false;
+        }
+    });
+}
+
 async function processMessage(sessionId, message, gameState = {}) {
     const conv = getConversation(sessionId);
     
-    console.log(`💬 [${sessionId}] Processando mensagem ${conv.messageCount + 1}`);
+    console.log(`💬 [${sessionId}] Mensagem ${conv.messageCount + 1}`);
 
-    // Prepara mensagens para enviar
     const messagesToSend = [];
 
-    // 1. Se for primeira mensagem, adiciona SYSTEM_PROMPT completo
+    // 1. System Prompt (apenas na primeira vez)
     if (!conv.hasSystemPrompt) {
-        console.log(`📋 [${sessionId}] Enviando SYSTEM_PROMPT completo...`);
         messagesToSend.push({ role: 'user', content: SYSTEM_PROMPT });
-        conv.hasSystemPrompt = true; // Marca que já enviou
+        conv.hasSystemPrompt = true;
     }
 
-    // 2. Adiciona histórico da conversa (últimas 4 mensagens para contexto)
-    const recentMessages = conv.messages.slice(-4); // Mantém contexto curto
+    // 2. Histórico (últimas 3 mensagens)
+    const recentMessages = conv.messages.slice(-3);
     messagesToSend.push(...recentMessages);
 
-    // 3. Adiciona mensagem atual com gameState
-    const userMessage = `ESTADO ATUAL DO JOGO:
-${JSON.stringify(gameState, null, 2).substring(0, 3000)}... (truncado se muito grande)
+    // 3. Mensagem atual com contexto
+    const gameStateSummary = Object.keys(gameState).length > 0 
+        ? `Jogo tem: ${Object.keys(gameState).join(', ')}`
+        : 'Estado do jogo vazio ou não fornecido';
 
-MENSAGEM DO USUÁRIO:
-${message}`;
+    const userMessage = `CONTEXTO: ${gameStateSummary}
+
+SOLICITAÇÃO DO USUÁRIO:
+${message}
+
+IMPORTANTE: NÃO RETORNE CÓDIGO COMPLETO COMO TEXTO.
+RETORNE APENAS JSON COM AÇÕES ESTRUTURADAS (edit/create/rewrite).`;
 
     messagesToSend.push({ role: 'user', content: userMessage });
 
-    // 4. Chama Gemini (APENAS UMA VEZ)
-    console.log(`🤔 [${sessionId}] Pensando e gerando ações...`);
-    const response = await callGemini(messagesToSend);
-    const cleanResponse = cleanJSON(response);
-
-    // 5. Parseia a resposta
-    let parsed;
+    // 4. Chama Gemini
+    console.log(`🤔 [${sessionId}] Gerando ações estruturadas...`);
+    let response;
     try {
-        parsed = JSON.parse(cleanResponse);
-    } catch (e) {
-        console.log(`⚠️ [${sessionId}] JSON inválido, usando fallback`);
-        parsed = {
-            thinking: "Processando sua solicitação...",
-            response: cleanResponse,
-            actions: [],
-            needsMoreInfo: false
+        response = await callGemini(messagesToSend);
+    } catch (error) {
+        // Fallback se a API falhar
+        console.log(`⚠️ [${sessionId}] API falhou, usando fallback`);
+        return {
+            thinking: "API temporariamente indisponível",
+            response: "Estou com dificuldades técnicas. Tente novamente em alguns segundos.",
+            actions: []
         };
     }
 
-    // 6. Salva no histórico (AMBAS as mensagens)
+    const cleanResponse = cleanJSON(response);
+    
+    // 5. Parse e validação
+    let parsed;
+    try {
+        parsed = JSON.parse(cleanResponse);
+        
+        // Garante que actions exista e seja válida
+        if (!parsed.actions || !Array.isArray(parsed.actions)) {
+            parsed.actions = [];
+        }
+        
+        // Valida cada ação
+        parsed.actions = validateActions(parsed.actions);
+        
+        // Se não tem ações mas tem thinking/response, mantém
+        if (!parsed.thinking) parsed.thinking = "Analisando sua solicitação...";
+        if (!parsed.response) parsed.response = "Processando suas modificações...";
+        
+    } catch (e) {
+        console.log(`⚠️ [${sessionId}] JSON inválido: ${e.message}`);
+        
+        // Fallback: converte texto em uma ação de rewrite se parecer código
+        if (cleanResponse.includes("local ") || cleanResponse.includes("function ")) {
+            parsed = {
+                thinking: "Detectei código, criando ação de edição...",
+                response: "Encontrei código para modificar. Vou estruturá-lo como uma ação.",
+                actions: [{
+                    type: "rewrite",
+                    target: "ServerScriptService.ScriptCorrecao",
+                    description: "Código fornecido pelo usuário",
+                    code: cleanResponse
+                }]
+            };
+        } else {
+            parsed = {
+                thinking: "Resposta não estruturada detectada",
+                response: cleanResponse,
+                actions: []
+            };
+        }
+    }
+
+    // 6. Salva histórico
     addMessage(sessionId, 'user', message);
     addMessage(sessionId, 'assistant', JSON.stringify(parsed));
 
-    console.log(`✅ [${sessionId}] Processado com ${parsed.actions?.length || 0} ações`);
+    console.log(`✅ [${sessionId}] ${parsed.actions.length} ações geradas`);
     
     return parsed;
 }
 
 // ============ ROTAS ============
 
-// Status do servidor
 app.get('/status', (req, res) => {
     res.json({ 
         status: 'online',
         model: GEMINI_MODEL,
-        activeSessions: conversations.size,
-        rateLimitDelay: rateLimiter.MIN_DELAY + 'ms'
+        sessions: conversations.size,
+        features: ['ações estruturadas', 'rate limiting']
     });
 });
 
-// Atualiza estado do jogo
-app.post('/game-state', (req, res) => {
-    console.log('✓ Estado do jogo recebido');
-    res.json({ ok: true });
-});
-
-// Rota principal de chat
 app.post('/chat', async (req, res) => {
     const startTime = Date.now();
     
@@ -294,113 +444,69 @@ app.post('/chat', async (req, res) => {
         
         if (!message || message.trim() === '') {
             return res.status(400).json({ 
-                error: 'Mensagem é obrigatória',
+                error: 'Mensagem vazia',
                 response: 'Por favor, digite uma mensagem.'
             });
         }
 
-        console.log(`📥 [${sessionId}] Nova mensagem: "${message.substring(0, 50)}..."`);
+        console.log(`📥 [${sessionId}] "${message.substring(0, 50)}..."`);
 
-        // Enfileira no rate limiter
         const result = await rateLimiter.enqueue(sessionId, () => 
             processMessage(sessionId, message, gameState)
         );
 
         const processingTime = Date.now() - startTime;
-        console.log(`📤 [${sessionId}] Respondido em ${processingTime}ms`);
-
-        res.json({
-            ...result,
-            sessionId,
-            processingTime: processingTime + 'ms'
-        });
+        console.log(`📤 [${sessionId}] ${processingTime}ms, ${result.actions.length} ações`);
+        
+        res.json(result);
 
     } catch (error) {
-        const processingTime = Date.now() - startTime;
-        console.error(`❌ Erro após ${processingTime}ms:`, error.message);
-        
-        let statusCode = 500;
-        let errorMessage = 'Desculpe, ocorreu um erro ao processar sua mensagem.';
+        console.error(`❌ Erro:`, error.message);
         
         if (error.message.includes('429')) {
-            statusCode = 429;
-            errorMessage = 'Rate limit da API atingido. Por favor, aguarde 10 segundos antes de tentar novamente.';
+            res.status(429).json({ 
+                error: 'Rate limit',
+                response: 'Muitas requisições. Aguarde 10 segundos.',
+                actions: []
+            });
+        } else {
+            res.status(500).json({ 
+                error: error.message,
+                response: 'Erro ao processar. Tente novamente.',
+                actions: []
+            });
         }
-        
-        res.status(statusCode).json({ 
-            error: error.message,
-            response: errorMessage,
-            retryAfter: '10s'
-        });
     }
 });
 
-// Limpa conversa
-app.post('/reset-conversation', (req, res) => {
+app.post('/reset', (req, res) => {
     const { sessionId = 'default' } = req.body;
-    
     conversations.delete(sessionId);
-    console.log(`🗑️ Conversa ${sessionId} resetada`);
-    
-    res.json({ 
-        ok: true,
-        message: `Conversa ${sessionId} resetada com sucesso`
-    });
+    console.log(`🗑️ Reset ${sessionId}`);
+    res.json({ ok: true });
 });
 
-// Lista conversas ativas
-app.get('/conversations', (req, res) => {
-    const list = [];
-    conversations.forEach((conv, id) => {
-        list.push({
-            sessionId: id,
-            messageCount: conv.messageCount,
-            hasSystemPrompt: conv.hasSystemPrompt,
-            historyLength: conv.messages.length
-        });
-    });
-    
-    res.json({ 
-        conversations: list,
-        total: list.length
-    });
-});
-
-// Rota raiz
 app.get('/', (req, res) => {
     res.json({
-        name: 'Lemonade AI - Roblox Studio Agent',
-        version: '3.0',
+        name: 'Lemonade AI - Editor Estruturado',
+        version: '4.0',
         model: GEMINI_MODEL,
-        features: [
-            'Conversational AI',
-            'Multi-edit system',
-            'Context preservation',
-            'System prompt memory',
-            'Rate limiting (5s delay)',
-            'Single Gemini call per request'
-        ],
-        endpoints: [
-            'GET  /status',
-            'POST /game-state',
-            'POST /chat',
-            'POST /reset-conversation',
-            'GET  /conversations'
-        ]
+        description: 'Sistema que retorna ações JSON para editar/criar scripts',
+        endpoints: {
+            'POST /chat': 'Processa mensagem, retorna ações',
+            'POST /reset': 'Reseta conversa',
+            'GET /status': 'Status do servidor'
+        }
     });
 });
 
-// Inicia servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('═══════════════════════════════════════════════');
-    console.log('🍋 Lemonade AI v3.0 - Sistema Corrigido');
-    console.log('📍 URL: http://localhost:' + PORT);
-    console.log('🤖 Modelo: ' + GEMINI_MODEL);
-    console.log('⚡ Rate Limit: 1 chamada a cada 5 segundos');
-    console.log('🧠 Sistema: Prompt enviado apenas na 1ª mensagem');
-    console.log('📝 Memória: Contexto mantido (últimas 4 mensagens)');
+    console.log('🍋 Lemonade AI v4.0 - Editor Estruturado');
+    console.log('📍 http://localhost:' + PORT);
+    console.log('🤖 ' + GEMINI_MODEL);
+    console.log('🎯 RETORNA APENAS AÇÕES JSON');
+    console.log('⚡ Delay: 5s entre chamadas');
     console.log('═══════════════════════════════════════════════');
 });
-
-export default app;
