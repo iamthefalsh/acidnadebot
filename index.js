@@ -5,7 +5,7 @@ import cors from 'cors';
 const app = express();
 
 // Configurações da API Gemini
-const GEMINI_API_KEY = "AIzaSyApWjzIzhjzpg0jMXs43b9Q5LsSOIX5tSg";
+const GEMINI_API_KEY = "AIzaSyD_wG2YI7Q6hphOl8eLkoPKD-hxsehSpkI";
 const GEMINI_MODEL = "gemini-3-flash-preview";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
