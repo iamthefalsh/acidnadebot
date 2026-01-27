@@ -1,4 +1,4 @@
-// server.js - Sistema Lemonade AI para Roblox
+// server.js - Sistema Lemonade AI para Roblox com Rate Limiting
 // Sistema conversacional com multi-edit e pensamento em batches
 
 import express from 'express';
@@ -9,6 +9,167 @@ const app = express();
 const GEMINI_API_KEY = "AIzaSyApWjzIzhjzpg0jMXs43b9Q5LsSOIX5tSg";
 const GEMINI_MODEL = "gemini-3-flash-preview";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+// ============ SISTEMA DE RATE LIMITING E FILA ============
+
+class RateLimiter {
+    constructor() {
+        this.queues = new Map(); // sessionId -> queue
+        this.processing = new Map(); // sessionId -> boolean
+        this.limits = new Map(); // sessionId -> { lastCall: timestamp, retryCount: number }
+        this.globalLastCall = 0;
+        this.MIN_INTERVAL = 2000; // 2 segundos mínimo entre chamadas da mesma sessão
+        this.GLOBAL_MIN_INTERVAL = 1000; // 1 segundo mínimo entre chamadas globais
+        this.MAX_RETRIES = 5;
+    }
+
+    // Adiciona uma tarefa à fila da sessão
+    async addTask(sessionId, taskFn) {
+        if (!this.queues.has(sessionId)) {
+            this.queues.set(sessionId, []);
+            this.processing.set(sessionId, false);
+            this.limits.set(sessionId, { lastCall: 0, retryCount: 0 });
+        }
+
+        return new Promise((resolve, reject) => {
+            const task = {
+                id: Date.now() + Math.random(),
+                execute: taskFn,
+                resolve,
+                reject,
+                retries: 0,
+                maxRetries: this.MAX_RETRIES
+            };
+
+            this.queues.get(sessionId).push(task);
+            this.processQueue(sessionId);
+            
+            // Timeout de segurança (30 segundos)
+            setTimeout(() => {
+                if (!task.resolved) {
+                    task.reject(new Error('Timeout na fila de processamento'));
+                }
+            }, 30000);
+        });
+    }
+
+    // Processa a próxima tarefa da fila da sessão
+    async processQueue(sessionId) {
+        const queue = this.queues.get(sessionId);
+        const isProcessing = this.processing.get(sessionId);
+
+        if (!queue || queue.length === 0 || isProcessing) {
+            return;
+        }
+
+        this.processing.set(sessionId, true);
+        const task = queue[0];
+
+        try {
+            // Calcula delay necessário baseado em rate limits
+            const now = Date.now();
+            const sessionLimit = this.limits.get(sessionId);
+            const sessionDelay = Math.max(0, sessionLimit.lastCall + this.MIN_INTERVAL - now);
+            const globalDelay = Math.max(0, this.globalLastCall + this.GLOBAL_MIN_INTERVAL - now);
+            const delay = Math.max(sessionDelay, globalDelay);
+
+            if (delay > 0) {
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+
+            // Executa a tarefa
+            const result = await task.execute();
+            
+            // Atualiza timestamps
+            sessionLimit.lastCall = Date.now();
+            sessionLimit.retryCount = 0; // Reset retries on success
+            this.globalLastCall = Date.now();
+            
+            // Remove task da fila e resolve
+            queue.shift();
+            task.resolved = true;
+            task.resolve(result);
+
+        } catch (error) {
+            // Tratamento de erro 429 com backoff exponencial
+            if (error.message.includes('429') && task.retries < task.maxRetries) {
+                task.retries++;
+                sessionLimit.retryCount++;
+                
+                // Backoff exponencial: 2s → 4s → 8s → 16s → 32s
+                const backoffTime = Math.min(32000, Math.pow(2, task.retries) * 1000);
+                
+                console.log(`⚠️ [${sessionId}] Erro 429. Tentativa ${task.retries}/${task.maxRetries}. Aguardando ${backoffTime}ms...`);
+                
+                // Move a task para o final da fila com delay
+                queue.shift();
+                setTimeout(() => {
+                    queue.push(task);
+                    this.processing.set(sessionId, false);
+                    this.processQueue(sessionId);
+                }, backoffTime);
+                
+                return;
+            }
+            
+            // Se não for 429 ou excedeu retries, rejeita
+            queue.shift();
+            task.resolved = true;
+            task.reject(error);
+        } finally {
+            // Continua processando a fila
+            this.processing.set(sessionId, false);
+            if (queue.length > 0) {
+                setTimeout(() => this.processQueue(sessionId), 0);
+            }
+        }
+    }
+
+    // Retorna estatísticas das filas
+    getStats() {
+        const stats = {};
+        let totalQueued = 0;
+        let totalProcessing = 0;
+
+        this.queues.forEach((queue, sessionId) => {
+            stats[sessionId] = {
+                queued: queue.length,
+                processing: this.processing.get(sessionId),
+                lastCall: this.limits.get(sessionId)?.lastCall || 0,
+                retryCount: this.limits.get(sessionId)?.retryCount || 0
+            };
+            totalQueued += queue.length;
+            if (this.processing.get(sessionId)) totalProcessing++;
+        });
+
+        return {
+            sessions: stats,
+            totals: {
+                activeSessions: this.queues.size,
+                totalQueued,
+                totalProcessing,
+                globalLastCall: this.globalLastCall
+            }
+        };
+    }
+
+    // Limpa fila de uma sessão específica
+    clearSessionQueue(sessionId) {
+        if (this.queues.has(sessionId)) {
+            const queue = this.queues.get(sessionId);
+            queue.forEach(task => {
+                if (!task.resolved) {
+                    task.reject(new Error('Fila limpa pelo usuário'));
+                }
+            });
+            this.queues.set(sessionId, []);
+            this.processing.set(sessionId, false);
+        }
+    }
+}
+
+// Inicializa rate limiter global
+const rateLimiter = new RateLimiter();
 
 // Estado global
 let currentGameState = null;
@@ -189,7 +350,7 @@ function needsSystemPromptRefresh(conv) {
            conv.messageCount !== conv.lastSystemPrompt;
 }
 
-// Chama Gemini API
+// Chama Gemini API com tratamento de erro
 async function callGemini(messages) {
     const response = await fetch(GEMINI_URL, {
         method: 'POST',
@@ -207,7 +368,8 @@ async function callGemini(messages) {
     });
 
     if (!response.ok) {
-        throw new Error(`Gemini API error: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
@@ -226,13 +388,106 @@ function cleanJSON(text) {
         .trim();
 }
 
+// Função principal de processamento de chat (mantém a lógica original)
+async function processChatMessage(sessionId, message, gameState) {
+    const conv = getConversation(sessionId);
+    const state = gameState || currentGameState || {};
+
+    console.log(`💬 [${sessionId}] Processando mensagem ${conv.messageCount + 1}`);
+
+    // Monta mensagens para enviar
+    let messagesToSend = [];
+
+    // Verifica se precisa re-injetar prompt sistema
+    if (conv.messages.length === 0 || needsSystemPromptRefresh(conv)) {
+        messagesToSend.push({
+            role: 'user',
+            content: SYSTEM_PROMPT + '\n\n--- INÍCIO DA CONVERSA ---'
+        });
+        conv.lastSystemPrompt = conv.messageCount;
+        console.log(`🔄 [${sessionId}] Sistema prompt injetado (msg ${conv.messageCount})`);
+    }
+
+    // Adiciona histórico da conversa (últimas 10 mensagens)
+    const recentMessages = conv.messages.slice(-10);
+    messagesToSend.push(...recentMessages);
+
+    // Adiciona mensagem atual do usuário com contexto do jogo
+    const userMessage = `ESTADO ATUAL DO JOGO:
+\`\`\`json
+${JSON.stringify(state, null, 2)}
+\`\`\`
+
+MENSAGEM DO USUÁRIO:
+${message}`;
+
+    messagesToSend.push({ role: 'user', content: userMessage });
+
+    // PRIMEIRA RODADA: Pensamento
+    console.log(`🤔 [${sessionId}] Fase 1: Pensamento...`);
+    let response = await callGemini(messagesToSend);
+    let cleanResponse = cleanJSON(response);
+
+    // Tenta parsear
+    let parsed;
+    try {
+        parsed = JSON.parse(cleanResponse);
+    } catch (e) {
+        // Se não é JSON, trata como resposta texto simples
+        parsed = {
+            thinking: "Processando resposta...",
+            response: cleanResponse,
+            actions: [],
+            needsMoreInfo: false
+        };
+    }
+
+    // Se tem ações, faz SEGUNDA RODADA de pensamento
+    if (parsed.actions && parsed.actions.length > 0) {
+        console.log(`🧠 [${sessionId}] Fase 2: Refinamento (${parsed.actions.length} ações)...`);
+        
+        messagesToSend.push({
+            role: 'assistant',
+            content: JSON.stringify(parsed)
+        });
+
+        messagesToSend.push({
+            role: 'user',
+            content: `Revise seu plano de ação. Está tudo certo? Há alguma otimização possível? Algum risco que não considerou?
+
+Retorne o JSON final refinado (mesmo formato).`
+        });
+
+        const refinedResponse = await callGemini(messagesToSend);
+        const refinedClean = cleanJSON(refinedResponse);
+        
+        try {
+            parsed = JSON.parse(refinedClean);
+            console.log(`✅ [${sessionId}] Plano refinado!`);
+        } catch (e) {
+            console.log(`⚠️ [${sessionId}] Usando plano original (refinamento falhou)`);
+        }
+    }
+
+    // Salva na conversa
+    addMessage(sessionId, 'user', message);
+    addMessage(sessionId, 'assistant', JSON.stringify(parsed));
+
+    console.log(`✅ [${sessionId}] Processamento completo com ${parsed.actions?.length || 0} ações`);
+    
+    return parsed;
+}
+
 // ============ ROTAS ============
 
 app.get('/status', (req, res) => {
+    const stats = rateLimiter.getStats();
     res.json({ 
         status: 'online',
         model: GEMINI_MODEL,
-        activeConversations: conversations.size
+        activeConversations: conversations.size,
+        rateLimiter: stats.totals,
+        uptime: process.uptime()
     });
 });
 
@@ -242,7 +497,7 @@ app.post('/game-state', (req, res) => {
     res.json({ ok: true });
 });
 
-// Rota principal de chat
+// Rota principal de chat com rate limiting
 app.post('/chat', async (req, res) => {
     try {
         const { message, sessionId, gameState } = req.body;
@@ -252,98 +507,35 @@ app.post('/chat', async (req, res) => {
         }
 
         const session = sessionId || 'default';
-        const conv = getConversation(session);
-        const state = gameState || currentGameState || {};
+        
+        console.log(`📥 [${session}] Nova mensagem enfileirada: "${message.substring(0, 50)}..."`);
 
-        console.log(`💬 [${session}] Mensagem ${conv.messageCount + 1}:`, message.substring(0, 50));
+        // Enfileira a tarefa no rate limiter
+        const result = await rateLimiter.addTask(session, () => 
+            processChatMessage(session, message, gameState)
+        );
 
-        // Monta mensagens para enviar
-        let messagesToSend = [];
-
-        // Verifica se precisa re-injetar prompt sistema
-        if (conv.messages.length === 0 || needsSystemPromptRefresh(conv)) {
-            messagesToSend.push({
-                role: 'user',
-                content: SYSTEM_PROMPT + '\n\n--- INÍCIO DA CONVERSA ---'
-            });
-            conv.lastSystemPrompt = conv.messageCount;
-            console.log(`🔄 [${session}] Sistema prompt injetado (msg ${conv.messageCount})`);
-        }
-
-        // Adiciona histórico da conversa (últimas 10 mensagens)
-        const recentMessages = conv.messages.slice(-10);
-        messagesToSend.push(...recentMessages);
-
-        // Adiciona mensagem atual do usuário com contexto do jogo
-        const userMessage = `ESTADO ATUAL DO JOGO:
-\`\`\`json
-${JSON.stringify(state, null, 2)}
-\`\`\`
-
-MENSAGEM DO USUÁRIO:
-${message}`;
-
-        messagesToSend.push({ role: 'user', content: userMessage });
-
-        // PRIMEIRA RODADA: Pensamento
-        console.log(`🤔 [${session}] Fase 1: Pensamento...`);
-        let response = await callGemini(messagesToSend);
-        let cleanResponse = cleanJSON(response);
-
-        // Tenta parsear
-        let parsed;
-        try {
-            parsed = JSON.parse(cleanResponse);
-        } catch (e) {
-            // Se não é JSON, trata como resposta texto simples
-            parsed = {
-                thinking: "Processando resposta...",
-                response: cleanResponse,
-                actions: [],
-                needsMoreInfo: false
-            };
-        }
-
-        // Se tem ações, faz SEGUNDA RODADA de pensamento
-        if (parsed.actions && parsed.actions.length > 0) {
-            console.log(`🧠 [${session}] Fase 2: Refinamento (${parsed.actions.length} ações)...`);
-            
-            messagesToSend.push({
-                role: 'assistant',
-                content: JSON.stringify(parsed)
-            });
-
-            messagesToSend.push({
-                role: 'user',
-                content: `Revise seu plano de ação. Está tudo certo? Há alguma otimização possível? Algum risco que não considerou?
-
-Retorne o JSON final refinado (mesmo formato).`
-            });
-
-            const refinedResponse = await callGemini(messagesToSend);
-            const refinedClean = cleanJSON(refinedResponse);
-            
-            try {
-                parsed = JSON.parse(refinedClean);
-                console.log(`✅ [${session}] Plano refinado!`);
-            } catch (e) {
-                console.log(`⚠️ [${session}] Usando plano original (refinamento falhou)`);
-            }
-        }
-
-        // Salva na conversa
-        addMessage(session, 'user', message);
-        addMessage(session, 'assistant', JSON.stringify(parsed));
-
-        console.log(`📤 [${session}] Respondendo com ${parsed.actions?.length || 0} ações`);
-
-        res.json(parsed);
+        res.json(result);
 
     } catch (error) {
         console.error('❌ Erro no chat:', error.message);
-        res.status(500).json({ 
+        
+        // Determina status code baseado no erro
+        let statusCode = 500;
+        let errorMessage = 'Desculpe, ocorreu um erro ao processar sua mensagem.';
+        
+        if (error.message.includes('429')) {
+            statusCode = 429;
+            errorMessage = 'Serviço ocupado. Por favor, aguarde alguns segundos e tente novamente.';
+        } else if (error.message.includes('Timeout')) {
+            statusCode = 504;
+            errorMessage = 'Tempo limite excedido. O servidor está processando sua solicitação.';
+        }
+        
+        res.status(statusCode).json({ 
             error: error.message,
-            response: 'Desculpe, ocorreu um erro ao processar sua mensagem.'
+            response: errorMessage,
+            retryAfter: '5s'
         });
     }
 });
@@ -354,9 +546,14 @@ app.post('/reset-conversation', (req, res) => {
     const session = sessionId || 'default';
     
     conversations.delete(session);
-    console.log(`🗑️ Conversa ${session} resetada`);
+    rateLimiter.clearSessionQueue(session);
     
-    res.json({ ok: true });
+    console.log(`🗑️ [${session}] Conversa e fila resetadas`);
+    
+    res.json({ 
+        ok: true,
+        message: `Conversa ${session} resetada com sucesso`
+    });
 });
 
 // Lista conversas ativas
@@ -366,43 +563,96 @@ app.get('/conversations', (req, res) => {
         list.push({
             sessionId: id,
             messageCount: conv.messageCount,
-            messages: conv.messages.length
+            messages: conv.messages.length,
+            lastSystemPrompt: conv.lastSystemPrompt
         });
     });
-    res.json({ conversations: list });
+    
+    const stats = rateLimiter.getStats();
+    
+    res.json({ 
+        conversations: list,
+        queueStats: stats
+    });
+});
+
+// Rota para monitoramento da fila
+app.get('/queue-status', (req, res) => {
+    const stats = rateLimiter.getStats();
+    
+    res.json({
+        timestamp: new Date().toISOString(),
+        rateLimiter: stats,
+        system: {
+            memory: process.memoryUsage(),
+            uptime: process.uptime(),
+            activeSessions: conversations.size
+        }
+    });
+});
+
+// Rota para limpar fila específica
+app.post('/clear-queue', (req, res) => {
+    const { sessionId } = req.body;
+    
+    if (!sessionId) {
+        return res.status(400).json({ error: 'sessionId é obrigatório' });
+    }
+    
+    rateLimiter.clearSessionQueue(sessionId);
+    
+    res.json({ 
+        ok: true,
+        message: `Fila da sessão ${sessionId} limpa`
+    });
 });
 
 // Rota raiz
 app.get('/', (req, res) => {
+    const stats = rateLimiter.getStats();
+    
     res.json({
         name: 'Lemonade AI - Roblox Studio Agent',
-        version: '2.0.0',
+        version: '2.1.0',
         model: GEMINI_MODEL,
         features: [
             'Conversational AI',
             'Multi-edit system',
             'Batch thinking',
             'Context preservation',
-            'Auto system prompt refresh'
+            'Auto system prompt refresh',
+            'Rate limiting por sessão',
+            'Fila inteligente',
+            'Retry com backoff exponencial'
         ],
+        currentStats: stats.totals,
         routes: [
             'GET  /status',
             'POST /game-state',
             'POST /chat',
             'POST /reset-conversation',
-            'GET  /conversations'
-        ]
+            'GET  /conversations',
+            'GET  /queue-status',
+            'POST /clear-queue'
+        ],
+        rateLimiting: {
+            minIntervalPerSession: '2s',
+            globalMinInterval: '1s',
+            maxRetries: 5,
+            backoffStrategy: 'exponencial (2s → 4s → 8s → 16s → 32s)'
+        }
     });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('═══════════════════════════════════════════════');
-    console.log('🍋 Lemonade AI - Roblox Studio Agent');
+    console.log('🍋 Lemonade AI - Roblox Studio Agent v2.1.0');
     console.log('📍 URL: http://localhost:' + PORT);
     console.log('🤖 Modelo: ' + GEMINI_MODEL);
-    console.log('💬 Sistema conversacional ativo');
-    console.log('🧠 Pensamento em batches habilitado');
+    console.log('⚡ Rate Limiting: Habilitado');
+    console.log('🔄 Retry com Backoff: Habilitado');
+    console.log('🎯 Sessões Isoladas: Sim');
     console.log('═══════════════════════════════════════════════');
 });
 
