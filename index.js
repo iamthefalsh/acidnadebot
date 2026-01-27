@@ -23,14 +23,25 @@ class RateLimiter {
         this.MAX_RETRIES = 5;
     }
 
-    // Adiciona uma tarefa à fila da sessão
-    async addTask(sessionId, taskFn) {
+    // Inicializa uma sessão se não existir
+    initSession(sessionId) {
         if (!this.queues.has(sessionId)) {
             this.queues.set(sessionId, []);
             this.processing.set(sessionId, false);
-            this.limits.set(sessionId, { lastCall: 0, retryCount: 0 });
+            this.limits.set(sessionId, { 
+                lastCall: 0, 
+                retryCount: 0,
+                consecutiveErrors: 0,
+                lastError: null
+            });
         }
+        return this.limits.get(sessionId);
+    }
 
+    // Adiciona uma tarefa à fila da sessão
+    async addTask(sessionId, taskFn) {
+        const sessionLimit = this.initSession(sessionId);
+        
         return new Promise((resolve, reject) => {
             const task = {
                 id: Date.now() + Math.random(),
@@ -38,27 +49,39 @@ class RateLimiter {
                 resolve,
                 reject,
                 retries: 0,
-                maxRetries: this.MAX_RETRIES
+                maxRetries: this.MAX_RETRIES,
+                timestamp: Date.now()
             };
 
             this.queues.get(sessionId).push(task);
             this.processQueue(sessionId);
             
-            // Timeout de segurança (30 segundos)
+            // Timeout de segurança (60 segundos)
             setTimeout(() => {
                 if (!task.resolved) {
-                    task.reject(new Error('Timeout na fila de processamento'));
+                    task.reject(new Error('Timeout na fila de processamento (60s)'));
+                    // Remove task da fila se ainda estiver lá
+                    const queue = this.queues.get(sessionId);
+                    if (queue) {
+                        const index = queue.findIndex(t => t.id === task.id);
+                        if (index !== -1) {
+                            queue.splice(index, 1);
+                        }
+                    }
                 }
-            }, 30000);
+            }, 60000);
         });
     }
 
     // Processa a próxima tarefa da fila da sessão
     async processQueue(sessionId) {
         const queue = this.queues.get(sessionId);
-        const isProcessing = this.processing.get(sessionId);
+        if (!queue) return;
 
-        if (!queue || queue.length === 0 || isProcessing) {
+        const isProcessing = this.processing.get(sessionId);
+        const sessionLimit = this.limits.get(sessionId);
+
+        if (queue.length === 0 || isProcessing || !sessionLimit) {
             return;
         }
 
@@ -68,21 +91,24 @@ class RateLimiter {
         try {
             // Calcula delay necessário baseado em rate limits
             const now = Date.now();
-            const sessionLimit = this.limits.get(sessionId);
             const sessionDelay = Math.max(0, sessionLimit.lastCall + this.MIN_INTERVAL - now);
             const globalDelay = Math.max(0, this.globalLastCall + this.GLOBAL_MIN_INTERVAL - now);
             const delay = Math.max(sessionDelay, globalDelay);
 
             if (delay > 0) {
+                console.log(`⏳ [${sessionId}] Aguardando ${delay}ms antes de processar`);
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
 
             // Executa a tarefa
+            console.log(`🚀 [${sessionId}] Executando tarefa (${task.retries} retries)`);
             const result = await task.execute();
             
-            // Atualiza timestamps
+            // Atualiza timestamps e limpa contador de erros
             sessionLimit.lastCall = Date.now();
-            sessionLimit.retryCount = 0; // Reset retries on success
+            sessionLimit.retryCount = 0;
+            sessionLimit.consecutiveErrors = 0;
+            sessionLimit.lastError = null;
             this.globalLastCall = Date.now();
             
             // Remove task da fila e resolve
@@ -95,6 +121,8 @@ class RateLimiter {
             if (error.message.includes('429') && task.retries < task.maxRetries) {
                 task.retries++;
                 sessionLimit.retryCount++;
+                sessionLimit.consecutiveErrors++;
+                sessionLimit.lastError = error.message;
                 
                 // Backoff exponencial: 2s → 4s → 8s → 16s → 32s
                 const backoffTime = Math.min(32000, Math.pow(2, task.retries) * 1000);
@@ -104,6 +132,7 @@ class RateLimiter {
                 // Move a task para o final da fila com delay
                 queue.shift();
                 setTimeout(() => {
+                    task.backoffTime = backoffTime;
                     queue.push(task);
                     this.processing.set(sessionId, false);
                     this.processQueue(sessionId);
@@ -113,14 +142,22 @@ class RateLimiter {
             }
             
             // Se não for 429 ou excedeu retries, rejeita
+            console.error(`❌ [${sessionId}] Erro fatal após ${task.retries} tentativas:`, error.message);
+            sessionLimit.consecutiveErrors++;
+            sessionLimit.lastError = error.message;
+            
             queue.shift();
             task.resolved = true;
             task.reject(error);
         } finally {
-            // Continua processando a fila
+            // Sempre libera o processamento, mesmo se houver erro
             this.processing.set(sessionId, false);
-            if (queue.length > 0) {
-                setTimeout(() => this.processQueue(sessionId), 0);
+            
+            // Continua processando a fila se houver mais tarefas
+            const currentQueue = this.queues.get(sessionId);
+            if (currentQueue && currentQueue.length > 0) {
+                // Pequeno delay para evitar call stack muito profundo
+                setTimeout(() => this.processQueue(sessionId), 10);
             }
         }
     }
@@ -132,11 +169,14 @@ class RateLimiter {
         let totalProcessing = 0;
 
         this.queues.forEach((queue, sessionId) => {
+            const limit = this.limits.get(sessionId);
             stats[sessionId] = {
                 queued: queue.length,
                 processing: this.processing.get(sessionId),
-                lastCall: this.limits.get(sessionId)?.lastCall || 0,
-                retryCount: this.limits.get(sessionId)?.retryCount || 0
+                lastCall: limit?.lastCall || 0,
+                retryCount: limit?.retryCount || 0,
+                consecutiveErrors: limit?.consecutiveErrors || 0,
+                lastError: limit?.lastError || null
             };
             totalQueued += queue.length;
             if (this.processing.get(sessionId)) totalProcessing++;
@@ -160,6 +200,7 @@ class RateLimiter {
             queue.forEach(task => {
                 if (!task.resolved) {
                     task.reject(new Error('Fila limpa pelo usuário'));
+                    task.resolved = true;
                 }
             });
             this.queues.set(sessionId, []);
@@ -329,7 +370,8 @@ function getConversation(sessionId) {
         conversations.set(sessionId, {
             messages: [],
             messageCount: 0,
-            lastSystemPrompt: 0
+            lastSystemPrompt: 0,
+            lastMessageTime: Date.now()
         });
     }
     return conversations.get(sessionId);
@@ -341,6 +383,7 @@ function addMessage(sessionId, role, content) {
     conv.messages.push({ role, content });
     if (role === 'user') {
         conv.messageCount++;
+        conv.lastMessageTime = Date.now();
     }
 }
 
@@ -351,33 +394,47 @@ function needsSystemPromptRefresh(conv) {
 }
 
 // Chama Gemini API com tratamento de erro
-async function callGemini(messages) {
-    const response = await fetch(GEMINI_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: messages.map(msg => ({
-                role: msg.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: msg.content }]
-            })),
-            generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 8000,
-            }
-        })
-    });
+async function callGemini(messages, retryCount = 0) {
+    try {
+        const response = await fetch(GEMINI_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: messages.map(msg => ({
+                    role: msg.role === 'assistant' ? 'model' : 'user',
+                    parts: [{ text: msg.content }]
+                })),
+                generationConfig: {
+                    temperature: 0.7,
+                    maxOutputTokens: 8000,
+                }
+            })
+        });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        if (!data.candidates || !data.candidates[0]) {
+            throw new Error('Invalid Gemini response');
+        }
+
+        return data.candidates[0].content.parts[0].text;
+    } catch (error) {
+        // Se for erro 429 e ainda não atingiu o limite de retries, lança para ser tratado pelo rate limiter
+        if (error.message.includes('429') && retryCount < 5) {
+            throw error; // Rate limiter vai tratar
+        }
+        
+        // Para outros erros, verifica se é de rede
+        if (error.message.includes('fetch') || error.message.includes('network')) {
+            throw new Error('Erro de conexão com a API. Verifique sua internet.');
+        }
+        
+        throw error;
     }
-
-    const data = await response.json();
-    if (!data.candidates || !data.candidates[0]) {
-        throw new Error('Invalid Gemini response');
-    }
-
-    return data.candidates[0].content.parts[0].text;
 }
 
 // Limpa resposta JSON
@@ -433,12 +490,14 @@ ${message}`;
     try {
         parsed = JSON.parse(cleanResponse);
     } catch (e) {
+        console.log(`⚠️ [${sessionId}] Falha ao parsear JSON:`, e.message);
         // Se não é JSON, trata como resposta texto simples
         parsed = {
             thinking: "Processando resposta...",
             response: cleanResponse,
             actions: [],
-            needsMoreInfo: false
+            needsMoreInfo: false,
+            error: "Resposta não está em formato JSON válido"
         };
     }
 
@@ -458,14 +517,18 @@ ${message}`;
 Retorne o JSON final refinado (mesmo formato).`
         });
 
-        const refinedResponse = await callGemini(messagesToSend);
-        const refinedClean = cleanJSON(refinedResponse);
-        
         try {
-            parsed = JSON.parse(refinedClean);
-            console.log(`✅ [${sessionId}] Plano refinado!`);
-        } catch (e) {
-            console.log(`⚠️ [${sessionId}] Usando plano original (refinamento falhou)`);
+            const refinedResponse = await callGemini(messagesToSend);
+            const refinedClean = cleanJSON(refinedResponse);
+            
+            try {
+                parsed = JSON.parse(refinedClean);
+                console.log(`✅ [${sessionId}] Plano refinado!`);
+            } catch (e) {
+                console.log(`⚠️ [${sessionId}] Usando plano original (refinamento falhou no parse)`);
+            }
+        } catch (error) {
+            console.log(`⚠️ [${sessionId}] Refinamento falhou: ${error.message}. Usando plano original.`);
         }
     }
 
@@ -487,38 +550,67 @@ app.get('/status', (req, res) => {
         model: GEMINI_MODEL,
         activeConversations: conversations.size,
         rateLimiter: stats.totals,
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
     });
 });
 
 app.post('/game-state', (req, res) => {
     currentGameState = req.body;
     console.log('✓ Estado do jogo atualizado');
-    res.json({ ok: true });
+    res.json({ 
+        ok: true,
+        timestamp: Date.now(),
+        size: JSON.stringify(currentGameState).length
+    });
 });
 
 // Rota principal de chat com rate limiting
 app.post('/chat', async (req, res) => {
+    const startTime = Date.now();
+    const requestId = Math.random().toString(36).substring(7);
+    
     try {
         const { message, sessionId, gameState } = req.body;
         
         if (!message) {
-            return res.status(400).json({ error: 'message é obrigatório' });
+            return res.status(400).json({ 
+                error: 'message é obrigatório',
+                requestId
+            });
         }
 
         const session = sessionId || 'default';
         
-        console.log(`📥 [${session}] Nova mensagem enfileirada: "${message.substring(0, 50)}..."`);
+        console.log(`📥 [${session}#${requestId}] Nova mensagem: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`);
+
+        // Verifica tamanho da mensagem
+        if (message.length > 10000) {
+            return res.status(413).json({
+                error: 'Mensagem muito longa (máx 10000 caracteres)',
+                requestId
+            });
+        }
 
         // Enfileira a tarefa no rate limiter
         const result = await rateLimiter.addTask(session, () => 
             processChatMessage(session, message, gameState)
         );
 
-        res.json(result);
+        const processingTime = Date.now() - startTime;
+        console.log(`📤 [${session}#${requestId}] Respondido em ${processingTime}ms`);
+
+        res.json({
+            ...result,
+            requestId,
+            processingTime,
+            sessionId: session,
+            timestamp: new Date().toISOString()
+        });
 
     } catch (error) {
-        console.error('❌ Erro no chat:', error.message);
+        const processingTime = Date.now() - startTime;
+        console.error(`❌ [${requestId}] Erro após ${processingTime}ms:`, error.message);
         
         // Determina status code baseado no erro
         let statusCode = 500;
@@ -529,12 +621,18 @@ app.post('/chat', async (req, res) => {
             errorMessage = 'Serviço ocupado. Por favor, aguarde alguns segundos e tente novamente.';
         } else if (error.message.includes('Timeout')) {
             statusCode = 504;
-            errorMessage = 'Tempo limite excedido. O servidor está processando sua solicitação.';
+            errorMessage = 'Tempo limite excedido. Tente novamente.';
+        } else if (error.message.includes('conexão')) {
+            statusCode = 503;
+            errorMessage = 'Erro de conexão com o serviço AI. Verifique sua internet.';
         }
         
         res.status(statusCode).json({ 
             error: error.message,
             response: errorMessage,
+            requestId,
+            processingTime,
+            timestamp: new Date().toISOString(),
             retryAfter: '5s'
         });
     }
@@ -552,7 +650,8 @@ app.post('/reset-conversation', (req, res) => {
     
     res.json({ 
         ok: true,
-        message: `Conversa ${session} resetada com sucesso`
+        message: `Conversa ${session} resetada com sucesso`,
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -564,7 +663,9 @@ app.get('/conversations', (req, res) => {
             sessionId: id,
             messageCount: conv.messageCount,
             messages: conv.messages.length,
-            lastSystemPrompt: conv.lastSystemPrompt
+            lastSystemPrompt: conv.lastSystemPrompt,
+            lastMessageTime: conv.lastMessageTime,
+            age: Date.now() - conv.lastMessageTime
         });
     });
     
@@ -572,7 +673,9 @@ app.get('/conversations', (req, res) => {
     
     res.json({ 
         conversations: list,
-        queueStats: stats
+        queueStats: stats,
+        timestamp: new Date().toISOString(),
+        totalSessions: list.length
     });
 });
 
@@ -586,7 +689,12 @@ app.get('/queue-status', (req, res) => {
         system: {
             memory: process.memoryUsage(),
             uptime: process.uptime(),
-            activeSessions: conversations.size
+            activeSessions: conversations.size,
+            nodeVersion: process.version
+        },
+        api: {
+            geminiModel: GEMINI_MODEL,
+            status: 'operational'
         }
     });
 });
@@ -596,14 +704,40 @@ app.post('/clear-queue', (req, res) => {
     const { sessionId } = req.body;
     
     if (!sessionId) {
-        return res.status(400).json({ error: 'sessionId é obrigatório' });
+        return res.status(400).json({ 
+            error: 'sessionId é obrigatório',
+            timestamp: new Date().toISOString()
+        });
     }
     
     rateLimiter.clearSessionQueue(sessionId);
     
     res.json({ 
         ok: true,
-        message: `Fila da sessão ${sessionId} limpa`
+        message: `Fila da sessão ${sessionId} limpa`,
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Rota para limpar conversas antigas (24h)
+app.post('/cleanup', (req, res) => {
+    const now = Date.now();
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+    let cleaned = 0;
+    
+    conversations.forEach((conv, sessionId) => {
+        if (now - conv.lastMessageTime > TWENTY_FOUR_HOURS) {
+            conversations.delete(sessionId);
+            rateLimiter.clearSessionQueue(sessionId);
+            cleaned++;
+        }
+    });
+    
+    res.json({
+        ok: true,
+        cleaned,
+        timestamp: new Date().toISOString(),
+        message: `${cleaned} sessões antigas limpas`
     });
 });
 
@@ -613,7 +747,7 @@ app.get('/', (req, res) => {
     
     res.json({
         name: 'Lemonade AI - Roblox Studio Agent',
-        version: '2.1.0',
+        version: '2.2.0',
         model: GEMINI_MODEL,
         features: [
             'Conversational AI',
@@ -623,36 +757,50 @@ app.get('/', (req, res) => {
             'Auto system prompt refresh',
             'Rate limiting por sessão',
             'Fila inteligente',
-            'Retry com backoff exponencial'
+            'Retry com backoff exponencial',
+            'Monitoramento em tempo real'
         ],
         currentStats: stats.totals,
-        routes: [
+        endpoints: [
             'GET  /status',
             'POST /game-state',
             'POST /chat',
             'POST /reset-conversation',
             'GET  /conversations',
             'GET  /queue-status',
-            'POST /clear-queue'
+            'POST /clear-queue',
+            'POST /cleanup'
         ],
         rateLimiting: {
             minIntervalPerSession: '2s',
             globalMinInterval: '1s',
             maxRetries: 5,
-            backoffStrategy: 'exponencial (2s → 4s → 8s → 16s → 32s)'
+            backoffStrategy: 'exponencial (2s → 4s → 8s → 16s → 32s)',
+            timeout: '60s'
         }
+    });
+});
+
+// Middleware de erro global
+app.use((err, req, res, next) => {
+    console.error('❌ Erro global não tratado:', err);
+    res.status(500).json({
+        error: 'Erro interno do servidor',
+        message: err.message,
+        timestamp: new Date().toISOString()
     });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('═══════════════════════════════════════════════');
-    console.log('🍋 Lemonade AI - Roblox Studio Agent v2.1.0');
+    console.log('🍋 Lemonade AI - Roblox Studio Agent v2.2.0');
     console.log('📍 URL: http://localhost:' + PORT);
     console.log('🤖 Modelo: ' + GEMINI_MODEL);
-    console.log('⚡ Rate Limiting: Habilitado');
+    console.log('⚡ Rate Limiting: Habilitado (corrigido)');
     console.log('🔄 Retry com Backoff: Habilitado');
     console.log('🎯 Sessões Isoladas: Sim');
+    console.log('🐛 Bug Fix: sessionLimit corrigido');
     console.log('═══════════════════════════════════════════════');
 });
 
