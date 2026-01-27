@@ -4,7 +4,7 @@ import cors from 'cors';
 
 const app = express();
 
-const GEMINI_API_KEY = "AIzaSyD_wG2YI7Q6hphOl8eLkoPKD-hxsehSpkI";
+const GEMINI_API_KEY = "AIzaSyAwXC00BXlfyjKJkMQsjtAvf8uUqYiNFOk";
 const GEMINI_MODEL = "gemini-3-flash-preview";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
